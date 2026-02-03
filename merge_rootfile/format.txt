@@ -1,0 +1,17 @@
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_ASYM_Op_EPPS21_9p62TeV_2025Run3_2025_9_21/ ./version_1.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_ASYM_pO_EPPS21_9p62TeV_2025Run3_2025_9_21/ ./version_2.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_ASYM_Op_LHAPDF_9p62TeV_2025Run3_2025_9_21/ ./version_3.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_ASYM_pO_LHAPDF_9p62TeV_2025Run3_2025_9_21/ ./version_4.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_SYMENE_Op_EPPS21_9p62TeV_2025Run3_2025_9_21/ ./version_5.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_SYMENE_pO_EPPS21_9p62TeV_2025Run3_2025_9_21/ ./version_6.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_SYMENE_Op_LHAPDF_9p62TeV_2025Run3_2025_9_21/ ./version_7.txt
+./make_filelist.sh /eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2025_9_21/MC/POWHEG_9p62TeV_2025Run3/HiForest_DYToMuMu_M_50_POWHEG_SYMENE_pO_LHAPDF_9p62TeV_2025Run3_2025_9_21/ ./version_8.txt
+
+./hadd_from_list.sh version_1.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_1_2025.root
+./hadd_from_list.sh version_2.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_2_2025.root
+./hadd_from_list.sh version_3.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_3_2025.root
+./hadd_from_list.sh version_4.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_4_2025.root
+./hadd_from_list.sh version_5.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_5_2025.root
+./hadd_from_list.sh version_6.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_6_2025.root
+./hadd_from_list.sh version_7.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_7_2025.root
+./hadd_from_list.sh version_8.txt /eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_8_2025.root
