@@ -1,33 +1,33 @@
-// DrawWToMuNu_PFMet_CutflowTableStrict.C
+// DrawWToEleNu_PFMet_CutflowTableStrict.C
 //
 // Goal: follow the cutflow logic EXACTLY as in the table:
 //
 //  0) All events in dataset
-//  1) >=1 PF muon with pT > 25
+//  1) >=1 PF electron with pT > 25
 //  2) pO collision event selection
-//  3) Trigger PAL3Mu12 fired
+//  3) Trigger PAL3Ele12 fired
 //  4) Drell–Yan veto
-//  5) >=1 Tight ID muon
-//  6) Leading muon pT > 25
-//  7) Leading muon Iso < 0.15
-//  8) Leading muon matched to trigger
+//  5) >=1 Tight ID electron
+//  6) Leading electron pT > 25
+//  7) Leading electron Iso < 0.15
+//  8) Leading electron matched to trigger
 //
 // Notes / assumptions (kept as “auto-detect” wherever possible):
-// - “PF muon” is taken as muIsPF == 1 when the branch exists.
-// - “Tight ID muon” is taken as muIDTight == 1 when the branch exists.
+// - “PF electron” is taken as eleIsPF == 1 when the branch exists.
+// - “Tight ID electron” is taken as eleIDTight == 1 when the branch exists.
 // - Event selection (step 2): we AND together common pO/pA filters IF they exist;
 //   if a given filter branch is missing, we don’t apply it (and we print a warning once).
-// - Trigger fired (step 3): we auto-find any branch name containing "HLT_PAL3Mu12"
+// - Trigger fired (step 3): we auto-find any branch name containing "HLT_PAL3Ele12"
 //   in ggHiNtuplizer/EventTree and use it.
 // - Trigger matching (step 8): we try, in order:
 //    (A) trigger object collections (trgObj* style) if present
-//    (B) per-muon trigger match bits (muTrig/muTrg style) if present
+//    (B) per-electron trigger match bits (eleTrig/eleTrg style) if present
 //   If neither exists, we can’t enforce step 8 and we will WARN and treat as pass.
-// - DY veto (step 4): veto event if exists an OS muon pair with BOTH muons:
+// - DY veto (step 4): veto event if exists an OS electron pair with BOTH electrons:
 //      pT>15, PF, Tight, relIso<0.15, and (mll > 30 GeV)   <-- your requested m>30
 //
 // Run:
-//   root -l -q 'DrawWToMuNu_PFMet_CutflowTableStrict.C("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root")'
+//   root -l -q 'DrawWToEleNu_PFMet_CutflowTableStrict.C("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root")'
 //
 // Output:
 //   - Prints cutflow counts + efficiencies
@@ -90,12 +90,12 @@ static double DeltaR(double eta1, double phi1, double eta2, double phi2)
 struct WConfig
 {
   // Table parameters
-  double muPt25 = 25.0;
-  double dyMuPtMin = 15.0;
+  double elecPt25 = 25.0;
+  double dyElecPtMin = 15.0;
   double isoMax = 0.15;
   double dyMassMin = 80.0; // your requested M>30 inside DY veto
   double dyMassMax = 110.0;
-  double muEtaMax = 2.4;
+  double elecEtaMax = 2.4;
 
   // For trigger-object matching
   double trigMatchDR = 0.1;
@@ -107,7 +107,7 @@ struct WConfig
   double mtMin = 0.0;
   double mtMax = 200.0;
 
-  std::string outPrefix = "WToMuNu_pO_PFMet";
+  std::string outPrefix = "WToElecNu_pO_PFMet";
 };
 
 // ---------------------------------------------
@@ -132,17 +132,17 @@ static TVector2 ComputePFMET(std::vector<int> *pfId,
 }
 
 static double RelIsoPF(int i,
-                       std::vector<float> *muPt,
-                       std::vector<float> *muPFChIso,
-                       std::vector<float> *muPFNeuIso,
-                       std::vector<float> *muPFPhoIso)
+                       std::vector<float> *elePt,
+                       std::vector<float> *elePFChIso,
+                       std::vector<float> *elePFNeuIso,
+                       std::vector<float> *elePFPhoIso)
 {
-  if (!muPt || !muPFChIso || !muPFNeuIso || !muPFPhoIso)
+  if (!elePt || !elePFChIso || !elePFNeuIso || !elePFPhoIso)
     return 999.0;
-  const double pt = muPt->at(i);
+  const double pt = elePt->at(i);
   if (pt <= 0)
     return 999.0;
-  const double isoAbs = muPFChIso->at(i) + muPFNeuIso->at(i) + muPFPhoIso->at(i);
+  const double isoAbs = elePFChIso->at(i) + elePFNeuIso->at(i) + elePFPhoIso->at(i);
   return isoAbs / pt;
 }
 
@@ -179,24 +179,24 @@ static bool PassEventSelection_pO(TTree *tHi,
 }
 
 // ---------------------------------------------
-// Step 1 helper: exists PF muon with pt>25
+// Step 1 helper: exists PF electron with pt>25 // to be changed
 // ---------------------------------------------
-static bool ExistsPFMuonPt25(const WConfig &cfg,
-                             int nMu,
-                             std::vector<float> *muPt,
-                             bool has_muIsPF, std::vector<int> *muIsPF)
+static bool ExistsPFElectronPt25(const WConfig &cfg,
+                             int nEle,
+                             std::vector<float> *elePt,
+                             bool has_eleIsPF, std::vector<int> *eleIsPF)
 {
-  if (!muPt)
+  if (!elePt)
     return false;
 
-  for (int i = 0; i < nMu; ++i)
+  for (int i = 0; i < nEle; ++i)
   {
-    const double pt = muPt->at(i);
-    if (pt <= cfg.muPt25)
+    const double pt = elePt->at(i);
+    if (pt <= cfg.elePt25)
       continue;
 
     // PF requirement only if branch exists; if missing we can't enforce PF, so treat as pass
-    if (has_muIsPF && muIsPF && muIsPF->at(i) == 0)
+    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
       continue;
 
     return true;
@@ -205,50 +205,50 @@ static bool ExistsPFMuonPt25(const WConfig &cfg,
 }
 
 // ---------------------------------------------
-// Step 5 helper: exists Tight ID muon (no pt requirement in table)
+// Step 5 helper: exists Tight ID electron (no pt requirement in table) // to be changed
 // ---------------------------------------------
-static bool ExistsTightMuon(int nMu,
-                            bool has_muIDTight, std::vector<int> *muIDTight)
+static bool ExistsTightElectron(int nEle,
+                            bool has_eleIDTight, std::vector<int> *eleIDTight)
 {
-  if (!has_muIDTight || !muIDTight)
+  if (!has_eleIDTight || !eleIDTight)
     return false; // if table requires tight, and branch absent, we should fail rather than silently pass
 
-  for (int i = 0; i < nMu; ++i)
+  for (int i = 0; i < nEle; ++i)
   {
-    if (muIDTight->at(i) != 0)
+    if (eleIDTight->at(i) != 0)
       return true;
   }
   return false;
 }
 
 // ---------------------------------------------
-// Leading muon definition for steps 6-8:
-// We'll define "leading muon" among muons that are Tight (if exists) and PF (if exists).
+// Leading electron definition for steps 6-8:
+// We'll define "leading electron" among electrons that are Tight (if exists) and PF (if exists). 
 // This is the closest to typical W analysis and makes steps 6-8 consistent.
 // ---------------------------------------------
-static int FindLeadingMuon_TightPF(int nMu,
-                                   std::vector<float> *muPt,
-                                   std::vector<float> *muEta,
-                                   std::vector<float> *muPhi,
-                                   bool has_muIDTight, std::vector<int> *muIDTight,
-                                   bool has_muIsPF, std::vector<int> *muIsPF)
+static int FindLeadingElectron_TightPF(int nEle,
+                                   std::vector<float> *elePt,
+                                   std::vector<float> *eleEta,
+                                   std::vector<float> *elePhi,
+                                   bool has_eleIDTight, std::vector<int> *eleIDTight,
+                                   bool has_eleIsPF, std::vector<int> *eleIsPF)
 {
-  if (!muPt || !muEta || !muPhi)
+  if (!elePt || !eleEta || !elePhi)
     return -1;
 
   int best = -1;
   double bestPt = -1;
 
-  for (int i = 0; i < nMu; ++i)
+  for (int i = 0; i < nEle; ++i)
   {
-    const double pt = muPt->at(i);
+    const double pt = elePt->at(i);
 
-    // Tight requirement if branch exists; if missing, cannot define “tight leading muon”
-    if (has_muIDTight && muIDTight && muIDTight->at(i) == 0)
+    // Tight requirement if branch exists; if missing, cannot define “tight leading electron”
+    if (has_eleIDTight && eleIDTight && eleIDTight->at(i) == 0)
       continue;
 
     // PF requirement if branch exists
-    if (has_muIsPF && muIsPF && muIsPF->at(i) == 0)
+    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
       continue;
 
     if (pt > bestPt)
@@ -262,52 +262,52 @@ static int FindLeadingMuon_TightPF(int nMu,
 
 // ---------------------------------------------
 // Step 4: DY veto (with Mll > 30 requirement)
-// Veto event if exists OS pair where both muons satisfy:
+// Veto event if exists OS pair where both electrons satisfy:
 //   pT > 15, PF, Tight, relIso < 0.15, AND mll > 30
 // ---------------------------------------------
 static bool PassDYVeto(const WConfig &cfg,
-                       int nMu,
-                       std::vector<float> *muPt,
-                       std::vector<float> *muEta,
-                       std::vector<float> *muPhi,
-                       std::vector<int> *muCharge,
-                       bool has_muIDTight, std::vector<int> *muIDTight,
-                       bool has_muIsPF, std::vector<int> *muIsPF,
-                       std::vector<float> *muPFChIso,
-                       std::vector<float> *muPFNeuIso,
-                       std::vector<float> *muPFPhoIso)
+                       int nEle,
+                       std::vector<float> *elePt,
+                       std::vector<float> *eleEta,
+                       std::vector<float> *elePhi,
+                       std::vector<int> *eleCharge,
+                       bool has_eleIDTight, std::vector<int> *eleIDTight,
+                       bool has_eleIsPF, std::vector<int> *eleIsPF,
+                       std::vector<float> *elePFChIso,
+                       std::vector<float> *elePFNeuIso,
+                       std::vector<float> *elePFPhoIso)
 {
-  if (!muPt || !muEta || !muPhi || !muCharge)
+  if (!elePt || !eleEta || !elePhi || !eleCharge)
     return true; // can't apply -> do not veto
 
   // If tight branch missing, we can't apply the DY veto as defined (table says "DY veto" though),
   // but to avoid silently over-vetoing/under-vetoing, we choose: if missing, do not veto.
-  if (!has_muIDTight || !muIDTight)
+  if (!has_eleIDTight || !eleIDTight)
     return true;
 
   std::vector<int> cand;
-  cand.reserve(nMu);
+  cand.reserve(nEle);
 
-  for (int i = 0; i < nMu; ++i)
+  for (int i = 0; i < nEle; ++i)
   {
-    const double pt = muPt->at(i);
-    if (pt <= cfg.dyMuPtMin)
+    const double pt = elePt->at(i);
+    if (pt <= cfg.dyElePtMin)
       continue;
 
-    if (muIDTight->at(i) == 0)
+    if (eleIDTight->at(i) == 0)
       continue;
 
-    if (has_muIsPF && muIsPF && muIsPF->at(i) == 0)
+    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
       continue;
 
-    const double isoRel = RelIsoPF(i, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
+    const double isoRel = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
     if (isoRel >= cfg.isoMax)
       continue;
 
     cand.push_back(i);
   }
 
-  const double muMass = 0.105658;
+  const double eleMass = 0.105658;
 
   for (size_t a = 0; a < cand.size(); ++a)
   {
@@ -316,14 +316,14 @@ static bool PassDYVeto(const WConfig &cfg,
       const int i1 = cand[a];
       const int i2 = cand[b];
 
-      if (muCharge->at(i1) * muCharge->at(i2) >= 0)
+      if (eleCharge->at(i1) * eleCharge->at(i2) >= 0)
         continue; // require OS
 
-      TLorentzVector mu1, mu2;
-      mu1.SetPtEtaPhiM(muPt->at(i1), muEta->at(i1), muPhi->at(i1), muMass);
-      mu2.SetPtEtaPhiM(muPt->at(i2), muEta->at(i2), muPhi->at(i2), muMass);
+      TLorentzVector ele1, ele2;
+      ele1.SetPtEtaPhiM(elePt->at(i1), eleEta->at(i1), elePhi->at(i1), eleMass);
+      ele2.SetPtEtaPhiM(elePt->at(i2), eleEta->at(i2), elePhi->at(i2), eleMass);
 
-      const double mll = (mu1 + mu2).M();
+      const double mll = (ele1 + ele2).M();
 
       // DY-like OS pair with mll > 30 => veto event (fail DY veto)
       if (mll > cfg.dyMassMin && mll < cfg.dyMassMax)
@@ -335,7 +335,7 @@ static bool PassDYVeto(const WConfig &cfg,
 }
 
 // ---------------------------------------------
-// Step 3: Trigger fired (PAL3Mu12) from HLT bit branch (auto-found)
+// Step 3: Trigger fired (PAL3Ele12) from HLT bit branch (auto-found)
 // ---------------------------------------------
 static bool TriggerFired(int hltBit)
 {
@@ -343,14 +343,14 @@ static bool TriggerFired(int hltBit)
 }
 
 // ---------------------------------------------
-// Step 8: Leading muon matched to trigger
-// Try trigger objects, else try per-muon match bits.
+// Step 8: Leading electron matched to trigger
+// Try trigger objects, else try per-electron match bits.
 // If neither exists, warn and accept (cannot enforce).
 // ---------------------------------------------
-static bool PassLeadingMuonTrigMatch(const WConfig &cfg,
+static bool PassLeadingElectronTrigMatch(const WConfig &cfg,
                                      int iLead,
-                                     std::vector<float> *muEta,
-                                     std::vector<float> *muPhi,
+                                     std::vector<float> *eleEta,
+                                     std::vector<float> *elePhi,
 
                                      // Option A: trigger object branches (if exist)
                                      bool has_trgObjPt, std::vector<double> *trgObjPt,
@@ -359,11 +359,11 @@ static bool PassLeadingMuonTrigMatch(const WConfig &cfg,
                                      bool has_trgObjId, std::vector<double> *trgObjId,
                                      bool &warnedNoTrigMatchInfo)
 {
-  if (iLead < 0 || !muEta || !muPhi)
+  if (iLead < 0 || !eleEta || !elePhi)
     return false;
 
-  const double eta = muEta->at(iLead);
-  const double phi = muPhi->at(iLead);
+  const double eta = eleEta->at(iLead);
+  const double phi = elePhi->at(iLead);
 
   // A) Trigger objects
   if (has_trgObjPt && has_trgObjEta && has_trgObjPhi &&
@@ -382,8 +382,8 @@ static bool PassLeadingMuonTrigMatch(const WConfig &cfg,
   // C) Unknown: cannot enforce
   if (!warnedNoTrigMatchInfo)
   {
-    std::cout << "[WARN] No trigger-object collection and no per-muon trigger-match info found. "
-              << "Cannot apply step 8 (leading muon matched to trigger). Treating as PASS.\n";
+    std::cout << "[WARN] No trigger-object collection and no per-electron trigger-match info found. "
+              << "Cannot apply step 8 (leading electron matched to trigger). Treating as PASS.\n";
     warnedNoTrigMatchInfo = true;
   }
   return true;
@@ -395,18 +395,18 @@ static bool PassLeadingMuonTrigMatch(const WConfig &cfg,
 
 static bool PassGenRecoMatching(
     int iLead,
-    std::vector<float> *muPt, std::vector<float> *muEta, std::vector<float> *muPhi, std::vector<int> *muCharge,
+    std::vector<float> *elePt, std::vector<float> *eleEta, std::vector<float> *elePhi, std::vector<int> *eleCharge,
     std::vector<float> *genPt, std::vector<float> *genEta, std::vector<float> *genPhi, std::vector<int> *genChg)
 {
-  if (!muPt || !muEta || !muPhi || !muCharge || !genPt || !genEta || !genPhi || !genChg)
+  if (!elePt || !eleEta || !elePhi || !eleCharge || !genPt || !genEta || !genPhi || !genChg)
     return false;
-  if (iLead < 0 || (size_t)iLead >= muPt->size())
+  if (iLead < 0 || (size_t)iLead >= elePt->size())
     return false;
 
-  const double muonPt = muPt->at(iLead);
-  const double muonEta = muEta->at(iLead);
-  const double muonPhi = muPhi->at(iLead);
-  const int muonChg = muCharge->at(iLead);
+  const double electronPt = elePt->at(iLead);
+  const double electronEta = eleEta->at(iLead);
+  const double electronPhi = elePhi->at(iLead);
+  const int electronChg = eleCharge->at(iLead);
 
   const size_t ngen = std::min({genPt->size(), genEta->size(), genPhi->size(), genChg->size()});
   for (size_t i = 0; i < ngen; ++i)
@@ -415,13 +415,13 @@ static bool PassGenRecoMatching(
     if (genPt->at(i) <= 0)
       continue;
 
-    const double dEta = genEta->at(i) - muonEta;
-    const double dPhi = TVector2::Phi_mpi_pi(genPhi->at(i) - muonPhi);
+    const double dEta = genEta->at(i) - electronEta;
+    const double dPhi = TVector2::Phi_mpi_pi(genPhi->at(i) - electronPhi);
     const double dR = std::sqrt(dEta * dEta + dPhi * dPhi);
 
-    const double dPtRel = std::fabs(genPt->at(i) - muonPt) / genPt->at(i);
+    const double dPtRel = std::fabs(genPt->at(i) - electronPt) / genPt->at(i);
 
-    if (genChg->at(i) != muonChg)
+    if (genChg->at(i) != electronChg)
       continue; // same charge
     if (dR >= 0.5)
       continue; // ΔR < 0.5
@@ -437,9 +437,9 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 // Main
 // ---------------------------------------------
-void DrawWToMuNu_PFMet_MC(const char *fname =
-                              "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                          bool isMC = true, int version = 8)
+void DrawWToElecNu_PFMet(const char *fname =
+                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
+                       bool isMC = false, int version = 8)
 {
 
   gStyle->SetOptStat(0);
@@ -459,11 +459,11 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     return;
   }
 
-  TTree *tMu = (TTree *)f->Get("ggHiNtuplizer/EventTree");
+  TTree *tEle = (TTree *)f->Get("ggHiNtuplizer/EventTree");
   TTree *tHi = (TTree *)f->Get("hiEvtAnalyzer/HiTree");
   TTree *tPF = (TTree *)f->Get("particleFlowAnalyser/pftree");
   TTree *tHLT = (TTree *)f->Get("hltanalysis/HltTree");
-  TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleMuOpen_v");
+  TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEleOpen_v");
   TTree *tEvent = (TTree *)f->Get("skimanalysis/HltTree");
   TTree *tGen;
   if (isMC)
@@ -471,81 +471,82 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     tGen = (TTree *)f->Get("HiGenParticleAna/hi");
   }
 
-  if (!tMu || !tHi || !tPF || !tHLT || !tHLTobj)
+  if (!tEle || !tHi || !tPF || !tHLT || !tHLTobj)
   {
     std::cerr << "ERROR: missing one of trees: ggHiNtuplizer/EventTree, hiEvtAnalyzer/HiTree, particleFlowAnalyser/pftree\n";
     return;
   }
 
   // -------------------------
-  // Muon branches
+  // Electron branches
   // -------------------------
-  Int_t nMu = 0;
-  std::vector<float> *muPt = nullptr;
-  std::vector<float> *muEta = nullptr;
-  std::vector<float> *muPhi = nullptr;
-  std::vector<int> *muCharge = nullptr;
-  std::vector<int> *muIDTight = nullptr;
-  std::vector<int> *muIsPF = nullptr;
+  Int_t nEle = 0;
+  std::vector<float> *elePt = nullptr;
+  std::vector<float> *eleEta = nullptr;
+  std::vector<float> *elePhi = nullptr;
+  std::vector<int> *eleCharge = nullptr;
+  std::vector<int> *eleIDTight = nullptr;
+  std::vector<int> *eleIsPF = nullptr;
 
-  std::vector<float> *muPFChIso = nullptr;
-  std::vector<float> *muPFNeuIso = nullptr;
-  std::vector<float> *muPFPhoIso = nullptr;
+  std::vector<float> *elePFChIso = nullptr;
+  std::vector<float> *elePFNeuIso = nullptr;
+  std::vector<float> *elePFPhoIso = nullptr;
+  std::vector<float> *elePFPUIso = nullptr;
 
-  // Optional per-muon trigger match
-  std::vector<int> *muTrig = nullptr;
+  // Optional per-electron trigger match
+  std::vector<int> *eleTrig = nullptr;
 
-  tMu->SetBranchStatus("*", 0);
-  tMu->SetBranchStatus("nMu", 1);
-  tMu->SetBranchStatus("muPt", 1);
-  tMu->SetBranchStatus("muEta", 1);
-  tMu->SetBranchStatus("muPhi", 1);
-  tMu->SetBranchStatus("muCharge", 1);
+  tEle->SetBranchStatus("*", 0);
+  tEle->SetBranchStatus("nEle", 1);
+  tEle->SetBranchStatus("elePt", 1);
+  tEle->SetBranchStatus("eleEta", 1);
+  tEle->SetBranchStatus("elePhi", 1);
+  tEle->SetBranchStatus("eleCharge", 1);
 
   // ID/PF
-  if (HasBranch(tMu, "muIDTight"))
-    tMu->SetBranchStatus("muIDTight", 1);
-  if (HasBranch(tMu, "muIsPF"))
-    tMu->SetBranchStatus("muIsPF", 1);
+  if (HasBranch(tEle, "eleIDTight"))
+    tEle->SetBranchStatus("eleIDTight", 1);
+  if (HasBranch(tEle, "eleIsPF"))
+    tEle->SetBranchStatus("eleIsPF", 1);
 
   // Iso
-  if (HasBranch(tMu, "muPFChIso"))
-    tMu->SetBranchStatus("muPFChIso", 1);
-  if (HasBranch(tMu, "muPFNeuIso"))
-    tMu->SetBranchStatus("muPFNeuIso", 1);
-  if (HasBranch(tMu, "muPFPhoIso"))
-    tMu->SetBranchStatus("muPFPhoIso", 1);
+  if (HasBranch(tEle, "elePFChIso"))
+    tEle->SetBranchStatus("elePFChIso", 1);
+  if (HasBranch(tEle, "elePFNeuIso"))
+    tEle->SetBranchStatus("elePFNeuIso", 1);
+  if (HasBranch(tEle, "elePFPhoIso"))
+    tEle->SetBranchStatus("elePFPhoIso", 1);
 
-  tMu->SetBranchAddress("nMu", &nMu);
-  tMu->SetBranchAddress("muPt", &muPt);
-  tMu->SetBranchAddress("muEta", &muEta);
-  tMu->SetBranchAddress("muPhi", &muPhi);
-  tMu->SetBranchAddress("muCharge", &muCharge);
+  tEle->SetBranchAddress("nEle", &nEle);
+  tEle->SetBranchAddress("elePt", &elePt);
+  tEle->SetBranchAddress("eleEta", &eleEta);
+  tEle->SetBranchAddress("elePhi", &elePhi);
+  tEle->SetBranchAddress("eleCharge", &eleCharge);
 
-  const bool has_muIDTight = HasBranch(tMu, "muIDTight");
-  const bool has_muIsPF = HasBranch(tMu, "muIsPF");
+  const bool has_eleIDTight = HasBranch(tEle, "eleIDTight");
+  const bool has_eleIsPF = HasBranch(tEle, "eleIsPF");
 
-  if (has_muIDTight)
-    tMu->SetBranchAddress("muIDTight", &muIDTight);
-  if (has_muIsPF)
-    tMu->SetBranchAddress("muIsPF", &muIsPF);
+  if (has_eleIDTight)
+    tEle->SetBranchAddress("eleIDTight", &eleIDTight);
+  if (has_eleIsPF)
+    tEle->SetBranchAddress("eleIsPF", &eleIsPF);
 
-  const bool has_muPFChIso = HasBranch(tMu, "muPFChIso");
-  const bool has_muPFNeuIso = HasBranch(tMu, "muPFNeuIso");
-  const bool has_muPFPhoIso = HasBranch(tMu, "muPFPhoIso");
+  const bool has_elePFChIso = HasBranch(tEle, "elePFChIso");
+  const bool has_elePFNeuIso = HasBranch(tEle, "elePFNeuIso");
+  const bool has_elePFPhoIso = HasBranch(tEle, "elePFPhoIso");
 
-  if (has_muPFChIso)
-    tMu->SetBranchAddress("muPFChIso", &muPFChIso);
-  if (has_muPFNeuIso)
-    tMu->SetBranchAddress("muPFNeuIso", &muPFNeuIso);
-  if (has_muPFPhoIso)
-    tMu->SetBranchAddress("muPFPhoIso", &muPFPhoIso);
+  if (has_elePFChIso)
+    tEle->SetBranchAddress("elePFChIso", &elePFChIso);
+  if (has_elePFNeuIso)
+    tEle->SetBranchAddress("elePFNeuIso", &elePFNeuIso);
+  if (has_elePFPhoIso)
+    tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso);
 
   // -------------------------
   // Trigger fired bit (step 3):
   // -------------------------
-  const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleMuOpen_v1");
-  Int_t HLT_OxyL1SingleMuOpen_v1 = 0;
+  const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleEleOpen_v1");
+  Int_t HLT_OxyL1SingleEleOpen_v1 = 0;
   bool has_hlt = false;
   tHLT->SetBranchStatus("*", 0);
 
@@ -553,12 +554,12 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
   {
     has_hlt = true;
     tHLT->SetBranchStatus(hltName.c_str(), 1);
-    tHLT->SetBranchAddress(hltName.c_str(), &HLT_OxyL1SingleMuOpen_v1);
+    tHLT->SetBranchAddress(hltName.c_str(), &HLT_OxyL1SingleEleOpen_v1);
     std::cout << "[INFO] Using trigger bit branch: " << hltName << "\n";
   }
   else
   {
-    std::cout << "[WARN] Could not find any branch containing 'HLT_OxyL1SingleMuOpen_v1' in hltanalysis/HltTree.\n"
+    std::cout << "[WARN] Could not find any branch containing 'HLT_OxyL1SingleEleOpen_v1' in hltanalysis/HltTree.\n"
               << "       Step 3 (trigger fired) will be treated as PASS.\n";
   }
 
@@ -676,16 +677,73 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
   // -------------------------
   // Output hist (after final step 8)
   // -------------------------
-  TH1D *hMet_final = new TH1D("hMet_final", "; PF MET [GeV]; Events", 100, 0, 200);
-  TH1D *hMt_final = new TH1D("hMt_final", "; m_{T}(#mu, MET) [GeV]; Events", cfg.nBinsMt, cfg.mtMin, cfg.mtMax);
-  hMet_final->Sumw2();
-  hMt_final->Sumw2();
-  hMet_final->SetLineWidth(2);
-  hMt_final->SetLineWidth(2);
-  hMet_final->SetLineStyle(1);
-  hMt_final->SetLineStyle(1);
-  hMet_final->SetLineColor(kAzure + 2);
-  hMt_final->SetLineColor(kAzure + 2);
+  static const int NY = 16;
+  double yEdges[NY + 1] = {
+      -2.4, -2.1, -1.8, -1.5, -1.2, -0.9, -0.6, -0.3,
+      0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4};
+  double yEdges_FB[NY + 1] = {
+      -1.7068, -1.4501, -1.1934, -0.9368,
+      -0.6801, -0.4234, -0.1667, 0.0899,
+      0.3466, 0.6033, 0.8599, 1.1166,
+      1.3733, 1.6300, 1.8866, 2.1433,
+      2.4000};
+
+  TH1D *h_met_Wp[NY];
+  TH1D *h_met_Wm[NY];
+  TH1D *h_mt_Wp[NY];
+  TH1D *h_mt_Wm[NY];
+
+  TH1D *h_met_Wp_FB[NY];
+  TH1D *h_met_Wm_FB[NY];
+  TH1D *h_mt_Wp_FB[NY];
+  TH1D *h_mt_Wm_FB[NY];
+
+  for (int b = 0; b < NY; ++b)
+  {
+    const double y1 = yEdges[b];
+    const double y2 = yEdges[b + 1];
+    const double y1_FB = yEdges_FB[b];
+    const double y2_FB = yEdges_FB[b + 1];
+
+    h_met_Wp[b] = new TH1D(Form("h_met_Wp_y%d", b),
+                           Form("W+ PF MET;MET [GeV];Events (%.2f<y<%.2f)", y1, y2),
+                           60, 0, 120);
+    h_met_Wm[b] = new TH1D(Form("h_met_Wm_y%d", b),
+                           Form("W- PF MET;MET [GeV];Events (%.2f<y<%.2f)", y1, y2),
+                           60, 0, 120);
+
+    h_mt_Wp[b] = new TH1D(Form("h_mt_Wp_y%d", b),
+                          Form("W+ m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1, y2),
+                          80, 0, 200);
+    h_mt_Wm[b] = new TH1D(Form("h_mt_Wm_y%d", b),
+                          Form("W- m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1, y2),
+                          80, 0, 200);
+
+    h_met_Wp_FB[b] = new TH1D(Form("h_met_Wp_y%d_FB", b),
+                              Form("W+ PF MET;MET [GeV];Events (%.2f<y<%.2f)", y1_FB, y2_FB),
+                              60, 0, 120);
+    h_met_Wm_FB[b] = new TH1D(Form("h_met_Wm_y%d_FB", b),
+                              Form("W- PF MET;MET [GeV];Events (%.2f<y<%.2f)", y1_FB, y2_FB),
+                              60, 0, 120);
+
+    h_mt_Wp_FB[b] = new TH1D(Form("h_mt_Wp_y%d_FB", b),
+                             Form("W+ m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1_FB, y2_FB),
+                             80, 0, 200);
+    h_mt_Wm_FB[b] = new TH1D(Form("h_mt_Wm_y%d_FB", b),
+                             Form("W- m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1_FB, y2_FB),
+                             80, 0, 200);
+
+    // optional but recommended if you later sum/scale:
+    h_met_Wp[b]->Sumw2();
+    h_met_Wm[b]->Sumw2();
+    h_mt_Wp[b]->Sumw2();
+    h_mt_Wm[b]->Sumw2();
+
+    h_met_Wp_FB[b]->Sumw2();
+    h_met_Wm_FB[b]->Sumw2();
+    h_mt_Wp_FB[b]->Sumw2();
+    h_mt_Wm_FB[b]->Sumw2();
+  }
 
   // -------------------------
   // Cutflow counters
@@ -693,7 +751,7 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
   // Ni in the table = events passing current and all previous cuts
   unsigned long long N[9] = {0};
 
-  const Long64_t nEntries = tMu->GetEntries();
+  const Long64_t nEntries = tEle->GetEntries();
   std::cout << "Entries: " << nEntries << "\n";
 
   bool warnedEventFiltersOnce = false;
@@ -704,7 +762,7 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     if (ie % 200000 == 0)
       std::cout << "Event " << ie << "/" << nEntries << "\n";
 
-    tMu->GetEntry(ie);
+    tEle->GetEntry(ie);
     tHi->GetEntry(ie);
     tPF->GetEntry(ie);
     tHLT->GetEntry(ie);
@@ -714,8 +772,8 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     // (0) all events
     N[0]++;
 
-    // (1) >=1 PF muon with pT > 25
-    if (!ExistsPFMuonPt25(cfg, nMu, muPt, has_muIsPF, muIsPF))
+    // (1) >=1 PF eletron with pT > 25
+    if (!ExistsPFElectronPt25(cfg, nEle, elePt, has_eleIsPF, eleIsPF))
       continue;
     N[1]++;
 
@@ -732,10 +790,10 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     }
     N[2]++;
 
-    // (3) Trigger PAL3Mu12 fired
+    // (3) Trigger PAL3Ele12 fired
     if (has_hlt)
     {
-      if (!TriggerFired(HLT_OxyL1SingleMuOpen_v1))
+      if (!TriggerFired(HLT_OxyL1SingleEleOpen_v1))
         continue;
     }
     // if has_hlt==false, treat as pass (warned already)
@@ -743,47 +801,47 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
 
     // (4) Drell–Yan veto
     if (!PassDYVeto(cfg,
-                    nMu, muPt, muEta, muPhi, muCharge,
-                    has_muIDTight, muIDTight,
-                    has_muIsPF, muIsPF,
-                    muPFChIso, muPFNeuIso, muPFPhoIso))
+                    nEle, elePt, eleEta, elePhi, eleCharge,
+                    has_eleIDTight, eleIDTight,
+                    has_eleIsPF, eleIsPF,
+                    elePFChIso, elePFNeuIso, elePFPhoIso))
       continue;
     N[4]++;
 
-    // (5) >=1 Tight ID muon
-    if (!ExistsTightMuon(nMu, has_muIDTight, muIDTight))
+    // (5) >=1 Tight ID electron
+    if (!ExistsTightElectron(nEle, has_eleIDTight, eleIDTight))
       continue;
     N[5]++;
 
-    // Define leading muon for steps 6-8 (leading among Tight+PF)
-    const int iLead = FindLeadingMuon_TightPF(nMu, muPt, muEta, muPhi, has_muIDTight, muIDTight, has_muIsPF, muIsPF);
+    // Define leading electron for steps 6-8 (leading among Tight+PF)
+    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, has_eleIDTight, eleIDTight, has_eleIsPF, eleIsPF);
     if (iLead < 0)
       continue;
 
     if (isMC)
     {
-      if (!PassGenRecoMatching(iLead, muPt, muEta, muPhi, muCharge, genPt, genEta, genPhi, genChg))
+      if (!PassGenRecoMatching(iLead, elePt, eleEta, elePhi, eleCharge, genPt, genEta, genPhi, genChg))
       {
-        //cout << "We see a gen-reco matching failed case" << endl;
-        //continue;
+        // cout << "We see a gen-reco matching failed case" << endl;
+        // continue;
       }
     }
 
-    // (6) Leading muon pT > 25 and |eta| < 2.4
-    if (!muPt || muPt->at(iLead) <= cfg.muPt25)
+    // (6) Leading electron pT > 25 and |eta| < 2.4
+    if (!elePt || elePt->at(iLead) <= cfg.elePt25)
       continue;
-    if (!muEta || abs(muEta->at(iLead)) > cfg.muEtaMax)
+    if (!eleEta || abs(eleEta->at(iLead)) > cfg.eleEtaMax)
       continue;
     N[6]++;
 
-    // (7) Leading muon Iso < 0.15
-    const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
+    // (7) Leading electron Iso < 0.15
+    const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
     if (isoLead >= cfg.isoMax)
       continue;
     N[7]++;
 
-    // (8) Leading muon matched to trigger
-    const bool passMatch = PassLeadingMuonTrigMatch(cfg, iLead, muEta, muPhi,
+    // (8) Leading electron matched to trigger
+    const bool passMatch = PassLeadingElectronTrigMatch(cfg, iLead, eleEta, elePhi,
                                                     has_trgObjPt, trgObjPt,
                                                     has_trgObjEta, trgObjEta,
                                                     has_trgObjPhi, trgObjPhi,
@@ -797,12 +855,71 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
     const double met = metv.Mod();
     const double metPhi = metv.Phi();
-    const double mu_phi = muPhi->at(iLead);
-    const double dphi = TVector2::Phi_mpi_pi(mu_phi - metPhi);
-    const double mt = std::sqrt(2.0 * muPt->at(iLead) * met * (1.0 - std::cos(dphi)));
+    const double ele_phi = elePhi->at(iLead);
+    const double dphi = TVector2::Phi_mpi_pi(ele_phi - metPhi);
+    const double mt = std::sqrt(2.0 * elePt->at(iLead) * met * (1.0 - std::cos(dphi)));
 
-    hMet_final->Fill(met);
-    hMt_final->Fill(mt);
+    auto FindBin = [&](double y) -> int
+    {
+      for (int b = 0; b < NY; b++)
+      {
+        if (y >= yEdges[b] && y < yEdges[b + 1])
+          return b;
+      }
+      if (y == yEdges[NY])
+        return NY - 1; // include right edge
+      return -1;
+    };
+
+    auto FindBin_FB = [&](double y) -> int
+    {
+      for (int b = 0; b < NY; b++)
+      {
+        if (y >= yEdges_FB[b] && y < yEdges_FB[b + 1])
+          return b;
+      }
+      if (y == yEdges_FB[NY])
+        return NY - 1; // include right edge
+      return -1;
+    };
+
+    int q = eleCharge->at(iLead); // +1 or -1
+    bool isWp = (q > 0);
+    bool isWm = (q < 0);
+
+    // [NOTICE] I filp the sign here for eta, define p going (-Z) as forward
+
+    const double y = (-1) * eleEta->at(iLead);
+    const int ybin = FindBin(y);
+    const int ybin_FB = FindBin_FB(y);
+
+    if (ybin >= 0)
+    {
+      if (isWp)
+      {
+        h_met_Wp[ybin]->Fill(met);
+        h_mt_Wp[ybin]->Fill(mt);
+      }
+      else if (isWm)
+      {
+        h_met_Wm[ybin]->Fill(met);
+        h_mt_Wm[ybin]->Fill(mt);
+      }
+    }
+
+    if (ybin_FB >= 0)
+    {
+      if (isWp)
+      {
+        h_met_Wp_FB[ybin_FB]->Fill(met);
+        h_mt_Wp_FB[ybin_FB]->Fill(mt);
+      }
+      else if (isWm)
+      {
+        h_met_Wm_FB[ybin_FB]->Fill(met);
+        h_mt_Wm_FB[ybin_FB]->Fill(mt);
+      }
+    }
   }
 
   // -------------------------
@@ -898,61 +1015,21 @@ void DrawWToMuNu_PFMet_MC(const char *fname =
     ftxtout.close();
   }
 
-  // -------------------------
-  // Draw and save final histograms
-  // -------------------------
-
-  // Global style defaults (apply to all newly-created pads/canvases)
-  gStyle->SetPadTopMargin(0.04);
-  gStyle->SetPadLeftMargin(0.15);
-  gStyle->SetPadRightMargin(0.08);
-  gStyle->SetPadBottomMargin(0.13);
-
-  // ticks on both sides (x and y)
-  gStyle->SetPadTickX(1);
-  gStyle->SetPadTickY(1);
-
-  // Axis fonts (42 = Helvetica / ROOT default, not Times despite the comment)
-  gStyle->SetTitleFont(42, "XYZ");
-  gStyle->SetLabelFont(42, "XYZ");
-
-  // Axis label sizes
-  gStyle->SetLabelSize(0.045, "XYZ");
-
-  gStyle->SetTitleOffset(1.1, "X");
-  gStyle->SetTitleOffset(1.6, "Y");
-
-  gStyle->SetTitleSize(0.06, "XYZ");
-
-  // mT
-  TCanvas *c1 = new TCanvas("c1", "mT final", 800, 800);
-  hMt_final->Draw("hist");
-
-  TPaveText *p = new TPaveText(0.55, 0.43, 0.88, 0.68, "NDC");
-  p->SetFillStyle(0);
-  p->SetBorderSize(0);
-  p->AddText(cfg.outPrefix.c_str());
-  p->AddText("pprimaryVertexFilter, pclusterCompatibilityFilter");
-  p->AddText(Form("Leading mu p_{T}>%.0f, |#eta|<%.1f", cfg.muPt25, cfg.muEtaMax));
-  p->AddText(Form("Using HLT_OxyL1SingleMuOpen_v1, dR < %f", cfg.trigMatchDR));
-  if (cfg.applyVz)
-    p->AddText(Form("|v_{z}|<%.0f cm", cfg.vzMax));
-  p->AddText("MET: computed from PF candidates");
-  p->Draw();
-
-  c1->SaveAs(("./mT/" + cfg.outPrefix + "_mT.png").c_str());
-  c1->SaveAs(("./mT/" + cfg.outPrefix + "_mT.pdf").c_str());
-
-  // MET
-  TCanvas *c2 = new TCanvas("c2", "MET final", 800, 800);
-  hMet_final->Draw("hist");
-  c2->SaveAs(("./met/" + cfg.outPrefix + "_MET.png").c_str());
-  c2->SaveAs(("./met/" + cfg.outPrefix + "_MET.pdf").c_str());
-
   // Save hists
   TFile *fout = new TFile(("./rootfile/" + cfg.outPrefix + "_hist.root").c_str(), "RECREATE");
-  hMet_final->Write("", 2);
-  hMt_final->Write("", 2);
+
+  for (int i = 0; i < NY; i++)
+  {
+    h_met_Wp[i]->Write("", 2);
+    h_met_Wm[i]->Write("", 2);
+    h_mt_Wp[i]->Write("", 2);
+    h_mt_Wm[i]->Write("", 2);
+
+    h_met_Wp_FB[i]->Write("", 2);
+    h_met_Wm_FB[i]->Write("", 2);
+    h_mt_Wp_FB[i]->Write("", 2);
+    h_mt_Wm_FB[i]->Write("", 2);
+  }
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << cfg.outPrefix << "\n";
