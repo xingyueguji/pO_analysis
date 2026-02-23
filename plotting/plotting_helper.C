@@ -120,8 +120,7 @@ static void DrawInfoBox(const PlotStyle &ps,
 //    - optional "tuner" lets you do plot-specific tweaks
 // ---------------------------------------------------------
 using PlotTuner = std::function<void(TCanvas *, TH1 *)>;
-using GraphTuner = std::function<void(TCanvas*, TGraphErrors*)>;
-
+using GraphTuner = std::function<void(TCanvas *, TGraphErrors *)>;
 
 /* Example of how to use a lambda version of type defined Plot Tuner
 PlotTuner mtTuner = [](TCanvas* c, TH1* h) {
@@ -190,9 +189,9 @@ static std::string RangeLabel(const char *var, int iy, const double *edges, int 
     return Form("%s #in [%.1f, %.1f)", var, a, b);
 }
 
-static void ApplyGraphStyle(TGraphErrors* g, const PlotStyle& ps,
-                            const std::string& xtitle,
-                            const std::string& ytitle)
+static void ApplyGraphStyle(TGraphErrors *g, const PlotStyle &ps,
+                            const std::string &xtitle,
+                            const std::string &ytitle)
 {
     g->SetTitle("");
     g->GetXaxis()->SetTitle(xtitle.c_str());
@@ -212,22 +211,25 @@ static void ApplyGraphStyle(TGraphErrors* g, const PlotStyle& ps,
     g->GetYaxis()->SetTitleOffset(ps.yTitleOffset);
 }
 
-static void SaveNiceGraph(TGraphErrors* g,
-                          const std::string& outPathNoExt,
-                          const std::string& xTitle,
-                          const std::string& yTitle,
-                          const std::string& mainTitle,
-                          const std::string& subTitle1,
-                          const std::string& subTitle2,
-                          const std::vector<std::string>& boxLines,
-                          const PlotStyle& ps = PlotStyle(),
-                          GraphTuner tuner = nullptr)
+static void SaveNiceGraph(TGraphErrors *g,
+                          const std::string &outPathNoExt,
+                          const std::string &xTitle,
+                          const std::string &yTitle,
+                          const std::string &mainTitle,
+                          const std::string &subTitle1,
+                          const std::string &subTitle2,
+                          const std::vector<std::string> &boxLines,
+                          const PlotStyle &ps = PlotStyle(),
+                          GraphTuner tuner = nullptr,
+                          TGraphErrors *g1 = nullptr,
+                          TGraphErrors *g2 = nullptr)
 {
-    if (!g) return;
+    if (!g)
+        return;
 
     gStyle->SetOptStat(ps.showStats ? 1110 : 0);
 
-    TCanvas* c = new TCanvas(Form("c_%s", g->GetName()), "", ps.w, ps.h);
+    TCanvas *c = new TCanvas(Form("c_%s", g->GetName()), "", ps.w, ps.h);
     ApplyCanvasStyle(c, ps);
     c->cd();
 
@@ -238,9 +240,27 @@ static void SaveNiceGraph(TGraphErrors* g,
     DrawHeader(ps, mainTitle, subTitle1, subTitle2);
     DrawInfoBox(ps, boxLines);
 
-    if (tuner) tuner(c, g);
+    if (tuner)
+        tuner(c, g);
 
     CMS_lumi(c, 13, 10);
+
+    if (g1)
+    {
+        if (tuner)
+            tuner(c, g1);
+
+        g1->SetMarkerColor(kRed);
+        g1->Draw("P SAME");
+    }
+    if (g2)
+    {
+        if (tuner)
+            tuner(c, g2);
+            
+        g2->SetMarkerColor(kBlue);
+        g2->Draw("P SAME");
+    }
     c->Modified();
     c->Update();
 

@@ -140,12 +140,12 @@ void mtandmet()
             SaveNicePlot1D(
                 h_met_Wp_FB,
                 outMetDir + Form("/met_Wp_y%d_FB", iy), // outPathNoExt
-                "PF MET [GeV]",                      // xTitle
-                "Events",                            // yTitle
-                "",                                  // mainTitle (whatever you like)
-                "W^{+} #rightarrow #mu^{+}#nu",      // subTitle1
+                "PF MET [GeV]",                         // xTitle
+                "Events",                               // yTitle
+                "",                                     // mainTitle (whatever you like)
+                "W^{+} #rightarrow #mu^{+}#nu",         // subTitle1
                 yLabel_FB[iy],                          // subTitle2
-                box,                                 // info box lines
+                box,                                    // info box lines
                 ps,
                 commonTuner);
         }
