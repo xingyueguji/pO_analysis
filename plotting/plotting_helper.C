@@ -222,7 +222,9 @@ static void SaveNiceGraph(TGraphErrors *g,
                           const PlotStyle &ps = PlotStyle(),
                           GraphTuner tuner = nullptr,
                           TGraphErrors *g1 = nullptr,
-                          TGraphErrors *g2 = nullptr)
+                          TGraphErrors *g2 = nullptr,
+                          TGraphErrors *g3 = nullptr,
+                          TGraphErrors *g4 = nullptr)
 {
     if (!g)
         return;
@@ -257,10 +259,214 @@ static void SaveNiceGraph(TGraphErrors *g,
     {
         if (tuner)
             tuner(c, g2);
-            
+
         g2->SetMarkerColor(kBlue);
         g2->Draw("P SAME");
     }
+    if (g3)
+    {
+        if (tuner)
+            tuner(c, g3);
+
+        g3->SetMarkerColor(kGreen);
+        g3->Draw("P SAME");
+    }
+
+    if (g4)
+    {
+        if (tuner)
+            tuner(c, g4);
+
+        g4->SetMarkerColor(kPink);
+        g4->Draw("P SAME");
+    }
+    c->Modified();
+    c->Update();
+
+    c->SaveAs((outPathNoExt + ".png").c_str());
+    c->SaveAs((outPathNoExt + ".pdf").c_str());
+
+    delete c;
+}
+
+static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
+                                    const std::string &outPathNoExt,
+                                    const std::string &xTitle,
+                                    const std::string &yTitle,
+                                    const std::string &mainTitle,
+                                    const std::string &subTitle1,
+                                    const std::string &subTitle2,
+                                    const std::vector<std::string> &boxLines,
+                                    const PlotStyle &ps = PlotStyle(),
+                                    GraphTuner tuner = nullptr,
+                                    TGraphErrors *g1 = nullptr,
+                                    TGraphErrors *g2 = nullptr,
+                                    TGraphErrors *g3 = nullptr,
+                                    TGraphErrors *g4 = nullptr)
+{
+    if (!g)
+        return;
+
+    gStyle->SetOptStat(ps.showStats ? 1110 : 0);
+
+    TCanvas *c = new TCanvas(Form("c_%s", g->GetName()), "", ps.w, ps.h);
+    ApplyCanvasStyle(c, ps);
+    c->cd();
+
+    ApplyGraphStyle(g, ps, xTitle, yTitle);
+
+    g->Draw(ps.drawOptGraph.c_str());
+
+    // --- Clone graph to show 2x statistics (errors / sqrt(2)) ---
+    TGraphErrors *g_stat2x = (TGraphErrors *)g->Clone(Form("%s_stat2x", g->GetName()));
+
+    const double scale = 1.0 / 1.4; // ~1/sqrt(2)
+
+    for (int i = 0; i < g_stat2x->GetN(); ++i)
+    {
+        double ex = g_stat2x->GetErrorX(i);
+        double ey = g_stat2x->GetErrorY(i);
+
+        g_stat2x->SetPointError(i, 0, ey * scale);
+    }
+
+    // style: only draw error bars, different color
+    g_stat2x->SetLineColor(kRed + 1);
+    g_stat2x->SetMarkerSize(0); // hide markers
+    g_stat2x->SetLineWidth(3);
+
+    // draw only the error bars
+    g_stat2x->Draw("E SAME");
+
+    DrawHeader(ps, mainTitle, subTitle1, subTitle2);
+    DrawInfoBox(ps, boxLines);
+
+    if (tuner)
+        tuner(c, g);
+
+    CMS_lumi(c, 13, 10);
+
+    if (g1)
+    {
+
+        g1->SetFillColorAlpha(kBlue, 0.35); // translucent band
+        g1->SetFillStyle(1001);             // solid fill
+        g1->SetMarkerSize(0);               // hide points
+        g1->SetMarkerStyle(0);              // hide markers
+        g1->SetLineWidth(0);                // hide error bar stems
+
+        g1->Draw("3");      // A = draw axes, 3 = filled error band
+        g1->Draw("L SAME"); // draw central line on top
+    }
+    if (g2)
+    {
+
+        g2->SetFillColorAlpha(kGreen, 0.35); // translucent band
+        g2->SetFillStyle(1001);              // solid fill
+        g2->SetMarkerSize(0);                // hide points
+        g2->SetMarkerStyle(0);               // hide markers
+        g2->SetLineWidth(0);                 // hide error bar stems
+
+        g2->Draw("3");      // A = draw axes, 3 = filled error band
+        g2->Draw("L SAME"); // draw central line on top
+    }
+    if (g3)
+    {
+
+        g3->SetFillColorAlpha(kOrange, 0.35); // translucent band
+        g3->SetFillStyle(1001);               // solid fill
+        g3->SetMarkerSize(0);                 // hide points
+        g3->SetMarkerStyle(0);                // hide markers
+        g3->SetLineWidth(0);                  // hide error bar stems
+
+        g3->Draw("3");      // A = draw axes, 3 = filled error band
+        g3->Draw("L SAME"); // draw central line on top
+    }
+
+    if (g4)
+    {
+
+        g4->SetFillColorAlpha(kRed, 0.35); // translucent band
+        g4->SetFillStyle(1001);            // solid fill
+        g4->SetMarkerSize(0);              // hide points
+        g4->SetMarkerStyle(0);             // hide markers
+        g4->SetLineWidth(0);               // hide error bar stems
+
+        g4->Draw("3");      // A = draw axes, 3 = filled error band
+        g4->Draw("L SAME"); // draw central line on top
+    }
+
+    TLegend *leg = new TLegend(0.20, 0.15, 0.45, 0.38);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+    leg->SetTextFont(42);
+    leg->SetTextSize(0.035);
+
+    // --- Data: points ---
+    leg->AddEntry(g, "Data", "p");
+    leg->AddEntry(g_stat2x, "With Electron", "l");
+
+    // --- Models: error bands ---
+    leg->AddEntry(g1, "EPPS21", "f");
+    leg->AddEntry(g2, "nCTEQ15HQ", "f");
+    leg->AddEntry(g3, "nNNPDF3.0", "f");
+    leg->AddEntry(g4, "TUJU21nlo", "f");
+
+    leg->Draw();
+
+    c->Modified();
+    c->Update();
+
+    c->SaveAs((outPathNoExt + ".png").c_str());
+    c->SaveAs((outPathNoExt + ".pdf").c_str());
+
+    delete c;
+}
+
+static void SaveNicePlot1D_twoplots(TH1 *h, TH1 *h2,
+                                    const std::string &outPathNoExt, // e.g. "./mT/foo"
+                                    const std::string &xTitle,
+                                    const std::string &yTitle,
+                                    const std::string &mainTitle,
+                                    const std::string &subTitle1,
+                                    const std::string &subTitle2,
+                                    const std::vector<std::string> &boxLines,
+                                    const PlotStyle &ps = PlotStyle(), const PlotStyle &ps1 = PlotStyle(),
+                                    PlotTuner tuner = nullptr)
+{
+    if (!h)
+        return;
+
+    gStyle->SetOptStat(ps.showStats ? 1110 : 0);
+
+    TCanvas *c = new TCanvas(Form("c_%s", h->GetName()), "", ps.w, ps.h);
+    ApplyCanvasStyle(c, ps);
+
+    c->cd();
+
+    ApplyHistStyle(h, ps, xTitle, yTitle);
+    ApplyHistStyle(h2, ps1, xTitle, yTitle);
+
+    h->Draw(ps.drawOpt.c_str());
+    h2->Draw(ps1.drawOpt.c_str());
+
+    DrawHeader(ps, mainTitle, subTitle1, subTitle2);
+    DrawInfoBox(ps, boxLines);
+
+    TLegend *leg1 = new TLegend(0.65, 0.45, 0.88, 0.65);
+    leg1->SetBorderSize(0);
+    leg1->SetFillStyle(0);
+    leg1->AddEntry(h, "Muon", "l");
+    leg1->AddEntry(h2, "Electron", "l");
+    leg1->Draw();
+
+    if (tuner)
+        tuner(c, h); // e.g. change ranges, add extra lines, etc.
+
+    // ensure parent directory exists
+    // outPathNoExt could include dirs, so you can mkdir manually outside too.
+
+    CMS_lumi(c, 13, 10);
     c->Modified();
     c->Update();
 

@@ -39,7 +39,7 @@ void FBratio(
     bool integrateFull = true,                             // integrate full range or [xMin,xMax]
     double xMin = 30.0,
     double xMax = 200.0,
-    int NY = 16,
+    int NY = 12,
     bool combineCharges = true,          // if true -> use (Wp+Wm) yields
     bool alsoWriteChargeSeparated = true // if combineCharges==true, optionally also write W+ and W-
 )
@@ -60,12 +60,20 @@ void FBratio(
     // If you know your real yEdges, fill them here (size NY+1).
     // Otherwise x-axis will be |y| bin index center.
     std::vector<double> yEdges; // empty -> use index axis
-    // Example:
+                                // Example:
     yEdges = {
-        -1.7068, -1.4501, -1.1934, -0.9368,
-        -0.6801, -0.4234, -0.1667, 0.0899,
-        0.3466, 0.6033, 0.8599, 1.1166,
-        1.3733, 1.6300, 1.8866, 2.1433,
+        -1.7068,
+        -1.3646,
+        -1.0223,
+        -0.6801,
+        -0.3379,
+        0.0044,
+        0.3466,
+        0.6888,
+        1.0311,
+        1.3733,
+        1.7155,
+        2.0578,
         2.4000};
 
     const double deltaY = 0.3466; // pO rapidity shift

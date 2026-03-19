@@ -51,6 +51,14 @@
 #include <cmath>
 #include <algorithm>
 
+enum SampleType
+{
+  kData,
+  kDY,
+  kWp,
+  kWm
+};
+
 // ---------------------------------------------
 // Small utilities
 // ---------------------------------------------
@@ -439,17 +447,40 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 void DrawWToMuNu_PFMet(const char *fname =
                            "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                       bool isMC = false, int version = 8)
+                       SampleType sample = kWm)
 {
+  bool isMC = false;
 
   gStyle->SetOptStat(0);
+
+  if (sample == kData)
+  {
+    isMC = false;
+  }
+  else
+  {
+    isMC = true;
+  }
 
   WConfig cfg;
 
   if (isMC)
   {
-    fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_%d_2025.root", version);
-    cfg.outPrefix = cfg.outPrefix + "_MC" + Form("_%d", version);
+    if (sample == kDY)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_mu_Z.root");
+      cfg.outPrefix += "_DY";
+    }
+    if (sample == kWp)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_mu.root");
+      cfg.outPrefix += "_Wp";
+    }
+    if (sample == kWm)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_mu.root");
+      cfg.outPrefix += "_Wm";
+    }
   }
 
   TFile *f = TFile::Open(fname);
@@ -466,6 +497,7 @@ void DrawWToMuNu_PFMet(const char *fname =
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleMuOpen_v");
   TTree *tEvent = (TTree *)f->Get("skimanalysis/HltTree");
   TTree *tGen;
+
   if (isMC)
   {
     tGen = (TTree *)f->Get("HiGenParticleAna/hi");
@@ -676,15 +708,24 @@ void DrawWToMuNu_PFMet(const char *fname =
   // -------------------------
   // Output hist (after final step 8)
   // -------------------------
-  static const int NY = 16;
+  static const int NY = 12;
   double yEdges[NY + 1] = {
-      -2.4, -2.1, -1.8, -1.5, -1.2, -0.9, -0.6, -0.3,
-      0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4};
+      -2.4, -2.0, -1.6, -1.2, -0.8, -0.4,
+      0.0, 0.4, 0.8, 1.2, 1.6, 2.0,
+      2.4};
   double yEdges_FB[NY + 1] = {
-      -1.7068, -1.4501, -1.1934, -0.9368,
-      -0.6801, -0.4234, -0.1667, 0.0899,
-      0.3466, 0.6033, 0.8599, 1.1166,
-      1.3733, 1.6300, 1.8866, 2.1433,
+      -1.7068,
+      -1.3646,
+      -1.0223,
+      -0.6801,
+      -0.3379,
+      0.0044,
+      0.3466,
+      0.6888,
+      1.0311,
+      1.3733,
+      1.7155,
+      2.0578,
       2.4000};
 
   TH1D *h_met_Wp[NY];
@@ -968,7 +1009,7 @@ void DrawWToMuNu_PFMet(const char *fname =
   std::string mcTag = isMC ? "MC" : "Data";
 
   std::string outFile =
-      outDir + cfg.outPrefix + "_" + mcTag + Form("_v%d", version) + ".txt";
+      outDir + cfg.outPrefix + "_" + mcTag + ".txt";
 
   std::ofstream ftxtout(outFile.c_str(), std::ios::out | std::ios::trunc);
   if (!ftxtout.is_open())
@@ -978,7 +1019,7 @@ void DrawWToMuNu_PFMet(const char *fname =
   }
   else
   {
-    ftxtout << "\n========== Cutflow (strict table logic) ==========\n";
+    ftxtout << "\n========== Cutflow (AN table logic) ==========\n";
     ftxtout << " i   Ni              (Ni-Ni-1)/N1        Ni/Ni-1\n";
     ftxtout << "--------------------------------------------------\n";
 

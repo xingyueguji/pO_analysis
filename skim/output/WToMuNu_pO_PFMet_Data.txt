@@ -1,5 +1,5 @@
 
-========== Cutflow (strict table logic) ==========
+========== Cutflow (AN table logic) ==========
  i   Ni              (Ni-Ni-1)/N1        Ni/Ni-1
 --------------------------------------------------
  0   2215454           (n/a)           (n/a) 

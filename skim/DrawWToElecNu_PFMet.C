@@ -51,6 +51,14 @@
 #include <cmath>
 #include <algorithm>
 
+enum SampleType
+{
+  kData = 0,
+  kDY,
+  kWp,
+  kWm
+};
+
 // ---------------------------------------------
 // Small utilities
 // ---------------------------------------------
@@ -90,12 +98,12 @@ static double DeltaR(double eta1, double phi1, double eta2, double phi2)
 struct WConfig
 {
   // Table parameters
-  double elecPt25 = 25.0;
-  double dyElecPtMin = 15.0;
-  double isoMax = 0.15;
+  double elePt25 = 25.0;
+  double dyElePtMin = 10.0;
+  double isoMax = 0.095;
   double dyMassMin = 80.0; // your requested M>30 inside DY veto
   double dyMassMax = 110.0;
-  double elecEtaMax = 2.4;
+  double eleEtaMax = 2.4;
 
   // For trigger-object matching
   double trigMatchDR = 0.1;
@@ -182,9 +190,8 @@ static bool PassEventSelection_pO(TTree *tHi,
 // Step 1 helper: exists PF electron with pt>25 // to be changed
 // ---------------------------------------------
 static bool ExistsPFElectronPt25(const WConfig &cfg,
-                             int nEle,
-                             std::vector<float> *elePt,
-                             bool has_eleIsPF, std::vector<int> *eleIsPF)
+                                 int nEle,
+                                 std::vector<float> *elePt)
 {
   if (!elePt)
     return false;
@@ -193,10 +200,6 @@ static bool ExistsPFElectronPt25(const WConfig &cfg,
   {
     const double pt = elePt->at(i);
     if (pt <= cfg.elePt25)
-      continue;
-
-    // PF requirement only if branch exists; if missing we can't enforce PF, so treat as pass
-    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
       continue;
 
     return true;
@@ -208,10 +211,8 @@ static bool ExistsPFElectronPt25(const WConfig &cfg,
 // Step 5 helper: exists Tight ID electron (no pt requirement in table) // to be changed
 // ---------------------------------------------
 static bool ExistsTightElectron(int nEle,
-                            bool has_eleIDTight, std::vector<int> *eleIDTight)
+                                std::vector<int> *eleIDTight)
 {
-  if (!has_eleIDTight || !eleIDTight)
-    return false; // if table requires tight, and branch absent, we should fail rather than silently pass
 
   for (int i = 0; i < nEle; ++i)
   {
@@ -223,15 +224,14 @@ static bool ExistsTightElectron(int nEle,
 
 // ---------------------------------------------
 // Leading electron definition for steps 6-8:
-// We'll define "leading electron" among electrons that are Tight (if exists) and PF (if exists). 
+// We'll define "leading electron" among electrons that are Tight (if exists) and PF (if exists).
 // This is the closest to typical W analysis and makes steps 6-8 consistent.
 // ---------------------------------------------
 static int FindLeadingElectron_TightPF(int nEle,
-                                   std::vector<float> *elePt,
-                                   std::vector<float> *eleEta,
-                                   std::vector<float> *elePhi,
-                                   bool has_eleIDTight, std::vector<int> *eleIDTight,
-                                   bool has_eleIsPF, std::vector<int> *eleIsPF)
+                                       std::vector<float> *elePt,
+                                       std::vector<float> *eleEta,
+                                       std::vector<float> *elePhi,
+                                       std::vector<int> *eleIDTight)
 {
   if (!elePt || !eleEta || !elePhi)
     return -1;
@@ -244,11 +244,7 @@ static int FindLeadingElectron_TightPF(int nEle,
     const double pt = elePt->at(i);
 
     // Tight requirement if branch exists; if missing, cannot define “tight leading electron”
-    if (has_eleIDTight && eleIDTight && eleIDTight->at(i) == 0)
-      continue;
-
-    // PF requirement if branch exists
-    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
+    if (eleIDTight && eleIDTight->at(i) == 0)
       continue;
 
     if (pt > bestPt)
@@ -271,19 +267,11 @@ static bool PassDYVeto(const WConfig &cfg,
                        std::vector<float> *eleEta,
                        std::vector<float> *elePhi,
                        std::vector<int> *eleCharge,
-                       bool has_eleIDTight, std::vector<int> *eleIDTight,
-                       bool has_eleIsPF, std::vector<int> *eleIsPF,
-                       std::vector<float> *elePFChIso,
-                       std::vector<float> *elePFNeuIso,
-                       std::vector<float> *elePFPhoIso)
+                       std::vector<int> *eleIDTight,
+                       std::vector<int> *eleIso)
 {
   if (!elePt || !eleEta || !elePhi || !eleCharge)
     return true; // can't apply -> do not veto
-
-  // If tight branch missing, we can't apply the DY veto as defined (table says "DY veto" though),
-  // but to avoid silently over-vetoing/under-vetoing, we choose: if missing, do not veto.
-  if (!has_eleIDTight || !eleIDTight)
-    return true;
 
   std::vector<int> cand;
   cand.reserve(nEle);
@@ -297,17 +285,13 @@ static bool PassDYVeto(const WConfig &cfg,
     if (eleIDTight->at(i) == 0)
       continue;
 
-    if (has_eleIsPF && eleIsPF && eleIsPF->at(i) == 0)
-      continue;
-
-    const double isoRel = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
-    if (isoRel >= cfg.isoMax)
+    if (eleIso->at(i) == 0)
       continue;
 
     cand.push_back(i);
   }
 
-  const double eleMass = 0.105658;
+  const double eleMass = 0.000511;
 
   for (size_t a = 0; a < cand.size(); ++a)
   {
@@ -348,16 +332,16 @@ static bool TriggerFired(int hltBit)
 // If neither exists, warn and accept (cannot enforce).
 // ---------------------------------------------
 static bool PassLeadingElectronTrigMatch(const WConfig &cfg,
-                                     int iLead,
-                                     std::vector<float> *eleEta,
-                                     std::vector<float> *elePhi,
+                                         int iLead,
+                                         std::vector<float> *eleEta,
+                                         std::vector<float> *elePhi,
 
-                                     // Option A: trigger object branches (if exist)
-                                     bool has_trgObjPt, std::vector<double> *trgObjPt,
-                                     bool has_trgObjEta, std::vector<double> *trgObjEta,
-                                     bool has_trgObjPhi, std::vector<double> *trgObjPhi,
-                                     bool has_trgObjId, std::vector<double> *trgObjId,
-                                     bool &warnedNoTrigMatchInfo)
+                                         // Option A: trigger object branches (if exist)
+                                         bool has_trgObjPt, std::vector<double> *trgObjPt,
+                                         bool has_trgObjEta, std::vector<double> *trgObjEta,
+                                         bool has_trgObjPhi, std::vector<double> *trgObjPhi,
+                                         bool has_trgObjId, std::vector<double> *trgObjId,
+                                         bool &warnedNoTrigMatchInfo)
 {
   if (iLead < 0 || !eleEta || !elePhi)
     return false;
@@ -438,9 +422,19 @@ static bool PassGenRecoMatching(
 // Main
 // ---------------------------------------------
 void DrawWToElecNu_PFMet(const char *fname =
-                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                       bool isMC = false, int version = 8)
+                             "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
+                         SampleType sample = kWm)
 {
+  bool isMC = false;
+
+  if (sample == kData)
+  {
+    isMC = false;
+  }
+  else
+  {
+    isMC = true;
+  }
 
   gStyle->SetOptStat(0);
 
@@ -448,8 +442,21 @@ void DrawWToElecNu_PFMet(const char *fname =
 
   if (isMC)
   {
-    fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_%d_2025.root", version);
-    cfg.outPrefix = cfg.outPrefix + "_MC" + Form("_%d", version);
+    if (sample == kDY)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_ele_Z.root");
+      cfg.outPrefix += "_DY";
+    }
+    if (sample == kWp)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_ele.root");
+      cfg.outPrefix += "_Wp";
+    }
+    if (sample == kWm)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_ele.root");
+      cfg.outPrefix += "_Wm";
+    }
   }
 
   TFile *f = TFile::Open(fname);
@@ -463,7 +470,7 @@ void DrawWToElecNu_PFMet(const char *fname =
   TTree *tHi = (TTree *)f->Get("hiEvtAnalyzer/HiTree");
   TTree *tPF = (TTree *)f->Get("particleFlowAnalyser/pftree");
   TTree *tHLT = (TTree *)f->Get("hltanalysis/HltTree");
-  TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEleOpen_v");
+  TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEG10_v");
   TTree *tEvent = (TTree *)f->Get("skimanalysis/HltTree");
   TTree *tGen;
   if (isMC)
@@ -485,8 +492,6 @@ void DrawWToElecNu_PFMet(const char *fname =
   std::vector<float> *eleEta = nullptr;
   std::vector<float> *elePhi = nullptr;
   std::vector<int> *eleCharge = nullptr;
-  std::vector<int> *eleIDTight = nullptr;
-  std::vector<int> *eleIsPF = nullptr;
 
   std::vector<float> *elePFChIso = nullptr;
   std::vector<float> *elePFNeuIso = nullptr;
@@ -503,11 +508,41 @@ void DrawWToElecNu_PFMet(const char *fname =
   tEle->SetBranchStatus("elePhi", 1);
   tEle->SetBranchStatus("eleCharge", 1);
 
-  // ID/PF
-  if (HasBranch(tEle, "eleIDTight"))
-    tEle->SetBranchStatus("eleIDTight", 1);
-  if (HasBranch(tEle, "eleIsPF"))
-    tEle->SetBranchStatus("eleIsPF", 1);
+  tEle->SetBranchAddress("nEle", &nEle);
+  tEle->SetBranchAddress("elePt", &elePt);
+  tEle->SetBranchAddress("eleEta", &eleEta);
+  tEle->SetBranchAddress("elePhi", &elePhi);
+  tEle->SetBranchAddress("eleCharge", &eleCharge);
+
+  // Here's the electron CUT BASED ID and MVA BASED ID
+
+  std::vector<int> *eleMVAIdWP80 = nullptr;
+  std::vector<int> *eleMVAIdWP85 = nullptr;
+  std::vector<int> *eleMVAIdWP90 = nullptr;
+  std::vector<int> *eleMVAIdWP95 = nullptr;
+
+  std::vector<int> *eleCutIdWP70 = nullptr;
+  std::vector<int> *eleCutIdWP80 = nullptr;
+  std::vector<int> *eleCutIdWP90 = nullptr;
+  std::vector<int> *eleCutIdWP95 = nullptr;
+
+  tEle->SetBranchStatus("eleMVAIdWP80", 1);
+  tEle->SetBranchStatus("eleMVAIdWP85", 1);
+  tEle->SetBranchStatus("eleMVAIdWP90", 1);
+  tEle->SetBranchStatus("eleMVAIdWP95", 1);
+  tEle->SetBranchStatus("eleCutIdWP70", 1);
+  tEle->SetBranchStatus("eleCutIdWP80", 1);
+  tEle->SetBranchStatus("eleCutIdWP90", 1);
+  tEle->SetBranchStatus("eleCutIdWP95", 1);
+
+  tEle->SetBranchAddress("eleMVAIdWP80", &eleMVAIdWP80);
+  tEle->SetBranchAddress("eleMVAIdWP85", &eleMVAIdWP85);
+  tEle->SetBranchAddress("eleMVAIdWP90", &eleMVAIdWP90);
+  tEle->SetBranchAddress("eleMVAIdWP95", &eleMVAIdWP95);
+  tEle->SetBranchAddress("eleCutIdWP70", &eleCutIdWP70);
+  tEle->SetBranchAddress("eleCutIdWP80", &eleCutIdWP80);
+  tEle->SetBranchAddress("eleCutIdWP90", &eleCutIdWP90);
+  tEle->SetBranchAddress("eleCutIdWP95", &eleCutIdWP95);
 
   // Iso
   if (HasBranch(tEle, "elePFChIso"))
@@ -516,20 +551,6 @@ void DrawWToElecNu_PFMet(const char *fname =
     tEle->SetBranchStatus("elePFNeuIso", 1);
   if (HasBranch(tEle, "elePFPhoIso"))
     tEle->SetBranchStatus("elePFPhoIso", 1);
-
-  tEle->SetBranchAddress("nEle", &nEle);
-  tEle->SetBranchAddress("elePt", &elePt);
-  tEle->SetBranchAddress("eleEta", &eleEta);
-  tEle->SetBranchAddress("elePhi", &elePhi);
-  tEle->SetBranchAddress("eleCharge", &eleCharge);
-
-  const bool has_eleIDTight = HasBranch(tEle, "eleIDTight");
-  const bool has_eleIsPF = HasBranch(tEle, "eleIsPF");
-
-  if (has_eleIDTight)
-    tEle->SetBranchAddress("eleIDTight", &eleIDTight);
-  if (has_eleIsPF)
-    tEle->SetBranchAddress("eleIsPF", &eleIsPF);
 
   const bool has_elePFChIso = HasBranch(tEle, "elePFChIso");
   const bool has_elePFNeuIso = HasBranch(tEle, "elePFNeuIso");
@@ -542,11 +563,27 @@ void DrawWToElecNu_PFMet(const char *fname =
   if (has_elePFPhoIso)
     tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso);
 
+  // Another region for isolation
+  std::vector<int> *eleMVAIsoWP80 = nullptr;
+  std::vector<int> *eleMVAIsoWP85 = nullptr;
+  std::vector<int> *eleMVAIsoWP90 = nullptr;
+  std::vector<int> *eleMVAIsoWP95 = nullptr;
+
+  tEle->SetBranchStatus("eleMVAIsoWP80", 1);
+  tEle->SetBranchStatus("eleMVAIsoWP85", 1);
+  tEle->SetBranchStatus("eleMVAIsoWP90", 1);
+  tEle->SetBranchStatus("eleMVAIsoWP95", 1);
+
+  tEle->SetBranchAddress("eleMVAIsoWP80", &eleMVAIsoWP80);
+  tEle->SetBranchAddress("eleMVAIsoWP85", &eleMVAIsoWP85);
+  tEle->SetBranchAddress("eleMVAIsoWP90", &eleMVAIsoWP90);
+  tEle->SetBranchAddress("eleMVAIsoWP95", &eleMVAIsoWP95);
+
   // -------------------------
   // Trigger fired bit (step 3):
   // -------------------------
-  const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleEleOpen_v1");
-  Int_t HLT_OxyL1SingleEleOpen_v1 = 0;
+  const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleEG10_v1");
+  Int_t HLT_OxyL1SingleEG10_v1 = 0;
   bool has_hlt = false;
   tHLT->SetBranchStatus("*", 0);
 
@@ -554,12 +591,12 @@ void DrawWToElecNu_PFMet(const char *fname =
   {
     has_hlt = true;
     tHLT->SetBranchStatus(hltName.c_str(), 1);
-    tHLT->SetBranchAddress(hltName.c_str(), &HLT_OxyL1SingleEleOpen_v1);
+    tHLT->SetBranchAddress(hltName.c_str(), &HLT_OxyL1SingleEG10_v1);
     std::cout << "[INFO] Using trigger bit branch: " << hltName << "\n";
   }
   else
   {
-    std::cout << "[WARN] Could not find any branch containing 'HLT_OxyL1SingleEleOpen_v1' in hltanalysis/HltTree.\n"
+    std::cout << "[WARN] Could not find any branch containing 'HLT_OxyL1SingleEG10_v' in hltanalysis/HltTree.\n"
               << "       Step 3 (trigger fired) will be treated as PASS.\n";
   }
 
@@ -660,6 +697,12 @@ void DrawWToElecNu_PFMet(const char *fname =
   std::vector<float> *genPhi = nullptr;
   std::vector<int> *genChg = nullptr;
 
+  if (isMC && !tGen)
+  {
+    std::cerr << "[FATAL] isMC=true but no gen tree found\n";
+    return;
+  }
+
   if (isMC)
   {
     tGen->SetBranchStatus("*", 0);
@@ -677,15 +720,24 @@ void DrawWToElecNu_PFMet(const char *fname =
   // -------------------------
   // Output hist (after final step 8)
   // -------------------------
-  static const int NY = 16;
+  static const int NY = 12;
   double yEdges[NY + 1] = {
-      -2.4, -2.1, -1.8, -1.5, -1.2, -0.9, -0.6, -0.3,
-      0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4};
+      -2.4, -2.0, -1.6, -1.2, -0.8, -0.4,
+      0.0, 0.4, 0.8, 1.2, 1.6, 2.0,
+      2.4};
   double yEdges_FB[NY + 1] = {
-      -1.7068, -1.4501, -1.1934, -0.9368,
-      -0.6801, -0.4234, -0.1667, 0.0899,
-      0.3466, 0.6033, 0.8599, 1.1166,
-      1.3733, 1.6300, 1.8866, 2.1433,
+      -1.7068,
+      -1.3646,
+      -1.0223,
+      -0.6801,
+      -0.3379,
+      0.0044,
+      0.3466,
+      0.6888,
+      1.0311,
+      1.3733,
+      1.7155,
+      2.0578,
       2.4000};
 
   TH1D *h_met_Wp[NY];
@@ -773,7 +825,7 @@ void DrawWToElecNu_PFMet(const char *fname =
     N[0]++;
 
     // (1) >=1 PF eletron with pT > 25
-    if (!ExistsPFElectronPt25(cfg, nEle, elePt, has_eleIsPF, eleIsPF))
+    if (!ExistsPFElectronPt25(cfg, nEle, elePt))
       continue;
     N[1]++;
 
@@ -793,7 +845,7 @@ void DrawWToElecNu_PFMet(const char *fname =
     // (3) Trigger PAL3Ele12 fired
     if (has_hlt)
     {
-      if (!TriggerFired(HLT_OxyL1SingleEleOpen_v1))
+      if (!TriggerFired(HLT_OxyL1SingleEG10_v1))
         continue;
     }
     // if has_hlt==false, treat as pass (warned already)
@@ -802,19 +854,17 @@ void DrawWToElecNu_PFMet(const char *fname =
     // (4) Drell–Yan veto
     if (!PassDYVeto(cfg,
                     nEle, elePt, eleEta, elePhi, eleCharge,
-                    has_eleIDTight, eleIDTight,
-                    has_eleIsPF, eleIsPF,
-                    elePFChIso, elePFNeuIso, elePFPhoIso))
+                    eleCutIdWP90, eleMVAIsoWP90))
       continue;
     N[4]++;
 
     // (5) >=1 Tight ID electron
-    if (!ExistsTightElectron(nEle, has_eleIDTight, eleIDTight))
+    if (!ExistsTightElectron(nEle, eleCutIdWP90))
       continue;
     N[5]++;
 
     // Define leading electron for steps 6-8 (leading among Tight+PF)
-    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, has_eleIDTight, eleIDTight, has_eleIsPF, eleIsPF);
+    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleCutIdWP90);
     if (iLead < 0)
       continue;
 
@@ -835,18 +885,21 @@ void DrawWToElecNu_PFMet(const char *fname =
     N[6]++;
 
     // (7) Leading electron Iso < 0.15
-    const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
-    if (isoLead >= cfg.isoMax)
+    if (eleMVAIsoWP90->at(iLead) != 1)
       continue;
+
+    // const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
+    // if (isoLead >= cfg.isoMax)
+    // continue;
     N[7]++;
 
     // (8) Leading electron matched to trigger
     const bool passMatch = PassLeadingElectronTrigMatch(cfg, iLead, eleEta, elePhi,
-                                                    has_trgObjPt, trgObjPt,
-                                                    has_trgObjEta, trgObjEta,
-                                                    has_trgObjPhi, trgObjPhi,
-                                                    has_trgObjId, trgObjId,
-                                                    warnedNoTrigMatchInfo);
+                                                        has_trgObjPt, trgObjPt,
+                                                        has_trgObjEta, trgObjEta,
+                                                        has_trgObjPhi, trgObjPhi,
+                                                        has_trgObjId, trgObjId,
+                                                        warnedNoTrigMatchInfo);
     if (!passMatch)
       continue;
     N[8]++;
@@ -969,7 +1022,7 @@ void DrawWToElecNu_PFMet(const char *fname =
   std::string mcTag = isMC ? "MC" : "Data";
 
   std::string outFile =
-      outDir + cfg.outPrefix + "_" + mcTag + Form("_v%d", version) + ".txt";
+      outDir + cfg.outPrefix + "_" + mcTag + ".txt";
 
   std::ofstream ftxtout(outFile.c_str(), std::ios::out | std::ios::trunc);
   if (!ftxtout.is_open())
@@ -979,7 +1032,7 @@ void DrawWToElecNu_PFMet(const char *fname =
   }
   else
   {
-    ftxtout << "\n========== Cutflow (strict table logic) ==========\n";
+    ftxtout << "\n========== Cutflow (AN table logic) ==========\n";
     ftxtout << " i   Ni              (Ni-Ni-1)/N1        Ni/Ni-1\n";
     ftxtout << "--------------------------------------------------\n";
 

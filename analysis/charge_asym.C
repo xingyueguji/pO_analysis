@@ -45,7 +45,7 @@ void charge_asym(
     bool integrateFull = true,                                 // true -> integrate full x-range (excluding under/overflow)
     double xMin = 30.0,                                        // if integrateFull=false, integrate [xMin, xMax]
     double xMax = 200.0,
-    int NY = 16)
+    int NY = 12)
 {
     TFile *f = TFile::Open(inFile, "READ");
     if (!f || f->IsZombie())
@@ -57,10 +57,11 @@ void charge_asym(
     // If you have real y bin edges, put them here.
     // Otherwise we use bin centers = iy + 0.5 with x-error = 0.5.
     std::vector<double> yEdges; // empty => use index axis
-    // Example if you later know them:
+                                // Example if you later know them:
     yEdges = {
-        -2.4, -2.1, -1.8, -1.5, -1.2, -0.9, -0.6, -0.3,
-        0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4};
+        -2.4, -2.0, -1.6, -1.2, -0.8, -0.4,
+        0.0, 0.4, 0.8, 1.2, 1.6, 2.0,
+        2.4};
 
     const double deltaY = 0.3466; // pO rapidity shift
     std::vector<double> yEdgesCM;

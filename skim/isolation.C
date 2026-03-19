@@ -87,6 +87,19 @@ static bool passTightMuon(int i, const std::vector<int> *muIDTight,
     return (muIDTight->at(i) != 0);
 }
 
+static bool passSoftMuon(int i, const std::vector<int> *muIDSoft,
+                         const std::vector<float> *muPt,
+                         const std::vector<float> *muEta)
+{
+    if (!muIDSoft || !muPt || !muEta)
+        return false;
+    if (muPt->at(i) < 15.0)
+        return false;
+    if (std::abs(muEta->at(i)) > 2.4)
+        return false;
+    return (muIDSoft->at(i) != 0);
+}
+
 // PF-ID meaning in HiForest particleFlowAnalyser is typically:
 // 1=charged hadron, 2=e, 3=mu, 4=gamma, 5=neutral hadron, (6/7 HF stuff)
 // If your mapping differs, adjust these predicates.
@@ -175,7 +188,7 @@ static double computeIsoPF(double mu_eta, double mu_phi, double mu_pt,
 }
 
 // Main driver
-void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root")
+void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root", bool isSoft = true)
 {
     TFile *f = TFile::Open(fname, "READ");
     if (!f || f->IsZombie())
@@ -236,9 +249,9 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
     tMu->SetBranchStatus("muPFPhoIso", 1);
     tMu->SetBranchStatus("muPFNeuIso", 1);
 
-    tMu->SetBranchAddress();
-    tMu->SetBranchAddress();
-    tMu->SetBranchAddress();
+    tMu->SetBranchAddress("muPFChIso", &muPFChIso);
+    tMu->SetBranchAddress("muPFPhoIso", &muPFPhoIso);
+    tMu->SetBranchAddress("muPFNeuIso", &muPFNeuIso);
 
     // ---------- PF branches ----------
     Int_t nPF = 0;
@@ -265,6 +278,13 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
     for (int i = 0; i < nCuts; i++)
         cuts[i] = (double)i / (double)(nCuts - 1); // 0..1
 
+    std::vector<double> cuts_pT;
+    for (double pt = 0.0; pt <= 100.0; pt += 5.0)
+    {
+        cuts_pT.push_back(pt);
+    }
+    int nCuts_pT = cuts_pT.size();
+
     // case names
     const int nCases = 3;
     const char *caseName[nCases] = {"CH+NH+PHO", "ALL", "DeltaBetaPU"};
@@ -278,9 +298,47 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
     std::vector<std::vector<std::vector<double>>> passMET(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
     std::vector<std::vector<std::vector<double>>> totMET(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
 
+    std::vector<std::vector<std::vector<double>>> passOS_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totOS_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> passSS_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totSS_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> passMET_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totMET_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+
+    std::vector<std::vector<std::vector<double>>> passOS_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+    std::vector<std::vector<std::vector<double>>> totOS_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+    std::vector<std::vector<std::vector<double>>> passSS_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+    std::vector<std::vector<std::vector<double>>> totSS_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+    std::vector<std::vector<std::vector<double>>> passMET_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+    std::vector<std::vector<std::vector<double>>> totMET_ggbranch(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts, 0)));
+
+    // I do not need these for now
+
+    /*std::vector<std::vector<std::vector<double>>> passOS_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totOS_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> passSS_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totSS_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> passMET_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));
+    std::vector<std::vector<std::vector<double>>> totMET_ggbranch_pT(nCases, std::vector<std::vector<double>>(cones.size(), std::vector<double>(nCuts_pT, 0)));*/
+
     // ---------- Event loop ----------
     Long64_t nEv = std::min(tMu->GetEntries(), tPF->GetEntries());
     std::cout << "Processing entries: " << nEv << "\n";
+
+    auto relIsoFromBranches_case0 = [&](int imu) -> double
+    {
+        if (!muPt || !muPFChIso || !muPFNeuIso || !muPFPhoIso)
+            return 999.0;
+        const double pt = muPt->at(imu);
+        if (pt <= 0)
+            return 999.0;
+
+        const double ch = muPFChIso->at(imu);
+        const double neu = muPFNeuIso->at(imu);
+        const double pho = muPFPhoIso->at(imu);
+
+        return (ch + neu + pho) / pt;
+    };
 
     for (Long64_t e = 0; e < nEv; e++)
     {
@@ -298,12 +356,20 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
 
         bool isBkgMET = (met < 5);
 
-        // collect tight muons
+        // collect tight muons / or soft muon
         std::vector<int> idx;
         for (int i = 0; i < nMu; i++)
         {
-            if (passTightMuon(i, muIDTight, muPt, muEta))
-                idx.push_back(i);
+            if (isSoft)
+            {
+                if (passSoftMuon(i, muIDSoft, muPt, muEta))
+                    idx.push_back(i);
+            }
+            else
+            {
+                if (passTightMuon(i, muIDTight, muPt, muEta))
+                    idx.push_back(i);
+            }
         }
         if (idx.size() == 0)
             continue;
@@ -336,12 +402,27 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
                                 icase,
                                 puAbs);
 
+                            const double iso_br = relIsoFromBranches_case0(imu);
+
                             for (int icut = 0; icut < nCuts; ++icut)
                             {
                                 const double cut = cuts[icut];
                                 totMET[icase][ir][icut] += 1.0;
+                                totMET_ggbranch[icase][ir][icut] += 1.0;
                                 if (iso < cut)
                                     passMET[icase][ir][icut] += 1.0;
+                                if (iso_br < cut)
+                                    passMET_ggbranch[icase][ir][icut] += 1.0;
+                            }
+
+                            for (int icut_pT = 0; icut_pT < nCuts_pT; ++icut_pT)
+                            {
+                                // For now this has nothing to do with isolation, I am just testing efficiency of pT cuts, not sure if this is correct thing to do.
+                                // Index for icase and ir is completely useless since I am not using those
+                                const double cut_pT = cuts_pT[icut_pT];
+                                totMET_pT[icase][ir][icut_pT] += 1.0;
+                                if (muPt->at(imu) > cut_pT)
+                                    passMET_pT[icase][ir][icut_pT] += 1.0;
                             }
                         }
                     }
@@ -404,13 +485,19 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
                                                           pfId, pfPt, pfEta, pfPhi,
                                                           Rcone, vetoDR, icase, puAbs_j);
 
+                        const double iso_i_br = relIsoFromBranches_case0(p.i);
+                        const double iso_j_br = relIsoFromBranches_case0(p.j);
+
                         // ---- muon i ----
                         for (int icut = 0; icut < nCuts; ++icut)
                         {
                             const double cut = cuts[icut];
                             totOS[icase][ir][icut] += 1.0;
+                            totOS_ggbranch[icase][ir][icut] += 1.0;
                             if (iso_i < cut)
                                 passOS[icase][ir][icut] += 1.0;
+                            if (iso_i_br < cut)
+                                passOS_ggbranch[icase][ir][icut] += 1.0;
                         }
 
                         // ---- muon j ----
@@ -418,8 +505,29 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
                         {
                             const double cut = cuts[icut];
                             totOS[icase][ir][icut] += 1.0;
+                            totOS_ggbranch[icase][ir][icut] += 1.0;
                             if (iso_j < cut)
                                 passOS[icase][ir][icut] += 1.0;
+                            if (iso_j_br < cut)
+                                passOS_ggbranch[icase][ir][icut] += 1.0;
+                        }
+
+                        // ---- muon i ---- // pT
+                        for (int icut_pT = 0; icut_pT < nCuts_pT; ++icut_pT)
+                        {
+                            const double cut_pT = cuts_pT[icut_pT];
+                            totOS_pT[icase][ir][icut_pT] += 1.0;
+                            if (muPt->at(p.i) > cut_pT)
+                                passOS_pT[icase][ir][icut_pT] += 1.0;
+                        }
+
+                        // ---- muon j ---- // pT
+                        for (int icut_pT = 0; icut_pT < nCuts_pT; ++icut_pT)
+                        {
+                            const double cut_pT = cuts_pT[icut_pT];
+                            totOS_pT[icase][ir][icut_pT] += 1.0;
+                            if (muPt->at(p.j) > cut_pT)
+                                passOS_pT[icase][ir][icut_pT] += 1.0;
                         }
                     }
 
@@ -441,13 +549,19 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
                                                           pfId, pfPt, pfEta, pfPhi,
                                                           Rcone, vetoDR, icase, puAbs_j);
 
+                        const double iso_i_br = relIsoFromBranches_case0(p.i);
+                        const double iso_j_br = relIsoFromBranches_case0(p.j);
+
                         // muon i contribution
                         for (int icut = 0; icut < nCuts; ++icut)
                         {
                             const double cut = cuts[icut];
                             totSS[icase][ir][icut] += 1.0;
+                            totSS_ggbranch[icase][ir][icut] += 1.0;
                             if (iso_i < cut)
                                 passSS[icase][ir][icut] += 1.0;
+                            if (iso_i_br < cut)
+                                passSS_ggbranch[icase][ir][icut] += 1.0;
                         }
 
                         // muon j contribution
@@ -455,8 +569,29 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
                         {
                             const double cut = cuts[icut];
                             totSS[icase][ir][icut] += 1.0;
+                            totSS_ggbranch[icase][ir][icut] += 1.0;
                             if (iso_j < cut)
                                 passSS[icase][ir][icut] += 1.0;
+                            if (iso_j_br < cut)
+                                passSS_ggbranch[icase][ir][icut] += 1.0;
+                        }
+
+                        // muon i contribution // pT
+                        for (int icut_pT = 0; icut_pT < nCuts_pT; ++icut_pT)
+                        {
+                            const double cut_pT = cuts_pT[icut_pT];
+                            totSS_pT[icase][ir][icut_pT] += 1.0;
+                            if (muPt->at(p.i) > cut_pT)
+                                passSS_pT[icase][ir][icut_pT] += 1.0;
+                        }
+
+                        // muon j contribution // pT
+                        for (int icut_pT = 0; icut_pT < nCuts_pT; ++icut_pT)
+                        {
+                            const double cut_pT = cuts_pT[icut_pT];
+                            totSS_pT[icase][ir][icut_pT] += 1.0;
+                            if (muPt->at(p.j) > cut_pT)
+                                passSS_pT[icase][ir][icut_pT] += 1.0;
                         }
                     }
                 }
@@ -467,7 +602,15 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
     // =========================
     // Save plots to ROOT file
     // =========================
-    TFile *fout = TFile::Open("./rootfile/IsoStudyOutputs.root", "RECREATE");
+    TFile *fout;
+    if (isSoft)
+    {
+        fout = TFile::Open("./rootfile/IsoStudyOutputs_soft.root", "RECREATE");
+    }
+    else
+    {
+        fout = TFile::Open("./rootfile/IsoStudyOutputs.root", "RECREATE");
+    }
     if (!fout || fout->IsZombie())
     {
         std::cerr << "Cannot create output ROOT file IsoStudyOutputs.root\n";
@@ -571,6 +714,182 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
 
     fout->Write();
     fout->Close();
+
+    TFile *fout_pT;
+    if (isSoft)
+    {
+        fout_pT = TFile::Open("./rootfile/PtcutStudyOutputs_soft.root", "RECREATE");
+    }
+    else
+    {
+        fout_pT = TFile::Open("./rootfile/PtcutStudyOutputs.root", "RECREATE");
+    }
+    if (!fout_pT || fout_pT->IsZombie())
+    {
+        std::cerr << "Cannot create output ROOT file PtcutStudyOutputs.root\n";
+        return;
+    }
+
+    for (int icase = 0; icase < nCases; ++icase)
+    {
+        for (size_t ir = 0; ir < cones.size(); ++ir)
+        {
+            const double Rcone = cones[ir];
+
+            // Prepare arrays for graphs
+            std::vector<double> xCut(nCuts_pT), yEffOS(nCuts_pT), yEffSS(nCuts_pT), yEffMET(nCuts_pT);
+
+            for (int icut = 0; icut < nCuts_pT; ++icut)
+            {
+                xCut[icut] = cuts_pT[icut];
+                yEffOS[icut] = safeEff(passOS_pT[icase][ir][icut], totOS_pT[icase][ir][icut]);
+                yEffSS[icut] = safeEff(passSS_pT[icase][ir][icut], totSS_pT[icase][ir][icut]);
+                yEffMET[icut] = safeEff(passMET_pT[icase][ir][icut], totMET_pT[icase][ir][icut]);
+            }
+
+            // Name tag: case + cone
+            TString tag;
+            tag.Form("case%d_R%.1f", icase, Rcone); // e.g. case0_R0.3
+
+            // Efficiency vs cut graphs
+            TGraph *gEffOS = new TGraph(nCuts_pT, xCut.data(), yEffOS.data());
+            TGraph *gEffSS = new TGraph(nCuts_pT, xCut.data(), yEffSS.data());
+            TGraph *gEffMET = new TGraph(nCuts_pT, xCut.data(), yEffMET.data());
+
+            gEffOS->SetName(TString("effOSpT_") + tag);
+            gEffSS->SetName(TString("effSSpT_") + tag);
+            gEffMET->SetName(TString("effMETpT_") + tag);
+
+            gEffOS->Write();
+            gEffSS->Write();
+            gEffMET->Write();
+
+            // ---- ROC from SS background: x=bkg eff (SS), y=sig eff (OS) ----
+            std::vector<double> xROC_SS(nCuts_pT), yROC_SS(nCuts_pT);
+            for (int icut = 0; icut < nCuts_pT; ++icut)
+            {
+                xROC_SS[icut] = yEffOS[icut];
+                yROC_SS[icut] = 1.0 - yEffSS[icut];
+            }
+            TGraph *gROC_SS = new TGraph(nCuts_pT, xROC_SS.data(), yROC_SS.data());
+            gROC_SS->SetName(TString("rocSSpT_") + tag);
+
+            // ---- ROC from MET background: x=bkg eff (MET), y=sig eff (OS) ----
+            std::vector<double> xROC_MET(nCuts_pT), yROC_MET(nCuts_pT);
+            for (int icut = 0; icut < nCuts_pT; ++icut)
+            {
+                xROC_MET[icut] = yEffOS[icut];
+                yROC_MET[icut] = 1.0 - yEffMET[icut];
+            }
+            TGraph *gROC_MET = new TGraph(nCuts_pT, xROC_MET.data(), yROC_MET.data());
+            gROC_MET->SetName(TString("rocMETpT_") + tag);
+
+            gROC_SS->Write();
+            gROC_MET->Write();
+
+            // AUC numbers
+            const double aucSS = rocAUC(xROC_SS, yROC_SS);
+            const double aucMET = rocAUC(xROC_MET, yROC_MET);
+
+            TParameter<double> pAucSS(TString("aucSSpT_") + tag, aucSS);
+            TParameter<double> pAucMET(TString("aucMETpT_") + tag, aucMET);
+
+            pAucSS.Write();
+            pAucMET.Write();
+        }
+    }
+
+    fout_pT->Write();
+    fout_pT->Close();
+
+    TFile *fout_ggbranch;
+
+    if (isSoft)
+    {
+        fout_ggbranch = TFile::Open("./rootfile/ggbranchStudyOutputs_soft.root", "RECREATE");
+    }
+    else
+    {
+        fout_ggbranch = TFile::Open("./rootfile/ggbranchStudyOutputs.root", "RECREATE");
+    }
+
+    if (!fout_ggbranch || fout_ggbranch->IsZombie())
+    {
+        std::cerr << "Cannot create output ROOT file IsoStudyOutputs.root\n";
+        return;
+    }
+
+    for (int icase = 0; icase < nCases; ++icase)
+    {
+        for (size_t ir = 0; ir < cones.size(); ++ir)
+        {
+            const double Rcone = cones[ir];
+
+            // Prepare arrays for graphs
+            std::vector<double> xCut(nCuts), yEffOS(nCuts), yEffSS(nCuts), yEffMET(nCuts);
+
+            for (int icut = 0; icut < nCuts; ++icut)
+            {
+                xCut[icut] = cuts[icut];
+                yEffOS[icut] = safeEff(passOS_ggbranch[icase][ir][icut], totOS_ggbranch[icase][ir][icut]);
+                yEffSS[icut] = safeEff(passSS_ggbranch[icase][ir][icut], totSS_ggbranch[icase][ir][icut]);
+                yEffMET[icut] = safeEff(passMET_ggbranch[icase][ir][icut], totMET_ggbranch[icase][ir][icut]);
+            }
+
+            // Name tag: case + cone
+            TString tag;
+            tag.Form("case%d_R%.1f", icase, Rcone); // e.g. case0_R0.3
+
+            // Efficiency vs cut graphs
+            TGraph *gEffOS = new TGraph(nCuts, xCut.data(), yEffOS.data());
+            TGraph *gEffSS = new TGraph(nCuts, xCut.data(), yEffSS.data());
+            TGraph *gEffMET = new TGraph(nCuts, xCut.data(), yEffMET.data());
+
+            gEffOS->SetName(TString("effOSgg_") + tag);
+            gEffSS->SetName(TString("effSSgg_") + tag);
+            gEffMET->SetName(TString("effMETgg_") + tag);
+
+            gEffOS->Write();
+            gEffSS->Write();
+            gEffMET->Write();
+
+            // ---- ROC from SS background: x=bkg eff (SS), y=sig eff (OS) ----
+            std::vector<double> xROC_SS(nCuts), yROC_SS(nCuts);
+            for (int icut = 0; icut < nCuts; ++icut)
+            {
+                xROC_SS[icut] = yEffOS[icut];
+                yROC_SS[icut] = 1.0 - yEffSS[icut];
+            }
+            TGraph *gROC_SS = new TGraph(nCuts, xROC_SS.data(), yROC_SS.data());
+            gROC_SS->SetName(TString("rocSSgg_") + tag);
+
+            // ---- ROC from MET background: x=bkg eff (MET), y=sig eff (OS) ----
+            std::vector<double> xROC_MET(nCuts), yROC_MET(nCuts);
+            for (int icut = 0; icut < nCuts; ++icut)
+            {
+                xROC_MET[icut] = yEffOS[icut];
+                yROC_MET[icut] = 1.0 - yEffMET[icut];
+            }
+            TGraph *gROC_MET = new TGraph(nCuts, xROC_MET.data(), yROC_MET.data());
+            gROC_MET->SetName(TString("rocMETgg_") + tag);
+
+            gROC_SS->Write();
+            gROC_MET->Write();
+
+            // AUC numbers
+            const double aucSS = rocAUC(xROC_SS, yROC_SS);
+            const double aucMET = rocAUC(xROC_MET, yROC_MET);
+
+            TParameter<double> pAucSS(TString("aucSSgg_") + tag, aucSS);
+            TParameter<double> pAucMET(TString("aucMETgg_") + tag, aucMET);
+
+            pAucSS.Write();
+            pAucMET.Write();
+        }
+    }
+
+    fout_ggbranch->Write();
+    fout_ggbranch->Close();
 
     std::cout << "Saved graphs to IsoStudyOutputs.root\n";
 }

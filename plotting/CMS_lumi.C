@@ -62,7 +62,7 @@ void CMS_lumi(TPad *pad, int iPeriod, int iPosX)
     else if (iPeriod == 13)
     {
         lumiText += lumi_5TeV;
-        lumiText += " (5.02 TeV PbPb)";
+        lumiText += " (9.62 TeV pO)";
     }
     else if (iPeriod == 7)
     {

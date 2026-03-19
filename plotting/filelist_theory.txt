@@ -1,0 +1,8 @@
+./pQCDLightIon/mcfm/nuclearmodfactor/WPlusBoson_RpO_y_dep_EPPS21.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WPlusBoson_RpO_y_dep_nCTEQ15HQ.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WPlusBoson_RpO_y_dep_nNNPDF30.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WPlusBoson_RpO_y_dep_TUJU21.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WMinusBoson_RpO_y_dep_EPPS21.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WMinusBoson_RpO_y_dep_nCTEQ15HQ.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WMinusBoson_RpO_y_dep_nNNPDF30.txt
+./pQCDLightIon/mcfm/nuclearmodfactor/WMinusBoson_RpO_y_dep_TUJU21.txt
