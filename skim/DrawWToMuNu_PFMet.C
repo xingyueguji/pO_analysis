@@ -447,7 +447,7 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 void DrawWToMuNu_PFMet(const char *fname =
                            "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                       SampleType sample = kWm)
+                       SampleType sample = kData)
 {
   bool isMC = false;
 
@@ -785,6 +785,30 @@ void DrawWToMuNu_PFMet(const char *fname =
     h_mt_Wm_FB[b]->Sumw2();
   }
 
+  // QCD BK histogram
+
+  static const int NISO = 3;
+  double isoEdges[NISO + 1] = {0.1, 0.4, 0.7, 1.0};
+
+  TH1D *h_met_iso_muPlus[NISO];
+  TH1D *h_met_iso_muMinus[NISO];
+
+  for (int b = 0; b < NISO; ++b)
+  {
+    h_met_iso_muPlus[b] = new TH1D(
+        Form("h_met_iso_muPlus_bin%d", b),
+        Form("MET, #mu^{+}, %.1f < iso < %.1f;MET [GeV];Events", isoEdges[b], isoEdges[b + 1]),
+        60, 0, 120);
+
+    h_met_iso_muMinus[b] = new TH1D(
+        Form("h_met_iso_muMinus_bin%d", b),
+        Form("MET, #mu^{-}, %.1f < iso < %.1f;MET [GeV];Events", isoEdges[b], isoEdges[b + 1]),
+        60, 0, 120);
+
+    h_met_iso_muPlus[b]->Sumw2();
+    h_met_iso_muMinus[b]->Sumw2();
+  }
+
   // -------------------------
   // Cutflow counters
   // -------------------------
@@ -796,6 +820,18 @@ void DrawWToMuNu_PFMet(const char *fname =
 
   bool warnedEventFiltersOnce = false;
   bool warnedNoTrigMatchInfo = false;
+
+  // Iso bin finder:
+
+  auto FindIsoBin = [&](double iso) -> int
+  {
+    for (int b = 0; b < NISO; ++b)
+    {
+      if (iso >= isoEdges[b] && iso < isoEdges[b + 1])
+        return b;
+    }
+    return -1;
+  };
 
   for (Long64_t ie = 0; ie < nEntries; ++ie)
   {
@@ -876,9 +912,15 @@ void DrawWToMuNu_PFMet(const char *fname =
 
     // (7) Leading muon Iso < 0.15
     const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
-    if (isoLead >= cfg.isoMax)
-      continue;
-    N[7]++;
+
+    const int isoBin = FindIsoBin(isoLead);
+    const bool isQCDSideband = (isoBin >= 0);
+
+    // nominal signal-region bool
+    const bool passIsoNominal = (isoLead < cfg.isoMax);
+
+    if (passIsoNominal)
+      N[7]++;
 
     // (8) Leading muon matched to trigger
     const bool passMatch = PassLeadingMuonTrigMatch(cfg, iLead, muEta, muPhi,
@@ -887,9 +929,12 @@ void DrawWToMuNu_PFMet(const char *fname =
                                                     has_trgObjPhi, trgObjPhi,
                                                     has_trgObjId, trgObjId,
                                                     warnedNoTrigMatchInfo);
+
     if (!passMatch)
       continue;
-    N[8]++;
+
+    if (passIsoNominal)
+      N[8]++;
 
     // Fill final distributions (after step 8)
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
@@ -898,6 +943,17 @@ void DrawWToMuNu_PFMet(const char *fname =
     const double mu_phi = muPhi->at(iLead);
     const double dphi = TVector2::Phi_mpi_pi(mu_phi - metPhi);
     const double mt = std::sqrt(2.0 * muPt->at(iLead) * met * (1.0 - std::cos(dphi)));
+
+    if (isQCDSideband)
+    {
+      if (muCharge->at(iLead) > 0)
+        h_met_iso_muPlus[isoBin]->Fill(met);
+      else if (muCharge->at(iLead) < 0)
+        h_met_iso_muMinus[isoBin]->Fill(met);
+    }
+
+    if (!passIsoNominal)
+      continue;
 
     auto FindBin = [&](double y) -> int
     {
@@ -1069,6 +1125,12 @@ void DrawWToMuNu_PFMet(const char *fname =
     h_met_Wm_FB[i]->Write("", 2);
     h_mt_Wp_FB[i]->Write("", 2);
     h_mt_Wm_FB[i]->Write("", 2);
+  }
+
+  for (int b = 0; b < NISO; ++b)
+  {
+    h_met_iso_muPlus[b]->Write("", TObject::kOverwrite);
+    h_met_iso_muMinus[b]->Write("", TObject::kOverwrite);
   }
   fout->Close();
 

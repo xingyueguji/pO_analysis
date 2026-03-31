@@ -7,11 +7,6 @@ void plotZcurve()
     auto *h_extended = (TH1D *)f1->Get("hMass_extended");
     auto *h_Z_vipul = (TH1D *)f1->Get("hMass_vipul");
 
-    PlotTuner tunemass = [&](TCanvas *c, TH1 *h)
-    {
-        c->Modified();
-        c->Update();
-    };
     PlotStyle ps;
     ps.logy = true;
     ps.boxX1 = 0.15;
@@ -19,7 +14,27 @@ void plotZcurve()
     ps.boxTextSize = 0.025;
     ps.boxY2 = 0.78;
     ps.boxTextSize = 0.022;
-    ps.drawOpt = "HIST";
+    ps.drawOpt = "E";
+
+    PlotTuner tunemass = [&](TCanvas *c, TH1 *h)
+    {
+        (void)c;
+        if (!h)
+            return;
+
+        // Example: ensure y-min is 0 for linear plots
+        if (!ps.logy)
+            h->SetMinimum(0.0);
+
+        // Example: leave some headroom
+        h->SetMaximum(2.5 * h->GetMaximum());
+        h->SetMinimum(0.8);
+        h->SetMarkerStyle(20);
+        h->SetMarkerSize(1.2);
+        h->SetLineWidth(2);
+        h->SetLineColor(kBlack);
+        h->SetMarkerColor(kBlack);
+    };
 
     const std::string outBase = "./plots";
     const std::string outDir = outBase + "/ZPeak";
@@ -63,7 +78,7 @@ void plotZcurve()
     SaveNicePlot1D(h_Z,
                    outDir + "/ZMass",
                    "m_{#mu#mu} (GeV)", // xTitle (change if you want)
-                   "Events / 1.0 GeV",           // yTitle
+                   "Events / 1.0 GeV", // yTitle
                    "",                 // mainTitle
                    "",
                    "",
@@ -74,7 +89,7 @@ void plotZcurve()
     SaveNicePlot1D(h_extended,
                    outDir + "/ZMass_extended",
                    "m_{#mu#mu} (GeV)", // xTitle (change if you want)
-                   "Events / 1.0 GeV",           // yTitle
+                   "Events / 1.0 GeV", // yTitle
                    "",                 // mainTitle
                    "",
                    "",
@@ -85,7 +100,7 @@ void plotZcurve()
     SaveNicePlot1D(h_Z_vipul,
                    outDir + "/ZMass_vipul",
                    "m_{#mu#mu} (GeV)", // xTitle (change if you want)
-                   "Events / 1.0 GeV",           // yTitle
+                   "Events / 1.0 GeV", // yTitle
                    "",                 // mainTitle
                    "",
                    "",

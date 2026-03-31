@@ -423,7 +423,7 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 void DrawWToElecNu_PFMet(const char *fname =
                              "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                         SampleType sample = kWm)
+                         SampleType sample = kData)
 {
   bool isMC = false;
 
@@ -854,17 +854,17 @@ void DrawWToElecNu_PFMet(const char *fname =
     // (4) Drell–Yan veto
     if (!PassDYVeto(cfg,
                     nEle, elePt, eleEta, elePhi, eleCharge,
-                    eleCutIdWP90, eleMVAIsoWP90))
+                    eleCutIdWP95, eleMVAIsoWP95))
       continue;
     N[4]++;
 
     // (5) >=1 Tight ID electron
-    if (!ExistsTightElectron(nEle, eleCutIdWP90))
+    if (!ExistsTightElectron(nEle, eleCutIdWP95))
       continue;
     N[5]++;
 
     // Define leading electron for steps 6-8 (leading among Tight+PF)
-    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleCutIdWP90);
+    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleCutIdWP95);
     if (iLead < 0)
       continue;
 
@@ -885,7 +885,7 @@ void DrawWToElecNu_PFMet(const char *fname =
     N[6]++;
 
     // (7) Leading electron Iso < 0.15
-    if (eleMVAIsoWP90->at(iLead) != 1)
+    if (eleMVAIsoWP95->at(iLead) != 1)
       continue;
 
     // const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);

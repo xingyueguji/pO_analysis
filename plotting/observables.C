@@ -11,6 +11,9 @@
 
 void observables()
 {
+
+    gStyle->SetEndErrorSize(4);
+
     const std::string inFileCharge = "../skim/rootfile/charge_asym.root";
     TFile *fCharge = TFile::Open(inFileCharge.c_str(), "READ");
     if (!fCharge || fCharge->IsZombie())
@@ -114,7 +117,7 @@ void observables()
         if (auto *h = g->GetHistogram())
         {
             h->SetMinimum(0.3);
-            h->SetMaximum(1.9);
+            h->SetMaximum(2.1);
         }
 
         // line at 1

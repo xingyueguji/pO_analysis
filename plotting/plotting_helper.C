@@ -31,7 +31,7 @@ struct PlotStyle
     double FrameLineWidth = 3;
 
     // draw options
-    std::string drawOpt = "hist"; // e.g. "E", "hist", "E1", etc.
+    std::string drawOpt = "E"; // e.g. "E", "hist", "E1", etc.
     std::string drawOptGraph = "AP";
     bool logy = false;
 
@@ -367,8 +367,8 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g2->SetMarkerStyle(0);               // hide markers
         g2->SetLineWidth(0);                 // hide error bar stems
 
-        g2->Draw("3");      // A = draw axes, 3 = filled error band
-        g2->Draw("L SAME"); // draw central line on top
+        // g2->Draw("3");      // A = draw axes, 3 = filled error band
+        // g2->Draw("L SAME"); // draw central line on top
     }
     if (g3)
     {
@@ -392,8 +392,8 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g4->SetMarkerStyle(0);             // hide markers
         g4->SetLineWidth(0);               // hide error bar stems
 
-        g4->Draw("3");      // A = draw axes, 3 = filled error band
-        g4->Draw("L SAME"); // draw central line on top
+        // g4->Draw("3");      // A = draw axes, 3 = filled error band
+        // g4->Draw("L SAME"); // draw central line on top
     }
 
     TLegend *leg = new TLegend(0.20, 0.15, 0.45, 0.38);
@@ -404,13 +404,13 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
 
     // --- Data: points ---
     leg->AddEntry(g, "Data", "p");
-    leg->AddEntry(g_stat2x, "With Electron", "l");
+    leg->AddEntry(g_stat2x, "Projection with Electrons", "l");
 
     // --- Models: error bands ---
     leg->AddEntry(g1, "EPPS21", "f");
-    leg->AddEntry(g2, "nCTEQ15HQ", "f");
+    // leg->AddEntry(g2, "nCTEQ15HQ", "f");
     leg->AddEntry(g3, "nNNPDF3.0", "f");
-    leg->AddEntry(g4, "TUJU21nlo", "f");
+    // leg->AddEntry(g4, "TUJU21nlo", "f");
 
     leg->Draw();
 
@@ -447,8 +447,18 @@ static void SaveNicePlot1D_twoplots(TH1 *h, TH1 *h2,
     ApplyHistStyle(h, ps, xTitle, yTitle);
     ApplyHistStyle(h2, ps1, xTitle, yTitle);
 
+    h->SetMarkerStyle(20);
+    h->SetMarkerSize(1.2);
+    h->SetLineColor(kBlue);
+    h->SetMarkerColor(kBlue);
+
+    h2->SetMarkerStyle(20);
+    h2->SetMarkerSize(1.2);
+    h2->SetLineColor(kRed);
+    h2->SetMarkerColor(kRed);
+
     h->Draw(ps.drawOpt.c_str());
-    h2->Draw(ps1.drawOpt.c_str());
+    h2->Draw((ps1.drawOpt + "SAME").c_str());
 
     DrawHeader(ps, mainTitle, subTitle1, subTitle2);
     DrawInfoBox(ps, boxLines);
@@ -463,10 +473,141 @@ static void SaveNicePlot1D_twoplots(TH1 *h, TH1 *h2,
     if (tuner)
         tuner(c, h); // e.g. change ranges, add extra lines, etc.
 
+    if (tuner)
+        tuner(c, h2); // e.g. change ranges, add extra lines, etc.
+
     // ensure parent directory exists
     // outPathNoExt could include dirs, so you can mkdir manually outside too.
 
     CMS_lumi(c, 13, 10);
+    c->Modified();
+    c->Update();
+
+    c->SaveAs((outPathNoExt + ".png").c_str());
+    c->SaveAs((outPathNoExt + ".pdf").c_str());
+
+    delete c;
+}
+
+static void SaveNicePlot1D_WithBkg(
+    TH1 *h,                                   // data / signal
+    const std::vector<TH1 *> &bkgs,           // background histograms
+    const std::vector<std::string> &bkgNames, // legend names (same size as bkgs)
+
+    const std::string &outPathNoExt,
+    const std::string &xTitle,
+    const std::string &yTitle,
+    const std::string &mainTitle,
+    const std::string &subTitle1,
+    const std::string &subTitle2,
+    const std::vector<std::string> &boxLines,
+
+    const PlotStyle &ps = PlotStyle(),
+    PlotTuner tuner = nullptr)
+{
+    if (!h)
+        return;
+
+    gStyle->SetOptStat(ps.showStats ? 1110 : 0);
+
+    TCanvas *c = new TCanvas(Form("c_%s", h->GetName()), "", ps.w, ps.h);
+    ApplyCanvasStyle(c, ps);
+
+    c->cd();
+
+    //--------------------------------------------------
+    // 1️⃣ Compute normalization
+    //--------------------------------------------------
+    double dataInt = h->Integral("width");
+
+    double bkgSumInt = 0.0;
+    for (auto b : bkgs)
+    {
+        if (!b)
+            continue;
+        bkgSumInt += b->Integral("width");
+    }
+
+    double scale = 1.0;
+    if (bkgSumInt > 0)
+        scale = dataInt / bkgSumInt;
+
+    //--------------------------------------------------
+    // 2️⃣ Prepare stack
+    //--------------------------------------------------
+    THStack *hs = new THStack("hs", "");
+
+    std::vector<int> colors = {
+        kAzure - 9,
+        kOrange - 3,
+        kGreen + 2,
+        kMagenta - 3,
+        kCyan + 1};
+
+    for (size_t i = 0; i < bkgs.size(); i++)
+    {
+        TH1 *b = bkgs[i];
+        if (!b)
+            continue;
+
+        b->Scale(scale); // 🔥 normalization here
+
+        b->SetFillColor(colors[i % colors.size()]);
+        b->SetLineColor(kBlack);
+        b->SetLineWidth(1);
+
+        hs->Add(b);
+    }
+
+    //--------------------------------------------------
+    // 4️⃣ Draw data on top
+    //--------------------------------------------------
+    ApplyHistStyle(h, ps, xTitle, yTitle);
+
+    h->SetMarkerStyle(20);
+    h->SetMarkerSize(1.2);
+    h->SetLineColor(kBlack);
+
+    h->Draw();
+
+    //--------------------------------------------------
+    // 3️⃣ Draw stack first
+    //--------------------------------------------------
+    hs->Draw("HIST SAME");
+
+    h->Draw("E SAME");
+
+    //--------------------------------------------------
+    // 5️⃣ Legend
+    //--------------------------------------------------
+    TLegend *leg = new TLegend(ps.boxX1, ps.boxY1 - 0.2, ps.boxX2, ps.boxY2 - 0.2);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+
+    leg->AddEntry(h, "Data", "lep");
+
+    for (size_t i = 0; i < bkgs.size(); i++)
+    {
+        if (bkgs[i])
+            leg->AddEntry(bkgs[i], bkgNames[i].c_str(), "f");
+    }
+
+    leg->Draw();
+
+    //--------------------------------------------------
+    // 6️⃣ Header + info
+    //--------------------------------------------------
+    DrawHeader(ps, mainTitle, subTitle1, subTitle2);
+    DrawInfoBox(ps, boxLines);
+
+    //--------------------------------------------------
+    // 7️⃣ Optional tuner
+    //--------------------------------------------------
+    if (tuner)
+        tuner(c, h);
+
+    CMS_lumi(c, 13, 10);
+
     c->Modified();
     c->Update();
 

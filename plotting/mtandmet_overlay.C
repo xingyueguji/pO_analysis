@@ -62,15 +62,15 @@ void mtandmet_overlay()
     gSystem->mkdir(outMtDir.c_str(), kTRUE);
 
     PlotStyle ps;
-    ps.drawOpt = "hist";
+    ps.drawOpt = "E SAME";
     ps.showStats = false;
     ps.logy = false;
     ps.lm = 0.17;
     ps.yTitleOffset = 1.75;
+    ps.boxX1 = 0.5;
     ps.boxY1 = 0.52;
 
     PlotStyle ps1;
-    ps1.drawOpt = "hist SAME";
     ps1.showStats = false;
     ps1.logy = false;
 
@@ -91,7 +91,29 @@ void mtandmet_overlay()
             h->SetMinimum(0.0);
 
         // Example: leave some headroom
-        h->SetMaximum(1.25 * h->GetMaximum());
+        h->SetMaximum(2.8 * h->GetMaximum());
+
+        h->SetMarkerStyle(20);
+        h->SetMarkerSize(1.2);
+        h->SetLineWidth(2);
+    };
+
+    PlotTuner commonTuner_mT = [&](TCanvas *c, TH1 *h)
+    {
+        (void)c;
+        if (!h)
+            return;
+
+        // Example: ensure y-min is 0 for linear plots
+        if (!ps.logy)
+            h->SetMinimum(0.0);
+
+        // Example: leave some headroom
+        h->SetMaximum(2 * h->GetMaximum());
+
+        h->SetMarkerStyle(20);
+        h->SetMarkerSize(1.2);
+        h->SetLineWidth(2);
     };
 
     for (int iy = 0; iy < NY; iy++)
@@ -182,9 +204,6 @@ void mtandmet_overlay()
             std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_met_Wp_mu->Integral(1, h_met_Wp_mu->GetNbinsX()),
                                                  h_met_Wp_ele->Integral(1, h_met_Wp_ele->GetNbinsX()))};
 
-            h_met_Wp_mu->Scale(1.0 / h_met_Wp_mu->Integral("width"));
-            h_met_Wp_ele->Scale(1.0 / h_met_Wp_ele->Integral("width"));
-
             SaveNicePlot1D_twoplots(h_met_Wp_mu, h_met_Wp_ele, Form("%s/met_Wp_y%d", outMetDir.c_str(), iy),
                                     "PF MET (GeV)", "Events / 2.0 GeV", "", "W^{+} #rightarrow l^{+} #nu", yLabel[iy], box, ps, ps1, commonTuner);
         }
@@ -195,9 +214,6 @@ void mtandmet_overlay()
         {
             std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_met_Wm_mu->Integral(1, h_met_Wm_mu->GetNbinsX()),
                                                  h_met_Wm_ele->Integral(1, h_met_Wm_ele->GetNbinsX()))};
-
-            h_met_Wm_mu->Scale(1.0 / h_met_Wm_mu->Integral("width"));
-            h_met_Wm_ele->Scale(1.0 / h_met_Wm_ele->Integral("width"));
 
             SaveNicePlot1D_twoplots(h_met_Wm_mu, h_met_Wm_ele, Form("%s/met_Wm_y%d", outMetDir.c_str(), iy),
                                     "PF MET (GeV)", "Events / 2.0 GeV", "", "W^{-} #rightarrow l^{+}#bar{#nu}", yLabel[iy], box, ps, ps1, commonTuner);
@@ -211,9 +227,6 @@ void mtandmet_overlay()
             std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_mt_Wp_mu->Integral(1, h_mt_Wp_mu->GetNbinsX()),
                                                  h_mt_Wp_ele->Integral(1, h_mt_Wp_ele->GetNbinsX()))};
 
-            h_mt_Wp_mu->Scale(1.0 / h_mt_Wp_mu->Integral("width"));
-            h_mt_Wp_ele->Scale(1.0 / h_mt_Wp_ele->Integral("width"));
-
             SaveNicePlot1D_twoplots(h_mt_Wp_mu, h_mt_Wp_ele, Form("%s/mt_Wp_y%d", outMtDir.c_str(), iy),
                                     "m_{T} (GeV)", "Events / 2.5 GeV", "", "W^{+} #rightarrow l^{+}#nu", yLabel[iy], box, ps, ps1, commonTuner);
         }
@@ -224,9 +237,6 @@ void mtandmet_overlay()
         {
             std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_mt_Wm_mu->Integral(1, h_mt_Wm_mu->GetNbinsX()),
                                                  h_mt_Wm_ele->Integral(1, h_mt_Wm_ele->GetNbinsX()))};
-
-            h_mt_Wm_mu->Scale(1.0 / h_mt_Wm_mu->Integral("width"));
-            h_mt_Wm_ele->Scale(1.0 / h_mt_Wm_ele->Integral("width"));
 
             SaveNicePlot1D_twoplots(h_mt_Wm_mu, h_mt_Wm_ele, Form("%s/mt_Wm_y%d", outMtDir.c_str(), iy),
                                     "m_{T} (GeV)", "Events / 2.5 GeV", "", "W^{-} #rightarrow l^{+}#bar{#nu}", yLabel[iy], box, ps, ps1, commonTuner);
@@ -243,9 +253,6 @@ void mtandmet_overlay()
         std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_met_mu_inclusive->Integral(1, h_met_mu_inclusive->GetNbinsX()),
                                              h_met_ele_inclusive->Integral(1, h_met_ele_inclusive->GetNbinsX()))};
 
-        h_met_mu_inclusive->Scale(1.0 / h_met_mu_inclusive->Integral("width"));
-        h_met_ele_inclusive->Scale(1.0 / h_met_ele_inclusive->Integral("width"));
-
         SaveNicePlot1D_twoplots(h_met_mu_inclusive, h_met_ele_inclusive, Form("%s/h_met_inclusive", outMetDir.c_str()),
                                 "PF MET (GeV)", "Events / 2.0 GeV", "", "W #rightarrow l #nu", "inclusive", box, ps, ps1, commonTuner);
     }
@@ -254,11 +261,8 @@ void mtandmet_overlay()
         std::vector<std::string> box = {Form("Passing Events: %.0f, %.0f", h_mt_mu_inclusive->Integral(1, h_mt_mu_inclusive->GetNbinsX()),
                                              h_mt_ele_inclusive->Integral(1, h_mt_ele_inclusive->GetNbinsX()))};
 
-        h_mt_mu_inclusive->Scale(1.0 / h_mt_mu_inclusive->Integral("width"));
-        h_mt_ele_inclusive->Scale(1.0 / h_mt_ele_inclusive->Integral("width"));
-
         SaveNicePlot1D_twoplots(h_mt_mu_inclusive, h_mt_ele_inclusive, Form("%s/h_mt_inclusive", outMtDir.c_str()),
-                                "m_{T} (GeV)", "Events / 2.5 GeV", "", "W #rightarrow l #nu", "inclusive", box, ps, ps1, commonTuner);
+                                "m_{T} (GeV)", "Events / 2.5 GeV", "", "W #rightarrow l #nu", "inclusive", box, ps, ps1, commonTuner_mT);
     }
 
     fMu->Close();
