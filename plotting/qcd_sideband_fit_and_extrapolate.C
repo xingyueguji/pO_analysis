@@ -111,6 +111,8 @@ void FitAndDrawOneHist(TH1D *h,
     fQCD->SetParLimits(2, cfg.p2min, cfg.p2max);
     fQCD->SetParLimits(3, cfg.p3min, cfg.p3max);
 
+    fQCD->FixParameter(3, 0.6);
+
     TFitResultPtr fitRes = h->Fit(fQCD, "RSQ"); // R=range, S=result, Q=quiet
 
     sigma0 = fQCD->GetParameter(1);
@@ -269,31 +271,27 @@ void MakeExtrapPlot(const std::string &name,
     fLin->Draw("SAME");
     gExtr->Draw("PE SAME");
 
-    TLine *l = new TLine(xEval, g->GetYaxis()->GetXmin(), xEval, g->GetYaxis()->GetXmax());
-    l->SetLineStyle(2);
-    l->SetLineColor(kBlue + 1);
-
     DrawHeader(ps, "", sub1, "");
     DrawInfoBox(ps, boxLines);
 
     tuner(c, g);
 
-    const double ymin = gPad->GetUymin();
-    const double ymax = gPad->GetUymax();
-    TLine *lv = new TLine(xEval, ymin, xEval, ymax);
-    lv->SetLineStyle(2);
-    lv->SetLineColor(kBlue + 1);
-    lv->SetLineWidth(2);
-    lv->Draw("SAME");
-
     CMS_lumi(c, 13, 10);
     c->Modified();
     c->Update();
 
+    const double ymin = gPad->GetUymin();
+    const double ymax = gPad->GetUymax();
+
+    TLine *l = new TLine(xEval, ymin, xEval, ymax);
+    l->SetLineStyle(2);
+    l->SetLineColor(kBlue + 1);
+    l->SetLineWidth(2);
+    l->Draw("SAME");
+
     c->SaveAs((outPathNoExt + "_fit.png").c_str());
     c->SaveAs((outPathNoExt + "_fit.pdf").c_str());
 
-    delete lv;
     delete l;
     delete c;
     delete fLin;
@@ -377,8 +375,8 @@ void qcd_sideband_fit_and_extrapolate(bool isElec = 0)
     fitCfg[0][1].p2min = 0.0;
     fitCfg[0][1].p2max = 20.0;
 
-    fitCfg[0][1].p3min = -0.2;
-    fitCfg[0][1].p3max = 0.2;
+    fitCfg[0][1].p3min = 0.0;
+    fitCfg[0][1].p3max = 0.5;
 
     // muMinus, bin 2
     fitCfg[1][1].fitMax = 70.0;
@@ -407,8 +405,8 @@ void qcd_sideband_fit_and_extrapolate(bool isElec = 0)
     fitCfg[0][2].p2min = 0.0;
     fitCfg[0][2].p2max = 20.0;
 
-    fitCfg[0][2].p3min = -0.2;
-    fitCfg[0][2].p3max = 0.2;
+    fitCfg[0][2].p3min = 0;
+    fitCfg[0][2].p3max = 0.5;
 
     // muMinus, bin 3
     fitCfg[1][2].fitMax = 70.0;

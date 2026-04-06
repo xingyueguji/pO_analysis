@@ -397,16 +397,51 @@ static bool PassLeadingMuonTrigMatch(const WConfig &cfg,
   return true;
 }
 
+// DecayID check
+
+static bool HasAncestor(
+    int idx,
+    int targetPdg,
+    std::vector<int> *genPdg,
+    std::vector<std::vector<int>> *genMotherIdx)
+{
+  if (!genPdg || !genMotherIdx)
+    return false;
+  if (idx < 0 || (size_t)idx >= genPdg->size() || (size_t)idx >= genMotherIdx->size())
+    return false;
+
+  const auto &moms = genMotherIdx->at(idx);
+  for (int midx : moms)
+  {
+    if (midx < 0 || (size_t)midx >= genPdg->size() || (size_t)midx >= genMotherIdx->size())
+      continue;
+
+    if (std::abs(genPdg->at(midx)) == std::abs(targetPdg))
+      return true;
+
+    if (HasAncestor(midx, targetPdg, genPdg, genMotherIdx))
+      return true;
+  }
+
+  return false;
+}
+
 // ---------------------------------------------
 // Extra: Gen-reco matching
 // ---------------------------------------------
 
-static bool PassGenRecoMatching(
+static bool PassGenRecoMatchingWithAncestor(
     int iLead,
     std::vector<float> *muPt, std::vector<float> *muEta, std::vector<float> *muPhi, std::vector<int> *muCharge,
-    std::vector<float> *genPt, std::vector<float> *genEta, std::vector<float> *genPhi, std::vector<int> *genChg)
+    std::vector<float> *genPt, std::vector<float> *genEta, std::vector<float> *genPhi, std::vector<int> *genChg,
+    std::vector<int> *genPdg,
+    std::vector<std::vector<int>> *genMotherIdx,
+    int requiredGenPdg,      // e.g. 13 for muon
+    int requiredAncestorPdg) // e.g. 24 for W, 23 for Z
 {
-  if (!muPt || !muEta || !muPhi || !muCharge || !genPt || !genEta || !genPhi || !genChg)
+  if (!muPt || !muEta || !muPhi || !muCharge)
+    return false;
+  if (!genPt || !genEta || !genPhi || !genChg || !genPdg || !genMotherIdx)
     return false;
   if (iLead < 0 || (size_t)iLead >= muPt->size())
     return false;
@@ -416,39 +451,85 @@ static bool PassGenRecoMatching(
   const double muonPhi = muPhi->at(iLead);
   const int muonChg = muCharge->at(iLead);
 
-  const size_t ngen = std::min({genPt->size(), genEta->size(), genPhi->size(), genChg->size()});
+  const size_t ngen = std::min({genPt->size(),
+                                genEta->size(),
+                                genPhi->size(),
+                                genChg->size(),
+                                genPdg->size(),
+                                genMotherIdx->size()});
+
+  int bestIdx = -1;
+  double bestDR = 1e9;
+
   for (size_t i = 0; i < ngen; ++i)
   {
-    // avoid division by 0 in dPtRel
     if (genPt->at(i) <= 0)
+      continue;
+    if (std::abs(genPdg->at(i)) != std::abs(requiredGenPdg))
+      continue;
+    if (genChg->at(i) != muonChg)
       continue;
 
     const double dEta = genEta->at(i) - muonEta;
     const double dPhi = TVector2::Phi_mpi_pi(genPhi->at(i) - muonPhi);
     const double dR = std::sqrt(dEta * dEta + dPhi * dPhi);
-
     const double dPtRel = std::fabs(genPt->at(i) - muonPt) / genPt->at(i);
 
-    if (genChg->at(i) != muonChg)
-      continue; // same charge
     if (dR >= 0.5)
-      continue; // ΔR < 0.5
+      continue;
     if (dPtRel >= 0.5)
-      continue; // δpT < 0.5
+      continue;
 
-    return true; // found a match satisfying all cuts
+    if (dR < bestDR)
+    {
+      bestDR = dR;
+      bestIdx = (int)i;
+    }
   }
 
-  return false;
+  if (bestIdx < 0)
+    return false;
+
+  /*std::cout << "[MatchDebug] matched reco muon iLead=" << iLead
+            << " to gen idx=" << bestIdx
+            << " genPdg=" << genPdg->at(bestIdx)
+            << " genPt=" << genPt->at(bestIdx)
+            << " dR=" << bestDR
+            << "\n";
+
+  const auto &moms = genMotherIdx->at(bestIdx);
+
+  if (moms.empty())
+  {
+    std::cout << "[MatchDebug] matched gen idx=" << bestIdx
+              << " has no stored mother\n";
+    return true;
+  }
+
+  std::cout << "[MatchDebug] matched gen idx=" << bestIdx << " mothers:";
+  for (int midx : moms)
+  {
+    std::cout << " " << midx;
+    if (midx >= 0 && (size_t)midx < genPdg->size())
+      std::cout << "(pdg=" << genPdg->at(midx) << ")";
+    else
+      std::cout << "(pdg=OUT_OF_LOCAL_RANGE)";
+  }
+  std::cout << "\n";*/
+
+  return true;
 }
 
 // ---------------------------------------------
 // Main
 // ---------------------------------------------
 void DrawWToMuNu_PFMet(const char *fname =
-                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                       SampleType sample = kData)
+                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_DATA_pass_2.root",
+                       SampleType sample = kWm)
 {
+
+  gInterpreter->GenerateDictionary("vector<vector<int> >", "vector");
+
   bool isMC = false;
 
   gStyle->SetOptStat(0);
@@ -463,6 +544,9 @@ void DrawWToMuNu_PFMet(const char *fname =
   }
 
   WConfig cfg;
+
+  // "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root"
+  // root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_DATA_pass_2.root
 
   if (isMC)
   {
@@ -691,18 +775,31 @@ void DrawWToMuNu_PFMet(const char *fname =
   std::vector<float> *genPhi = nullptr;
   std::vector<int> *genChg = nullptr;
 
+  std::vector<int> *genPdg = nullptr;
+  std::vector<int> *genNMothers = nullptr;
+  std::vector<std::vector<int>> *genMotherIdx = nullptr;
+
   if (isMC)
   {
     tGen->SetBranchStatus("*", 0);
+
     tGen->SetBranchStatus("pt", 1);
     tGen->SetBranchStatus("eta", 1);
     tGen->SetBranchStatus("phi", 1);
     tGen->SetBranchStatus("chg", 1);
 
+    tGen->SetBranchStatus("pdg", 1);
+    tGen->SetBranchStatus("nMothers", 1);
+    tGen->SetBranchStatus("motherIdx", 1);
+
     tGen->SetBranchAddress("pt", &genPt);
     tGen->SetBranchAddress("eta", &genEta);
     tGen->SetBranchAddress("phi", &genPhi);
     tGen->SetBranchAddress("chg", &genChg);
+
+    tGen->SetBranchAddress("pdg", &genPdg);
+    tGen->SetBranchAddress("nMothers", &genNMothers);
+    tGen->SetBranchAddress("motherIdx", &genMotherIdx);
   }
 
   // -------------------------
@@ -844,6 +941,8 @@ void DrawWToMuNu_PFMet(const char *fname =
     tHLT->GetEntry(ie);
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
+    if (isMC)
+      tGen->GetEntry(ie);
 
     // (0) all events
     N[0]++;
@@ -896,7 +995,15 @@ void DrawWToMuNu_PFMet(const char *fname =
 
     if (isMC)
     {
-      if (!PassGenRecoMatching(iLead, muPt, muEta, muPhi, muCharge, genPt, genEta, genPhi, genChg))
+      bool passWmuMatch = PassGenRecoMatchingWithAncestor(
+          iLead,
+          muPt, muEta, muPhi, muCharge,
+          genPt, genEta, genPhi, genChg,
+          genPdg, genMotherIdx,
+          13, // matched gen particle must be muon
+          24  // ancestor must be W
+      );
+      if (!passWmuMatch)
       {
         // cout << "We see a gen-reco matching failed case" << endl;
         // continue;

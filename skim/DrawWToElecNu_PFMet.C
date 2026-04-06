@@ -373,6 +373,35 @@ static bool PassLeadingElectronTrigMatch(const WConfig &cfg,
   return true;
 }
 
+// DecayID check
+
+static bool HasAncestor(
+    int idx,
+    int targetPdg,
+    std::vector<int> *genPdg,
+    std::vector<std::vector<int>> *genMotherIdx)
+{
+  if (!genPdg || !genMotherIdx)
+    return false;
+  if (idx < 0 || (size_t)idx >= genPdg->size() || (size_t)idx >= genMotherIdx->size())
+    return false;
+
+  const auto &moms = genMotherIdx->at(idx);
+  for (int midx : moms)
+  {
+    if (midx < 0 || (size_t)midx >= genPdg->size() || (size_t)midx >= genMotherIdx->size())
+      continue;
+
+    if (std::abs(genPdg->at(midx)) == std::abs(targetPdg))
+      return true;
+
+    if (HasAncestor(midx, targetPdg, genPdg, genMotherIdx))
+      return true;
+  }
+
+  return false;
+}
+
 // ---------------------------------------------
 // Extra: Gen-reco matching
 // ---------------------------------------------
@@ -380,9 +409,15 @@ static bool PassLeadingElectronTrigMatch(const WConfig &cfg,
 static bool PassGenRecoMatching(
     int iLead,
     std::vector<float> *elePt, std::vector<float> *eleEta, std::vector<float> *elePhi, std::vector<int> *eleCharge,
-    std::vector<float> *genPt, std::vector<float> *genEta, std::vector<float> *genPhi, std::vector<int> *genChg)
+    std::vector<float> *genPt, std::vector<float> *genEta, std::vector<float> *genPhi, std::vector<int> *genChg,
+    std::vector<int> *genPdg,
+    std::vector<std::vector<int>> *genMotherIdx,
+    int requiredGenPdg,      // e.g. 11 for electron
+    int requiredAncestorPdg) // e.g. 24 for W, 23 for Z
 {
-  if (!elePt || !eleEta || !elePhi || !eleCharge || !genPt || !genEta || !genPhi || !genChg)
+  if (!elePt || !eleEta || !elePhi || !eleCharge)
+    return false;
+  if (!genPt || !genEta || !genPhi || !genChg || !genPdg || !genMotherIdx)
     return false;
   if (iLead < 0 || (size_t)iLead >= elePt->size())
     return false;
@@ -392,30 +427,73 @@ static bool PassGenRecoMatching(
   const double electronPhi = elePhi->at(iLead);
   const int electronChg = eleCharge->at(iLead);
 
-  const size_t ngen = std::min({genPt->size(), genEta->size(), genPhi->size(), genChg->size()});
+  const size_t ngen = std::min({genPt->size(),
+                                genEta->size(),
+                                genPhi->size(),
+                                genChg->size(),
+                                genPdg->size(),
+                                genMotherIdx->size()});
+
+  int bestIdx = -1;
+  double bestDR = 1e9;
+
   for (size_t i = 0; i < ngen; ++i)
   {
-    // avoid division by 0 in dPtRel
     if (genPt->at(i) <= 0)
+      continue;
+    if (std::abs(genPdg->at(i)) != std::abs(requiredGenPdg))
+      continue;
+    if (genChg->at(i) != electronChg)
       continue;
 
     const double dEta = genEta->at(i) - electronEta;
     const double dPhi = TVector2::Phi_mpi_pi(genPhi->at(i) - electronPhi);
     const double dR = std::sqrt(dEta * dEta + dPhi * dPhi);
-
     const double dPtRel = std::fabs(genPt->at(i) - electronPt) / genPt->at(i);
 
-    if (genChg->at(i) != electronChg)
-      continue; // same charge
     if (dR >= 0.5)
-      continue; // ΔR < 0.5
+      continue;
     if (dPtRel >= 0.5)
-      continue; // δpT < 0.5
+      continue;
 
-    return true; // found a match satisfying all cuts
+    if (dR < bestDR)
+    {
+      bestDR = dR;
+      bestIdx = (int)i;
+    }
   }
 
-  return false;
+  if (bestIdx < 0)
+    return false;
+
+  /*std::cout << "[MatchDebug] matched reco electron iLead=" << iLead
+            << " to gen idx=" << bestIdx
+            << " genPdg=" << genPdg->at(bestIdx)
+            << " genPt=" << genPt->at(bestIdx)
+            << " dR=" << bestDR
+            << "\n";
+
+  const auto &moms = genMotherIdx->at(bestIdx);
+
+  if (moms.empty())
+  {
+    std::cout << "[MatchDebug] matched gen idx=" << bestIsdx
+              << " has no stored mother\n";
+    return true;
+  }
+
+  std::cout << "[MatchDebug] matched gen idx=" << bestIdx << " mothers:";
+  for (int midx : moms)
+  {
+    std::cout << " " << midx;
+    if (midx >= 0 && (size_t)midx < genPdg->size())
+      std::cout << "(pdg=" << genPdg->at(midx) << ")";
+    else
+      std::cout << "(pdg=OUT_OF_LOCAL_RANGE)";
+  }
+  std::cout << "\n";*/
+
+  return true;
 }
 
 // ---------------------------------------------
@@ -423,7 +501,7 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 void DrawWToElecNu_PFMet(const char *fname =
                              "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                         SampleType sample = kData)
+                         SampleType sample = kWm)
 {
   bool isMC = false;
 
@@ -696,6 +774,8 @@ void DrawWToElecNu_PFMet(const char *fname =
   std::vector<float> *genEta = nullptr;
   std::vector<float> *genPhi = nullptr;
   std::vector<int> *genChg = nullptr;
+  std::vector<int> *genPdg = nullptr;
+  std::vector<std::vector<int>> *genMotherIdx = nullptr;
 
   if (isMC && !tGen)
   {
@@ -705,16 +785,22 @@ void DrawWToElecNu_PFMet(const char *fname =
 
   if (isMC)
   {
+    gInterpreter->GenerateDictionary("vector<vector<int> >", "vector");
+
     tGen->SetBranchStatus("*", 0);
     tGen->SetBranchStatus("pt", 1);
     tGen->SetBranchStatus("eta", 1);
     tGen->SetBranchStatus("phi", 1);
     tGen->SetBranchStatus("chg", 1);
+    tGen->SetBranchStatus("pdg", 1);
+    tGen->SetBranchStatus("motherIdx", 1);
 
     tGen->SetBranchAddress("pt", &genPt);
     tGen->SetBranchAddress("eta", &genEta);
     tGen->SetBranchAddress("phi", &genPhi);
     tGen->SetBranchAddress("chg", &genChg);
+    tGen->SetBranchAddress("pdg", &genPdg);
+    tGen->SetBranchAddress("motherIdx", &genMotherIdx);
   }
 
   // -------------------------
@@ -820,6 +906,8 @@ void DrawWToElecNu_PFMet(const char *fname =
     tHLT->GetEntry(ie);
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
+    if (isMC)
+      tGen->GetEntry(ie);
 
     // (0) all events
     N[0]++;
@@ -870,10 +958,16 @@ void DrawWToElecNu_PFMet(const char *fname =
 
     if (isMC)
     {
-      if (!PassGenRecoMatching(iLead, elePt, eleEta, elePhi, eleCharge, genPt, genEta, genPhi, genChg))
+      bool passEleW = PassGenRecoMatching(
+          iLead,
+          elePt, eleEta, elePhi, eleCharge,
+          genPt, genEta, genPhi, genChg,
+          genPdg, genMotherIdx,
+          11, 24);
+      if (!passEleW)
       {
         // cout << "We see a gen-reco matching failed case" << endl;
-        // continue;
+        //continue;
       }
     }
 
