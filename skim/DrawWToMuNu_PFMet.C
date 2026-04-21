@@ -56,7 +56,10 @@ enum SampleType
   kData,
   kDY,
   kWp,
-  kWm
+  kWm,
+  kDYtau,
+  kWptau,
+  kWmtau
 };
 
 // ---------------------------------------------
@@ -524,8 +527,8 @@ static bool PassGenRecoMatchingWithAncestor(
 // Main
 // ---------------------------------------------
 void DrawWToMuNu_PFMet(const char *fname =
-                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_DATA_pass_2.root",
-                       SampleType sample = kWm)
+                           "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
+                       SampleType sample = kData)
 {
 
   gInterpreter->GenerateDictionary("vector<vector<int> >", "vector");
@@ -564,6 +567,21 @@ void DrawWToMuNu_PFMet(const char *fname =
     {
       fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_mu.root");
       cfg.outPrefix += "_Wm";
+    }
+    if (sample == kDYtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_tau_Z.root");
+      cfg.outPrefix += "_DYtau";
+    }
+    if (sample == kWptau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_tau.root");
+      cfg.outPrefix += "_Wptau";
+    }
+    if (sample == kWmtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_tau.root");
+      cfg.outPrefix += "_Wmtau";
     }
   }
 

@@ -544,13 +544,13 @@ static void SaveNicePlot1D_WithBkg(
         kMagenta - 3,
         kCyan + 1};
 
-    for (size_t i = 0; i < bkgs.size(); i++)
+    for (int i = static_cast<int>(bkgs.size()) - 1; i >= 0; --i)
     {
         TH1 *b = bkgs[i];
         if (!b)
             continue;
 
-        b->Scale(scale); // 🔥 normalization here
+        b->Scale(scale);
 
         b->SetFillColor(colors[i % colors.size()]);
         b->SetLineColor(kBlack);

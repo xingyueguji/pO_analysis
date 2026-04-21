@@ -10,12 +10,15 @@
 #include <vector>
 #include <functional>
 
-void mtandmet(bool isElec = 1)
+void mtandmet(bool isElec = 0)
 {
     std::string inFile;
     std::string inFile_MC_signal_Wp;
     std::string inFile_MC_signal_Wm;
     std::string inFile_MC_background_Z;
+    std::string inFile_MC_background_Ztau;
+    std::string inFile_MC_background_Wptau;
+    std::string inFile_MC_background_Wmtau;
 
     const char *Channeltype;
     const char *Channeltypewplus;
@@ -37,6 +40,9 @@ void mtandmet(bool isElec = 1)
         inFile_MC_signal_Wp = "../skim/rootfile/WToMuNu_pO_PFMet_Wp_hist.root";
         inFile_MC_signal_Wm = "../skim/rootfile/WToMuNu_pO_PFMet_Wm_hist.root";
         inFile_MC_background_Z = "../skim/rootfile/WToMuNu_pO_PFMet_DY_hist.root";
+        inFile_MC_background_Ztau = "../skim/rootfile/WToMuNu_pO_PFMet_DYtau_hist.root";
+        inFile_MC_background_Wptau = "../skim/rootfile/WToMuNu_pO_PFMet_Wptau_hist.root";
+        inFile_MC_background_Wmtau = "../skim/rootfile/WToMuNu_pO_PFMet_Wmtau_hist.root";
         Channeltype = "W #rightarrow #mu #nu";
         Channeltypewplus = "W^{+} #rightarrow #mu^{+} #nu";
         Channeltypewminus = "W^{-} #rightarrow #mu^{-}#bar{#nu}";
@@ -67,6 +73,27 @@ void mtandmet(bool isElec = 1)
     if (!f_DY || f_DY->IsZombie())
     {
         std::cerr << "[ERROR] Cannot open file: " << inFile_MC_background_Z << "\n";
+        return;
+    }
+
+    TFile *f_DYtau = TFile::Open(inFile_MC_background_Ztau.c_str(), "READ");
+    if (!f_DYtau || f_DYtau->IsZombie())
+    {
+        std::cerr << "[ERROR] Cannot open file: " << inFile_MC_background_Ztau << "\n";
+        return;
+    }
+
+    TFile *f_Wptau = TFile::Open(inFile_MC_background_Wptau.c_str(), "READ");
+    if (!f_Wptau || f_Wptau->IsZombie())
+    {
+        std::cerr << "[ERROR] Cannot open file: " << inFile_MC_background_Wptau << "\n";
+        return;
+    }
+
+    TFile *f_Wmtau = TFile::Open(inFile_MC_background_Wmtau.c_str(), "READ");
+    if (!f_Wmtau || f_Wmtau->IsZombie())
+    {
+        std::cerr << "[ERROR] Cannot open file: " << inFile_MC_background_Wmtau << "\n";
         return;
     }
 
@@ -120,7 +147,7 @@ void mtandmet(bool isElec = 1)
     PlotStyle ps;
     ps.drawOpt = "hist";
     ps.showStats = false;
-    ps.logy = false; // set true if you want log-y for MET tails
+    ps.logy = true; // set true if you want log-y for MET tails
     ps.boxY1 = 0.62;
     ps.boxY2 = 0.82;
 
@@ -132,11 +159,11 @@ void mtandmet(bool isElec = 1)
             return;
 
         // Example: ensure y-min is 0 for linear plots
-        if (!ps.logy)
-            h->SetMinimum(0.0);
+        if (ps.logy)
+            h->SetMinimum(1.0);
 
         // Example: leave some headroom
-        h->SetMaximum(1.25 * h->GetMaximum());
+        h->SetMaximum(10.25 * h->GetMaximum());
     };
 
     TH1D *h_met_inclusive = nullptr;
@@ -147,6 +174,12 @@ void mtandmet(bool isElec = 1)
 
     TH1D *h_met_inclusive_MC_Z = nullptr;
     TH1D *h_mt_inclusive_MC_Z = nullptr;
+
+    TH1D *h_met_inclusive_MC_Ztau = nullptr;
+    TH1D *h_mt_inclusive_MC_Ztau = nullptr;
+
+    TH1D *h_met_inclusive_MC_Wtau = nullptr;
+    TH1D *h_mt_inclusive_MC_Wtau = nullptr;
 
     // Loop over rapidity bins and charge
     for (int iy = 0; iy < NY; ++iy)
@@ -180,6 +213,28 @@ void mtandmet(bool isElec = 1)
         TH1D *h_met_Wp_FB_MC_Z = (TH1D *)f_DY->Get(Form("h_met_Wp_y%d_FB", iy));
         TH1D *h_met_Wm_FB_MC_Z = (TH1D *)f_DY->Get(Form("h_met_Wm_y%d_FB", iy));
 
+        // ---- MET MC Ztau BK ----
+
+        TH1D *h_met_Wp_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_met_Wp_y%d", iy));
+        TH1D *h_met_Wm_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_met_Wm_y%d", iy));
+
+        TH1D *h_met_Wp_FB_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_met_Wp_y%d_FB", iy));
+        TH1D *h_met_Wm_FB_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_met_Wm_y%d_FB", iy));
+
+        // ---- MET MC Wtau BK ----
+
+        TH1D *h_met_Wp_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_met_Wp_y%d", iy));
+        TH1D *h_met_Wm_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_met_Wm_y%d", iy));
+
+        TH1D *h_met_Wp_FB_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_met_Wp_y%d_FB", iy));
+        TH1D *h_met_Wm_FB_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_met_Wm_y%d_FB", iy));
+
+        TH1D *h_met_Wp_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_met_Wp_y%d", iy));
+        TH1D *h_met_Wm_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_met_Wm_y%d", iy));
+
+        TH1D *h_met_Wp_FB_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_met_Wp_y%d_FB", iy));
+        TH1D *h_met_Wm_FB_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_met_Wm_y%d_FB", iy));
+
         // ---- mT ----
         TH1D *h_mt_Wp = (TH1D *)f->Get(Form("h_mt_Wp_y%d", iy));
         TH1D *h_mt_Wm = (TH1D *)f->Get(Form("h_mt_Wm_y%d", iy));
@@ -209,6 +264,28 @@ void mtandmet(bool isElec = 1)
         TH1D *h_mt_Wp_FB_MC_Z = (TH1D *)f_DY->Get(Form("h_mt_Wp_y%d_FB", iy));
         TH1D *h_mt_Wm_FB_MC_Z = (TH1D *)f_DY->Get(Form("h_mt_Wm_y%d_FB", iy));
 
+        // ---- mT MC Ztau BK ----
+
+        TH1D *h_mt_Wp_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_mt_Wp_y%d", iy));
+        TH1D *h_mt_Wm_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_mt_Wm_y%d", iy));
+
+        TH1D *h_mt_Wp_FB_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_mt_Wp_y%d_FB", iy));
+        TH1D *h_mt_Wm_FB_MC_Ztau = (TH1D *)f_DYtau->Get(Form("h_mt_Wm_y%d_FB", iy));
+
+        // ---- mT MC Wtau BK ----
+
+        TH1D *h_mt_Wp_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_mt_Wp_y%d", iy));
+        TH1D *h_mt_Wm_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_mt_Wm_y%d", iy));
+
+        TH1D *h_mt_Wp_FB_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_mt_Wp_y%d_FB", iy));
+        TH1D *h_mt_Wm_FB_MC_Wptau = (TH1D *)f_Wptau->Get(Form("h_mt_Wm_y%d_FB", iy));
+
+        TH1D *h_mt_Wp_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_mt_Wp_y%d", iy));
+        TH1D *h_mt_Wm_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_mt_Wm_y%d", iy));
+
+        TH1D *h_mt_Wp_FB_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_mt_Wp_y%d_FB", iy));
+        TH1D *h_mt_Wm_FB_MC_Wmtau = (TH1D *)f_Wmtau->Get(Form("h_mt_Wm_y%d_FB", iy));
+
         if (!h_met_Wp || !h_met_Wm || !h_mt_Wp || !h_mt_Wm)
         {
             std::cerr << "[WARN] Missing histogram(s) at y bin " << iy << "\n";
@@ -228,6 +305,14 @@ void mtandmet(bool isElec = 1)
             h_mt_inclusive_MC_Z = (TH1D *)h_mt_Wp->Clone("h_mt_inclusive_MC_Z");
             h_mt_inclusive_MC_Z->Reset();
             h_mt_inclusive_MC_Z->SetDirectory(nullptr);
+
+            h_mt_inclusive_MC_Ztau = (TH1D *)h_mt_Wp->Clone("h_mt_inclusive_MC_Ztau");
+            h_mt_inclusive_MC_Ztau->Reset();
+            h_mt_inclusive_MC_Ztau->SetDirectory(nullptr);
+
+            h_mt_inclusive_MC_Wtau = (TH1D *)h_mt_Wp->Clone("h_mt_inclusive_MC_Wtau");
+            h_mt_inclusive_MC_Wtau->Reset();
+            h_mt_inclusive_MC_Wtau->SetDirectory(nullptr);
         }
         if (!h_met_inclusive)
         {
@@ -242,6 +327,14 @@ void mtandmet(bool isElec = 1)
             h_met_inclusive_MC_Z = (TH1D *)h_met_Wp->Clone("h_met_inclusive_MC_Z");
             h_met_inclusive_MC_Z->Reset();
             h_met_inclusive_MC_Z->SetDirectory(nullptr); // avoid ROOT ownership issues
+
+            h_met_inclusive_MC_Ztau = (TH1D *)h_met_Wp->Clone("h_met_inclusive_MC_Ztau");
+            h_met_inclusive_MC_Ztau->Reset();
+            h_met_inclusive_MC_Ztau->SetDirectory(nullptr);
+
+            h_met_inclusive_MC_Wtau = (TH1D *)h_met_Wp->Clone("h_met_inclusive_MC_Wtau");
+            h_met_inclusive_MC_Wtau->Reset();
+            h_met_inclusive_MC_Wtau->SetDirectory(nullptr);
         }
 
         h_met_inclusive->Add(h_met_Wp);
@@ -255,6 +348,14 @@ void mtandmet(bool isElec = 1)
         h_met_inclusive_MC_Z->Add(h_met_Wp_MC_Z);
         h_met_inclusive_MC_Z->Add(h_met_Wm_MC_Z);
 
+        h_met_inclusive_MC_Ztau->Add(h_met_Wp_MC_Ztau);
+        h_met_inclusive_MC_Ztau->Add(h_met_Wm_MC_Ztau);
+
+        h_met_inclusive_MC_Wtau->Add(h_met_Wp_MC_Wptau);
+        h_met_inclusive_MC_Wtau->Add(h_met_Wm_MC_Wptau);
+        h_met_inclusive_MC_Wtau->Add(h_met_Wp_MC_Wmtau);
+        h_met_inclusive_MC_Wtau->Add(h_met_Wm_MC_Wmtau);
+
         h_mt_inclusive->Add(h_mt_Wp);
         h_mt_inclusive->Add(h_mt_Wm);
 
@@ -265,6 +366,14 @@ void mtandmet(bool isElec = 1)
 
         h_mt_inclusive_MC_Z->Add(h_mt_Wp_MC_Z);
         h_mt_inclusive_MC_Z->Add(h_mt_Wm_MC_Z);
+
+        h_mt_inclusive_MC_Ztau->Add(h_mt_Wp_MC_Ztau);
+        h_mt_inclusive_MC_Ztau->Add(h_mt_Wm_MC_Ztau);
+
+        h_mt_inclusive_MC_Wtau->Add(h_mt_Wp_MC_Wptau);
+        h_mt_inclusive_MC_Wtau->Add(h_mt_Wm_MC_Wptau);
+        h_mt_inclusive_MC_Wtau->Add(h_mt_Wp_MC_Wmtau);
+        h_mt_inclusive_MC_Wtau->Add(h_mt_Wm_MC_Wmtau);
 
         if (h_met_Wp->Integral(1, h_met_Wp->GetNbinsX()) != h_mt_Wp->Integral(1, h_mt_Wp->GetNbinsX()))
         {
@@ -284,12 +393,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_met_Wp_MC_Wp,
                 h_met_Wp_MC_Wm,
-                h_met_Wp_MC_Z};
+                h_met_Wp_MC_Z,
+                h_met_Wp_MC_Ztau,
+                h_met_Wp_MC_Wptau,
+                h_met_Wp_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wp,
@@ -312,12 +427,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_met_Wm_MC_Wp,
                 h_met_Wm_MC_Wm,
-                h_met_Wm_MC_Z};
+                h_met_Wm_MC_Z,
+                h_met_Wm_MC_Ztau,
+                h_met_Wm_MC_Wptau,
+                h_met_Wm_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wm,
@@ -342,12 +463,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_met_Wp_FB_MC_Wp,
                 h_met_Wp_FB_MC_Wm,
-                h_met_Wp_FB_MC_Z};
+                h_met_Wp_FB_MC_Z,
+                h_met_Wp_FB_MC_Ztau,
+                h_met_Wp_FB_MC_Wptau,
+                h_met_Wp_FB_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wp_FB,
@@ -370,12 +497,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_met_Wm_FB_MC_Wp,
                 h_met_Wm_FB_MC_Wm,
-                h_met_Wm_FB_MC_Z};
+                h_met_Wm_FB_MC_Z,
+                h_met_Wm_FB_MC_Ztau,
+                h_met_Wm_FB_MC_Wptau,
+                h_met_Wm_FB_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wm_FB,
@@ -399,12 +532,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_mt_Wp_MC_Wp,
                 h_mt_Wp_MC_Wm,
-                h_mt_Wp_MC_Z};
+                h_mt_Wp_MC_Z,
+                h_mt_Wp_MC_Ztau,
+                h_mt_Wp_MC_Wptau,
+                h_mt_Wp_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_mt_Wp,
@@ -427,12 +566,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_mt_Wm_MC_Wp,
                 h_mt_Wm_MC_Wm,
-                h_mt_Wm_MC_Z};
+                h_mt_Wm_MC_Z,
+                h_mt_Wm_MC_Ztau,
+                h_mt_Wm_MC_Wptau,
+                h_mt_Wm_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_mt_Wm,
@@ -456,12 +601,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_mt_Wp_FB_MC_Wp,
                 h_mt_Wp_FB_MC_Wm,
-                h_mt_Wp_FB_MC_Z};
+                h_mt_Wp_FB_MC_Z,
+                h_mt_Wp_FB_MC_Ztau,
+                h_mt_Wp_FB_MC_Wptau,
+                h_mt_Wp_FB_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_mt_Wp_FB,
@@ -484,12 +635,18 @@ void mtandmet(bool isElec = 1)
             std::vector<TH1 *> bkgs = {
                 h_mt_Wm_FB_MC_Wp,
                 h_mt_Wm_FB_MC_Wm,
-                h_mt_Wm_FB_MC_Z};
+                h_mt_Wm_FB_MC_Z,
+                h_mt_Wm_FB_MC_Ztau,
+                h_mt_Wm_FB_MC_Wptau,
+                h_mt_Wm_FB_MC_Wmtau};
 
             std::vector<std::string> names = {
                 "W+",
                 "W-",
-                "DY"};
+                "DY",
+                "DY Tau",
+                "Wp Tau",
+                "Wm Tau"};
 
             SaveNicePlot1D_WithBkg(
                 h_mt_Wm_FB,
@@ -513,11 +670,15 @@ void mtandmet(bool isElec = 1)
 
         std::vector<TH1 *> bkgs = {
             h_mt_inclusive_MC_signal,
-            h_mt_inclusive_MC_Z};
+            h_mt_inclusive_MC_Z,
+            h_mt_inclusive_MC_Ztau,
+            h_mt_inclusive_MC_Wtau};
 
         std::vector<std::string> names = {
             "W+/W-",
-            "DY"};
+            "DY",
+            "DY tau",
+            "W+/W- tau"};
 
         SaveNicePlot1D_WithBkg(
             h_mt_inclusive,
@@ -540,11 +701,15 @@ void mtandmet(bool isElec = 1)
 
         std::vector<TH1 *> bkgs = {
             h_met_inclusive_MC_signal,
-            h_met_inclusive_MC_Z};
+            h_met_inclusive_MC_Z,
+            h_met_inclusive_MC_Ztau,
+            h_met_inclusive_MC_Wtau};
 
         std::vector<std::string> names = {
             "W+/W-",
-            "DY"};
+            "DY",
+            "DY tau",
+            "W+/W- tau"};
 
         SaveNicePlot1D_WithBkg(
             h_met_inclusive,
@@ -559,6 +724,43 @@ void mtandmet(bool isElec = 1)
             box,
             ps,
             commonTuner);
+    }
+
+    {
+        std::string combineOut = outBase + "/combine_input_inclusive.root";
+        TFile *fout = TFile::Open(combineOut.c_str(), "RECREATE");
+        if (!fout || fout->IsZombie())
+        {
+            std::cerr << "[ERROR] Cannot create output file: " << combineOut << "\n";
+            return;
+        }
+
+        auto write_clone = [&](TH1D *h, const char *name)
+        {
+            if (!h)
+            {
+                std::cerr << "[WARN] Missing histogram: " << name << "\n";
+                return;
+            }
+            fout->cd();
+            TH1D *hc = (TH1D *)h->Clone(name);
+            hc->SetDirectory(fout);
+            hc->Write(name, TObject::kOverwrite);
+        };
+
+        // Data
+        write_clone(h_met_inclusive, "data_obs");
+
+        // Main templates
+        write_clone(h_met_inclusive_MC_signal, "signal");
+        write_clone(h_met_inclusive_MC_Z, "z");
+        write_clone(h_met_inclusive_MC_Ztau, "ztau");
+        write_clone(h_met_inclusive_MC_Wtau, "wtau");
+
+        fout->Close();
+        delete fout;
+
+        std::cout << "[INFO] Saved Combine hist file: " << combineOut << "\n";
     }
 
     f->Close();
