@@ -53,10 +53,13 @@
 
 enum SampleType
 {
-  kData = 0,
+  kData,
   kDY,
   kWp,
-  kWm
+  kWm,
+  kDYtau,
+  kWptau,
+  kWmtau
 };
 
 // ---------------------------------------------
@@ -501,7 +504,7 @@ static bool PassGenRecoMatching(
 // ---------------------------------------------
 void DrawWToElecNu_PFMet(const char *fname =
                              "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
-                         SampleType sample = kWm)
+                         SampleType sample = kDYtau)
 {
   bool isMC = false;
 
@@ -534,6 +537,21 @@ void DrawWToElecNu_PFMet(const char *fname =
     {
       fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_ele.root");
       cfg.outPrefix += "_Wm";
+    }
+    if (sample == kDYtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_tau_Z.root");
+      cfg.outPrefix += "_DYtau";
+    }
+    if (sample == kWptau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_tau.root");
+      cfg.outPrefix += "_Wptau";
+    }
+    if (sample == kWmtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_tau.root");
+      cfg.outPrefix += "_Wmtau";
     }
   }
 
@@ -883,6 +901,34 @@ void DrawWToElecNu_PFMet(const char *fname =
     h_mt_Wm_FB[b]->Sumw2();
   }
 
+  static const int NISO = 3;
+  double isoEdges[NISO + 1] = {0.1, 0.4, 0.7, 1.0}; // tune for e if needed
+
+  TH1D *h_met_iso_elePlus[NISO];
+  TH1D *h_met_iso_eleMinus[NISO];
+
+  for (int b = 0; b < NISO; ++b)
+  {
+    h_met_iso_elePlus[b] = new TH1D(
+        Form("h_met_iso_elePlus_bin%d", b),
+        Form("MET, e^{+}, %.1f < iso < %.1f;MET [GeV];Events", isoEdges[b], isoEdges[b + 1]),
+        60, 0, 120);
+    h_met_iso_eleMinus[b] = new TH1D(
+        Form("h_met_iso_eleMinus_bin%d", b),
+        Form("MET, e^{-}, %.1f < iso < %.1f;MET [GeV];Events", isoEdges[b], isoEdges[b + 1]),
+        60, 0, 120);
+    h_met_iso_elePlus[b]->Sumw2();
+    h_met_iso_eleMinus[b]->Sumw2();
+  }
+
+  auto FindIsoBin = [&](double iso) -> int
+  {
+    for (int b = 0; b < NISO; ++b)
+      if (iso >= isoEdges[b] && iso < isoEdges[b + 1])
+        return b;
+    return -1;
+  };
+
   // -------------------------
   // Cutflow counters
   // -------------------------
@@ -967,7 +1013,7 @@ void DrawWToElecNu_PFMet(const char *fname =
       if (!passEleW)
       {
         // cout << "We see a gen-reco matching failed case" << endl;
-        //continue;
+        // continue;
       }
     }
 
@@ -979,13 +1025,19 @@ void DrawWToElecNu_PFMet(const char *fname =
     N[6]++;
 
     // (7) Leading electron Iso < 0.15
-    if (eleMVAIsoWP95->at(iLead) != 1)
-      continue;
+    /*if (eleMVAIsoWP95->at(iLead) != 1)
+      continue;*/
 
-    // const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
-    // if (isoLead >= cfg.isoMax)
-    // continue;
-    N[7]++;
+    // (7) Leading electron Iso < cfg.isoMax
+    const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
+    const int isoBin = FindIsoBin(isoLead);
+    const bool isQCDSideband = (isoBin >= 0);
+    const bool passIsoNominal = (isoLead < cfg.isoMax);
+
+    // FIXME: Need to redo electron isolation study, not using working point.
+
+    if (passIsoNominal)
+      N[7]++;
 
     // (8) Leading electron matched to trigger
     const bool passMatch = PassLeadingElectronTrigMatch(cfg, iLead, eleEta, elePhi,
@@ -996,7 +1048,9 @@ void DrawWToElecNu_PFMet(const char *fname =
                                                         warnedNoTrigMatchInfo);
     if (!passMatch)
       continue;
-    N[8]++;
+
+    if (passIsoNominal)
+      N[8]++;
 
     // Fill final distributions (after step 8)
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
@@ -1005,6 +1059,17 @@ void DrawWToElecNu_PFMet(const char *fname =
     const double ele_phi = elePhi->at(iLead);
     const double dphi = TVector2::Phi_mpi_pi(ele_phi - metPhi);
     const double mt = std::sqrt(2.0 * elePt->at(iLead) * met * (1.0 - std::cos(dphi)));
+
+    if (isQCDSideband)
+    {
+      if (eleCharge->at(iLead) > 0)
+        h_met_iso_elePlus[isoBin]->Fill(met);
+      else if (eleCharge->at(iLead) < 0)
+        h_met_iso_eleMinus[isoBin]->Fill(met);
+    }
+
+    if (!passIsoNominal)
+      continue; // now skip out of signal-region filling
 
     auto FindBin = [&](double y) -> int
     {
@@ -1176,6 +1241,12 @@ void DrawWToElecNu_PFMet(const char *fname =
     h_met_Wm_FB[i]->Write("", 2);
     h_mt_Wp_FB[i]->Write("", 2);
     h_mt_Wm_FB[i]->Write("", 2);
+  }
+
+  for (int b = 0; b < NISO; ++b)
+  {
+    h_met_iso_elePlus[b]->Write("", TObject::kOverwrite);
+    h_met_iso_eleMinus[b]->Write("", TObject::kOverwrite);
   }
   fout->Close();
 
