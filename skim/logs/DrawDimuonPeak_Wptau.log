@@ -1,0 +1,16 @@
+
+Processing DrawDimuonPeak.C+("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root", kWptau)...
+[INFO] Using trigger bit branch: HLT_OxyL1SingleMuOpen_v1
+EventTree entries = 1163666
+Have HiTree? YES
+HiTree has vz? YES
+HiTree has hiBin? YES
+Event 0/1163666
+Event 200000/1163666
+Event 400000/1163666
+Event 600000/1163666
+Event 800000/1163666
+Event 1000000/1163666
+Passed event preselection: 8049
+Found selected OS pair: 1
+Wrote: ZToMuMu_pO2025_Wptau_mass.png/.pdf and _hist.root

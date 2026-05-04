@@ -14,6 +14,17 @@
 #include <iostream>
 #include <string>
 
+enum SampleType
+{
+  kData,
+  kDY,
+  kWp,
+  kWm,
+  kDYtau,
+  kWptau,
+  kWmtau
+};
+
 // --------------------
 // Small helpers
 // --------------------
@@ -130,7 +141,8 @@ struct DileptonConfig
 // --------------------
 // Main
 // --------------------
-void DrawDimuonPeak(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root")
+void DrawDimuonPeak(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root",
+                    SampleType sample = kData)
 {
   // ==============
   // Configure here
@@ -153,6 +165,45 @@ void DrawDimuonPeak(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gr
   cfg.vzMax = 15;
   cfg.applyHiBin = false; // pO: leave OFF unless you confirm it's meaningful
   cfg.outPrefix = "ZToMuMu_pO2025";
+
+  bool isMC = (sample != kData);
+
+  if (isMC)
+  {
+    if (sample == kDY)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_mu_Z.root");
+      cfg.outPrefix += "_DY";
+    }
+    if (sample == kWp)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_mu.root");
+      cfg.outPrefix += "_Wp";
+    }
+    if (sample == kWm)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_mu.root");
+      cfg.outPrefix += "_Wm";
+    }
+    if (sample == kDYtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_DY_tau_Z.root");
+      cfg.outPrefix += "_DYtau";
+    }
+    if (sample == kWptau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wp_tau.root");
+      cfg.outPrefix += "_Wptau";
+    }
+    if (sample == kWmtau)
+    {
+      fname = Form("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_MC_Wm_tau.root");
+      cfg.outPrefix += "_Wmtau";
+    }
+  }
+
+  // optional: tag data filename too, like the W skim
+  std::string mcTag = isMC ? "MC" : "Data";
 
   // If you later want J/psi quickly:
   // cfg.massMin=2.6; cfg.massMax=3.6; cfg.nBins=100;
@@ -520,7 +571,7 @@ void DrawDimuonPeak(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gr
   c->SaveAs((cfg.outPrefix + "_mass.pdf").c_str());*/
 
   // optional: save histogram to a ROOT file
-  TFile *fout = new TFile((cfg.outPrefix + "_hist.root").c_str(), "RECREATE");
+  TFile *fout = new TFile(("./rootfile/" + cfg.outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);

@@ -1,0 +1,16 @@
+
+Processing DrawDielectronPeak.C+("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root", kWm)...
+[INFO] Using trigger bit branch: HLT_OxyL1SingleEG10_v1
+EventTree entries = 1197626
+Have HiTree? YES
+HiTree has vz? YES
+HiTree has hiBin? YES
+Event 0/1197626
+Event 200000/1197626
+Event 400000/1197626
+Event 600000/1197626
+Event 800000/1197626
+Event 1000000/1197626
+Passed event preselection: 45662
+Found selected OS pair: 113
+[INFO] Wrote outputs with prefix: ZToEE_pO2025_Wm

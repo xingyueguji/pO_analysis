@@ -1,0 +1,23 @@
+
+Processing DrawDimuonPeak.C+("root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root", kData)...
+Info in <TUnixSystem::ACLiC>: creating shared library /afs/cern.ch/user/z/zheng/pO_analysis/skim/./DrawDimuonPeak_C.so
+[INFO] Using trigger bit branch: HLT_OxyL1SingleMuOpen_v1
+EventTree entries = 2215454
+Have HiTree? YES
+HiTree has vz? YES
+HiTree has hiBin? YES
+Event 0/2215454
+Event 200000/2215454
+Event 400000/2215454
+Event 600000/2215454
+Event 800000/2215454
+Event 1000000/2215454
+Event 1200000/2215454
+Event 1400000/2215454
+Event 1600000/2215454
+Event 1800000/2215454
+Event 2000000/2215454
+Event 2200000/2215454
+Passed event preselection: 53487
+Found selected OS pair: 369
+Wrote: ZToMuMu_pO2025_mass.png/.pdf and _hist.root
