@@ -6,36 +6,7 @@
 #include <vector>
 #include <cmath>
 
-// ---------- helpers ----------
-static double YieldInRange(const TH1D *h, double xmin, double xmax)
-{
-    if (!h)
-        return 0.0;
-
-    // If xmin/xmax are NaN -> integrate full histogram (excluding under/overflow by default).
-    if (std::isnan(xmin) || std::isnan(xmax))
-        return h->Integral(1, h->GetNbinsX());
-
-    int b1 = h->GetXaxis()->FindBin(xmin);
-    int b2 = h->GetXaxis()->FindBin(xmax);
-
-    // protect edges
-    if (b1 < 1)
-        b1 = 1;
-    if (b2 > h->GetNbinsX())
-        b2 = h->GetNbinsX();
-
-    return h->Integral(b1, b2);
-}
-
-static double AsymErr(double Np, double Nm)
-{
-    const double S = Np + Nm;
-    if (S <= 0.0)
-        return 0.0;
-    // sigma_A^2 = 4 Np Nm / S^3
-    return std::sqrt(4.0 * Np * Nm / (S * S * S));
-}
+#include "analysis_helpers.h" // YieldInRange, AsymErr, kPORapidityShift
 
 // ---------- main ----------
 void charge_asym(
@@ -47,6 +18,9 @@ void charge_asym(
     double xMax = 200.0,
     int NY = 12)
 {
+    using pOAnalysis::AsymErr;
+    using pOAnalysis::YieldInRange;
+
     TFile *f = TFile::Open(inFile, "READ");
     if (!f || f->IsZombie())
     {
@@ -54,16 +28,22 @@ void charge_asym(
         return;
     }
 
-    // If you have real y bin edges, put them here.
-    // Otherwise we use bin centers = iy + 0.5 with x-error = 0.5.
+    // yEdges: rapidity bin edges in the *lab frame*, used only to label the
+    // x-axis of the output TGraph. The histogram integration uses bin
+    // contents already produced by the skim macros (h_mt_W{p,m}_y0..y11).
+    //
+    // These edges are symmetric around 0 in the *lab* frame (unlike FBratio.C
+    // which uses edges symmetric around deltaY for F/B pairing). Charge
+    // asymmetry doesn't need a symmetric CM-frame binning, so this is fine,
+    // but be aware the two analysis macros label their y-axis differently.
     std::vector<double> yEdges; // empty => use index axis
-                                // Example if you later know them:
     yEdges = {
         -2.4, -2.0, -1.6, -1.2, -0.8, -0.4,
         0.0, 0.4, 0.8, 1.2, 1.6, 2.0,
         2.4};
 
-    const double deltaY = 0.3466; // pO rapidity shift
+    // pO rapidity shift (lab -> CM frame). Defined once in analysis_helpers.h.
+    const double deltaY = pOAnalysis::kPORapidityShift;
     std::vector<double> yEdgesCM;
     yEdgesCM.reserve(yEdges.size());
 
@@ -93,17 +73,8 @@ void charge_asym(
             continue;
         }
 
-        double Np = 0.0, Nm = 0.0;
-        if (integrateFull)
-        {
-            Np = YieldInRange(hWp, NAN, NAN);
-            Nm = YieldInRange(hWm, NAN, NAN);
-        }
-        else
-        {
-            Np = YieldInRange(hWp, xMin, xMax);
-            Nm = YieldInRange(hWm, xMin, xMax);
-        }
+        const double Np = YieldInRange(hWp, xMin, xMax, integrateFull);
+        const double Nm = YieldInRange(hWm, xMin, xMax, integrateFull);
 
         const double S = Np + Nm;
         double A = 0.0;

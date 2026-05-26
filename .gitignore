@@ -1,4 +1,22 @@
+# Output / generated
 *.root
 *.pdf
 *.png
 
+# ROOT ACLiC build artifacts (compiled-macro cache)
+*.so
+*.d
+*.pcm
+*_ACLiC_dict_rdict.pcm
+*_C_ACLiC_dict_rdict.pcm
+AutoDict_*.cxx
+AutoDict_*.h
+
+# Logs
+logs/
+*.log
+
+# OS / editor scratch
+.DS_Store
+*.swp
+*~

@@ -13,14 +13,18 @@
 #   ./run_all.sh Zmm                  # all 7 samples for Z->mumu
 #   ./run_all.sh Wel "Data DY"        # only data + DY MC for W->enu
 #   ./run_all.sh all                  # 4 channels x 7 samples = 28 jobs
+#
+# Implementation note (post-refactor): all four channels are dispatched
+# through the unified skim/skim.C macro:
+#   root -l -q -b 'skim.C+(<channel-enum>, "<data-file>", <sample-enum>)'
 
 set -euo pipefail
 
-declare -A MACRO=(
-  [Zmm]="DrawDimuonPeak.C"
-  [Zee]="DrawDielectronPeak.C"
-  [Wmu]="DrawWToMuNu_PFMet.C"
-  [Wel]="DrawWToElecNu_PFMet.C"
+declare -A CHANNEL_ENUM=(
+  [Zmm]=kZmm
+  [Zee]=kZee
+  [Wmu]=kWmu
+  [Wel]=kWel
 )
 
 declare -A SAMPLE_ENUM=(
@@ -49,15 +53,14 @@ mkdir -p rootfile output logs
 
 fail=0
 for ch in "${CHANNELS[@]}"; do
-  macro="${MACRO[$ch]:-}"
-  [[ -z "$macro" ]] && { echo "[ERR] unknown channel '$ch'"; exit 2; }
-  fn="${macro%.C}"
+  chEnum="${CHANNEL_ENUM[$ch]:-}"
+  [[ -z "$chEnum" ]] && { echo "[ERR] unknown channel '$ch'"; exit 2; }
   for s in "${SAMPLES[@]}"; do
-    enum="${SAMPLE_ENUM[$s]:-}"
-    [[ -z "$enum" ]] && { echo "[ERR] unknown sample '$s'"; exit 2; }
-    log="logs/${fn}_${s}.log"
+    sEnum="${SAMPLE_ENUM[$s]:-}"
+    [[ -z "$sEnum" ]] && { echo "[ERR] unknown sample '$s'"; exit 2; }
+    log="logs/skim_${ch}_${s}.log"
     printf ">>> [%s / %-6s] -> %s\n" "$ch" "$s" "$log"
-    if root -l -q -b "${macro}+(\"${DATA_FILE}\", ${enum})" >"$log" 2>&1; then
+    if root -l -q -b "skim.C+(${chEnum}, \"${DATA_FILE}\", ${sEnum})" >"$log" 2>&1; then
       echo "    OK"
     else
       echo "    FAIL  (tail $log)"

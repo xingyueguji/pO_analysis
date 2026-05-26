@@ -6,30 +6,7 @@
 #include <vector>
 #include <cmath>
 
-// ---------- helpers ----------
-static double YieldInRange(const TH1D *h, double xmin, double xmax, bool fullRange)
-{
-    if (!h)
-        return 0.0;
-    if (fullRange)
-        return h->Integral(1, h->GetNbinsX()); // excludes under/overflow
-
-    int b1 = h->GetXaxis()->FindBin(xmin);
-    int b2 = h->GetXaxis()->FindBin(xmax);
-    if (b1 < 1)
-        b1 = 1;
-    if (b2 > h->GetNbinsX())
-        b2 = h->GetNbinsX();
-    return h->Integral(b1, b2);
-}
-
-static double RatioErr(double F, double B)
-{
-    if (F <= 0.0 || B <= 0.0)
-        return 0.0;
-    const double R = F / B;
-    return R * std::sqrt(1.0 / F + 1.0 / B);
-}
+#include "analysis_helpers.h" // YieldInRange, RatioErr, kPORapidityShift
 
 // ---------- main ----------
 void FBratio(
@@ -44,6 +21,9 @@ void FBratio(
     bool alsoWriteChargeSeparated = true // if combineCharges==true, optionally also write W+ and W-
 )
 {
+    using pOAnalysis::RatioErr;
+    using pOAnalysis::YieldInRange;
+
     if (NY % 2 != 0)
     {
         std::cerr << "[ERROR] NY must be even to pair +/-y bins cleanly. NY=" << NY << "\n";
@@ -57,10 +37,15 @@ void FBratio(
         return;
     }
 
-    // If you know your real yEdges, fill them here (size NY+1).
-    // Otherwise x-axis will be |y| bin index center.
+    // yEdges: rapidity bin edges in the *lab frame*, used only to label the
+    // x-axis of the output TGraph. The histogram integration itself uses the
+    // bin contents already produced by the skim macros (h_mt_W{p,m}_y0..y11).
+    //
+    // These 13 edges are chosen symmetric around deltaY = 0.3466 (the pO
+    // rapidity shift), so that after the lab->CM shift below they become
+    // symmetric around 0 in the CM frame. F/B pairing (iyB <-> NY-1-iyB)
+    // then matches CM-frame |y| bins cleanly.
     std::vector<double> yEdges; // empty -> use index axis
-                                // Example:
     yEdges = {
         -1.7068,
         -1.3646,
@@ -76,7 +61,8 @@ void FBratio(
         2.0578,
         2.4000};
 
-    const double deltaY = 0.3466; // pO rapidity shift
+    // pO rapidity shift (lab -> CM frame). Defined once in analysis_helpers.h.
+    const double deltaY = pOAnalysis::kPORapidityShift;
     std::vector<double> yEdgesCM;
     yEdgesCM.reserve(yEdges.size());
 
