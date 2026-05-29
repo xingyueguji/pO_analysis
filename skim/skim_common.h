@@ -354,36 +354,40 @@ inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
 {
   SampleFileInfo info;
   const std::string eosBase =
-      "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/";
+      "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/";
 
-  const std::string dyFile = (std::string("pO_MC_DY_") + flavour + "_Z.root");
+  const std::string flav = flavour;
+
+  // DY uses ee/mu/tau; W uses ele/mu/tau. Translate the electron token.
+  const std::string dyFlav = (flav == "ele" || flav == "e") ? "ee"  : flav;
+  const std::string wFlav  = (flav == "ee"  || flav == "e") ? "ele" : flav;
 
   switch (sample)
   {
     case kData:
       return info;
     case kDY:
-      info.fname     = eosBase + dyFile;
+      info.fname     = eosBase + "MC_DY" + dyFlav + "_May26.root";  // MC_DYee_May26.root
       info.outSuffix = "_DY";
       return info;
     case kWp:
-      info.fname     = eosBase + "pO_MC_Wp_" + flavour + ".root";
+      info.fname     = eosBase + "MC_Wp_" + wFlav + "_May26.root";
       info.outSuffix = "_Wp";
       return info;
     case kWm:
-      info.fname     = eosBase + "pO_MC_Wm_" + flavour + ".root";
+      info.fname     = eosBase + "MC_Wm_" + wFlav + "_May26.root";
       info.outSuffix = "_Wm";
       return info;
     case kDYtau:
-      info.fname     = eosBase + "pO_MC_DY_tau_Z.root";
+      info.fname     = eosBase + "MC_DYtau_May26.root";
       info.outSuffix = "_DYtau";
       return info;
     case kWptau:
-      info.fname     = eosBase + "pO_MC_Wp_tau.root";
+      info.fname     = eosBase + "MC_Wp_tau_May26.root";
       info.outSuffix = "_Wptau";
       return info;
     case kWmtau:
-      info.fname     = eosBase + "pO_MC_Wm_tau.root";
+      info.fname     = eosBase + "MC_Wm_tau_May26.root";
       info.outSuffix = "_Wmtau";
       return info;
   }

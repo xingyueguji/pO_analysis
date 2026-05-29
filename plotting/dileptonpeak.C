@@ -9,7 +9,7 @@
 #include <vector>
 #include <functional>
 
-void dileptonpeak(bool isElec = 0)
+void dileptonpeak(bool isElec = 1)
 {
     const std::string baseDir = "../skim/rootfile/";
     std::string prefix;
