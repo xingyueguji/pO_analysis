@@ -17,20 +17,49 @@
 namespace pOAnalysis
 {
 
-/// Integrate a TH1 between [xmin, xmax] in x-axis units.
+/// An integrated yield together with its uncertainty.
+///
+/// `error` is the statistical uncertainty taken from the histogram's stored
+/// sum-of-weights-squared (via TH1::IntegralAndError). For an *unweighted*
+/// histogram this is exactly sqrt(N) (Poisson); for a weighted histogram it is
+/// sqrt(sum w^2), which is the only correct thing — recomputing sqrt(N) from
+/// the bin contents would be wrong as soon as event weights enter the skim.
+struct Yield
+{
+    double value = 0.0;
+    double error = 0.0;
+
+    Yield() = default;
+    Yield(double v, double e) : value(v), error(e) {}
+
+    /// Combine two *independent* yields: values add, errors add in quadrature.
+    /// Used e.g. for F = (W+ yield) + (W- yield) in the F/B ratio.
+    Yield operator+(const Yield &o) const
+    {
+        return Yield(value + o.value,
+                     std::sqrt(error * error + o.error * o.error));
+    }
+};
+
+/// Integrate a TH1 between [xmin, xmax] in x-axis units, returning the yield
+/// and its uncertainty (from the histogram's Sumw2 array).
 ///
 /// If `fullRange` is true, integrate bins [1, Nbins] (excluding under/overflow)
 /// and ignore xmin/xmax. Otherwise integrate the bins containing xmin and xmax
 /// inclusive, clamped to [1, Nbins].
 ///
-/// Returns 0 if `h` is null.
-inline double YieldInRange(const TH1 *h, double xmin, double xmax, bool fullRange = false)
+/// Returns a zero Yield if `h` is null.
+inline Yield YieldInRange(const TH1 *h, double xmin, double xmax, bool fullRange = false)
 {
     if (!h)
-        return 0.0;
+        return Yield();
 
+    double err = 0.0;
     if (fullRange || std::isnan(xmin) || std::isnan(xmax))
-        return h->Integral(1, h->GetNbinsX());
+    {
+        const double val = h->IntegralAndError(1, h->GetNbinsX(), err);
+        return Yield(val, err);
+    }
 
     int b1 = h->GetXaxis()->FindBin(xmin);
     int b2 = h->GetXaxis()->FindBin(xmax);
@@ -38,35 +67,43 @@ inline double YieldInRange(const TH1 *h, double xmin, double xmax, bool fullRang
         b1 = 1;
     if (b2 > h->GetNbinsX())
         b2 = h->GetNbinsX();
-    return h->Integral(b1, b2);
+    const double val = h->IntegralAndError(b1, b2, err);
+    return Yield(val, err);
 }
 
 /// Uncertainty on the charge asymmetry A = (Np - Nm) / (Np + Nm),
-/// assuming Poisson-independent Np, Nm.
+/// by linear error propagation from independent Np, Nm and their errors:
 ///
-///     sigma_A^2 = 4 * Np * Nm / (Np + Nm)^3
+///     dA/dNp =  2*Nm / S^2 ,  dA/dNm = -2*Np / S^2 ,  S = Np + Nm
+///     sigma_A^2 = 4 / S^4 * ( Nm^2 * sigma_Np^2 + Np^2 * sigma_Nm^2 )
 ///
-/// Returns 0 if Np + Nm <= 0.
-inline double AsymErr(double Np, double Nm)
+/// For unweighted yields (sigma_Np^2 = Np, sigma_Nm^2 = Nm) this reduces to the
+/// old Poisson form 4*Np*Nm/S^3. Returns 0 if Np + Nm <= 0.
+inline double AsymErr(const Yield &Np, const Yield &Nm)
 {
-    const double S = Np + Nm;
+    const double S = Np.value + Nm.value;
     if (S <= 0.0)
         return 0.0;
-    return std::sqrt(4.0 * Np * Nm / (S * S * S));
+    const double s2 = 4.0 / (S * S * S * S) *
+                      (Nm.value * Nm.value * Np.error * Np.error +
+                       Np.value * Np.value * Nm.error * Nm.error);
+    return std::sqrt(s2);
 }
 
 /// Uncertainty on the forward/backward ratio R = F / B,
-/// assuming Poisson-independent F, B:
+/// by linear error propagation from independent F, B and their errors:
 ///
-///     sigma_R = R * sqrt(1/F + 1/B)
+///     sigma_R = R * sqrt( (sigma_F/F)^2 + (sigma_B/B)^2 )
 ///
-/// Returns 0 if F or B is non-positive.
-inline double RatioErr(double F, double B)
+/// For unweighted yields (sigma_F^2 = F, sigma_B^2 = B) this reduces to the old
+/// Poisson form R*sqrt(1/F + 1/B). Returns 0 if F or B is non-positive.
+inline double RatioErr(const Yield &F, const Yield &B)
 {
-    if (F <= 0.0 || B <= 0.0)
+    if (F.value <= 0.0 || B.value <= 0.0)
         return 0.0;
-    const double R = F / B;
-    return R * std::sqrt(1.0 / F + 1.0 / B);
+    const double R = F.value / B.value;
+    return R * std::sqrt((F.error * F.error) / (F.value * F.value) +
+                         (B.error * B.error) / (B.value * B.value));
 }
 
 /// pO rapidity shift (lab -> nucleon-nucleon CM frame).

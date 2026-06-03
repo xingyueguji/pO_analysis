@@ -399,6 +399,14 @@ int skim_Wmu(const char *fname, SampleType sample)
   if (HasBranch(tHi, "vz"))    { tHi->SetBranchStatus("vz", 1);    tHi->SetBranchAddress("vz",    &vz); }
   if (HasBranch(tHi, "hiBin")) { tHi->SetBranchStatus("hiBin", 1); tHi->SetBranchAddress("hiBin", &hiBin); }
 
+  // -------- Generator event weight (MC only) --------
+  // hiEvtAnalyzer/HiTree::weight is the per-event generator weight. Applied to
+  // every Fill below for MC; data is filled with weight 1.
+  Float_t    genWeight     = 1.f;
+  const bool has_genWeight = isMC && HasBranch(tHi, "weight");
+  if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
+  else if (isMC)     std::cout << "[WARN] skim_Wmu: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
+
   // -------- PF tree (for MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -517,6 +525,8 @@ int skim_Wmu(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
     if (isMC) tGen->GetEntry(ie);
 
+    const double w = has_genWeight ? (double)genWeight : 1.0;
+
     N[0]++;
 
     if (!muPt || !muEta || !muPhi || !muCharge) continue;
@@ -593,8 +603,8 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     if (isQCDSideband)
     {
-      if      (muCharge->at(iLead) > 0) h_met_iso_muPlus [isoBin]->Fill(met);
-      else if (muCharge->at(iLead) < 0) h_met_iso_muMinus[isoBin]->Fill(met);
+      if      (muCharge->at(iLead) > 0) h_met_iso_muPlus [isoBin]->Fill(met, w);
+      else if (muCharge->at(iLead) < 0) h_met_iso_muMinus[isoBin]->Fill(met, w);
     }
 
     if (!passIsoNominal) continue;
@@ -609,13 +619,13 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met); h_mt_Wp[ybin]->Fill(mt); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met); h_mt_Wm[ybin]->Fill(mt); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met); h_mt_Wp_FB[ybin_FB]->Fill(mt); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met); h_mt_Wm_FB[ybin_FB]->Fill(mt); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); }
     }
   }
 
@@ -827,6 +837,12 @@ int skim_Wel(const char *fname, SampleType sample)
   if (HasBranch(tHi, "vz"))    { tHi->SetBranchStatus("vz", 1);    tHi->SetBranchAddress("vz",    &vz); }
   if (HasBranch(tHi, "hiBin")) { tHi->SetBranchStatus("hiBin", 1); tHi->SetBranchAddress("hiBin", &hiBin); }
 
+  // -------- Generator event weight (MC only) --------
+  Float_t    genWeight     = 1.f;
+  const bool has_genWeight = isMC && HasBranch(tHi, "weight");
+  if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
+  else if (isMC)     std::cout << "[WARN] skim_Wel: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
+
   // -------- PF tree (MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -946,6 +962,8 @@ int skim_Wel(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
     if (isMC) tGen->GetEntry(ie);
 
+    const double w = has_genWeight ? (double)genWeight : 1.0;
+
     N[0]++;
 
     if (!elePt || !eleEta || !elePhi || !eleCharge) continue;
@@ -1019,8 +1037,8 @@ int skim_Wel(const char *fname, SampleType sample)
 
     if (isQCDSideband)
     {
-      if      (eleCharge->at(iLead) > 0) h_met_iso_elePlus [isoBin]->Fill(met);
-      else if (eleCharge->at(iLead) < 0) h_met_iso_eleMinus[isoBin]->Fill(met);
+      if      (eleCharge->at(iLead) > 0) h_met_iso_elePlus [isoBin]->Fill(met, w);
+      else if (eleCharge->at(iLead) < 0) h_met_iso_eleMinus[isoBin]->Fill(met, w);
     }
 
     if (!passIsoNominal) continue;
@@ -1035,13 +1053,13 @@ int skim_Wel(const char *fname, SampleType sample)
 
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met); h_mt_Wp[ybin]->Fill(mt); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met); h_mt_Wm[ybin]->Fill(mt); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met); h_mt_Wp_FB[ybin_FB]->Fill(mt); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met); h_mt_Wm_FB[ybin_FB]->Fill(mt); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); }
     }
   }
 
@@ -1151,6 +1169,12 @@ int skim_Zmm(const char *fname, SampleType sample)
 
   if (has_vz)    tHi->SetBranchAddress("vz",    &vz);
   if (has_hiBin) tHi->SetBranchAddress("hiBin", &hiBin);
+
+  // -------- Generator event weight (MC only) --------
+  Float_t    genWeight     = 1.f;
+  const bool has_genWeight = isMC && haveHiTree && HasBranch(tHi, "weight");
+  if (has_genWeight) tHi->SetBranchAddress("weight", &genWeight);
+  else if (isMC)     std::cout << "[WARN] skim_Zmm: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
   // -------- PF iso --------
   std::vector<float> *muPFChIso = nullptr, *muPFNeuIso = nullptr, *muPFPhoIso = nullptr;
@@ -1284,6 +1308,8 @@ int skim_Zmm(const char *fname, SampleType sample)
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
 
+    const double w = has_genWeight ? (double)genWeight : 1.0;
+
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
 
     if (!PassEventSelection_pO(warnedEventFiltersOnce,
@@ -1345,15 +1371,15 @@ int skim_Zmm(const char *fname, SampleType sample)
 
         if (passIsolead && passIsosec)
         {
-          hMass_extended->Fill(m);
-          if (!(m < 60 || m > 120)) hMass->Fill(m);
+          hMass_extended->Fill(m, w);
+          if (!(m < 60 || m > 120)) hMass->Fill(m, w);
         }
 
         if (m < 60 || m > 120) continue;
         if (lead < 20 || sub < 20) continue;
 
         // Tighter pT cut, no iso requirement.
-        hMass_vipul->Fill(m);
+        hMass_vipul->Fill(m, w);
         nPassPair++;
       }
     }
@@ -1474,6 +1500,12 @@ int skim_Zee(const char *fname, SampleType sample)
   const bool has_hiBin = (haveHiTree && HasBranch(tHi, "hiBin"));
   if (has_vz)    tHi->SetBranchAddress("vz",    &vz);
   if (has_hiBin) tHi->SetBranchAddress("hiBin", &hiBin);
+
+  // -------- Generator event weight (MC only) --------
+  Float_t    genWeight     = 1.f;
+  const bool has_genWeight = isMC && haveHiTree && HasBranch(tHi, "weight");
+  if (has_genWeight) tHi->SetBranchAddress("weight", &genWeight);
+  else if (isMC)     std::cout << "[WARN] skim_Zee: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
   // -------- HLT objects --------
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEG10_v");
@@ -1596,6 +1628,8 @@ int skim_Zee(const char *fname, SampleType sample)
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
 
+    const double w = has_genWeight ? (double)genWeight : 1.0;
+
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
 
     if (!PassEventSelection_pO(warnedEventFiltersOnce,
@@ -1657,15 +1691,15 @@ int skim_Zee(const char *fname, SampleType sample)
 
         if (passIsolead && passIsosec)
         {
-          hMass_extended->Fill(m);
-          if (!(m < 60 || m > 120)) hMass->Fill(m);
+          hMass_extended->Fill(m, w);
+          if (!(m < 60 || m > 120)) hMass->Fill(m, w);
         }
 
         if (m < 60 || m > 120) continue;
         if (lead < 20 || sub < 20) continue;
 
         // Tighter pT cut, no iso requirement.
-        hMass_vipul->Fill(m);
+        hMass_vipul->Fill(m, w);
         nPassPair++;
       }
     }

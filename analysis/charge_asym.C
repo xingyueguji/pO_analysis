@@ -73,16 +73,16 @@ void charge_asym(
             continue;
         }
 
-        const double Np = YieldInRange(hWp, xMin, xMax, integrateFull);
-        const double Nm = YieldInRange(hWm, xMin, xMax, integrateFull);
+        const auto Np = YieldInRange(hWp, xMin, xMax, integrateFull);
+        const auto Nm = YieldInRange(hWm, xMin, xMax, integrateFull);
 
-        const double S = Np + Nm;
+        const double S = Np.value + Nm.value;
         double A = 0.0;
         double sA = 0.0;
 
         if (S > 0.0)
         {
-            A = (Np - Nm) / S;
+            A = (Np.value - Nm.value) / S;
             sA = AsymErr(Np, Nm);
         }
 
@@ -102,7 +102,7 @@ void charge_asym(
         ey[iy] = sA;
 
         std::cout << "[INFO] iy=" << iy
-                  << "  Np=" << Np << " Nm=" << Nm
+                  << "  Np=" << Np.value << " Nm=" << Nm.value
                   << "  A=" << A << " +/- " << sA << "\n";
     }
 

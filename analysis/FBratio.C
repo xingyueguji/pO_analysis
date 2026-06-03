@@ -22,6 +22,7 @@ void FBratio(
 )
 {
     using pOAnalysis::RatioErr;
+    using pOAnalysis::Yield;
     using pOAnalysis::YieldInRange;
 
     if (NY % 2 != 0)
@@ -95,7 +96,7 @@ void FBratio(
         }
     }
 
-    auto get_yield = [&](int iy, bool wantWp) -> double
+    auto get_yield = [&](int iy, bool wantWp) -> Yield
     {
         TString name = useMT
                            ? Form("h_mt_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy)
@@ -105,7 +106,7 @@ void FBratio(
         if (!h)
         {
             std::cerr << "[WARN] Missing " << name << "\n";
-            return 0.0;
+            return Yield();
         }
         return YieldInRange(h, xMin, xMax, integrateFull);
     };
@@ -121,7 +122,7 @@ void FBratio(
             int iyB = iabs;
             int iyF = NY - 1 - iabs;
 
-            double FB = 0.0, BB = 0.0; // Forward yield, Backward yield
+            Yield FB, BB; // Forward yield, Backward yield (value + error)
 
             if (sumCharges)
             {
@@ -144,9 +145,9 @@ void FBratio(
                 }
             }
 
-            if (FB > 0.0 && BB > 0.0)
+            if (FB.value > 0.0 && BB.value > 0.0)
             {
-                yv[iabs] = FB / BB;
+                yv[iabs] = FB.value / BB.value;
                 ey[iabs] = RatioErr(FB, BB);
             }
             else
@@ -156,7 +157,7 @@ void FBratio(
             }
 
             std::cout << "[INFO] |y|bin=" << iabs
-                      << "  F=" << FB << "  B=" << BB
+                      << "  F=" << FB.value << "  B=" << BB.value
                       << "  R_FB=" << yv[iabs] << " +/- " << ey[iabs] << "\n";
         }
 

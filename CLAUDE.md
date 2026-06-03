@@ -152,7 +152,9 @@ Active (in flight, recent commits):
   validation pending. Commit `447a2b5` ("before adding tau") marks the boundary.
 - **Corrections still WIP** — recoil corrections, lepton scale factors,
   momentum scale/smearing are not all applied yet. Don't assume MC is
-  fully corrected when reading skim output.
+  fully corrected when reading skim output. (The per-event *generator*
+  weight IS now applied — see "Generator event weight" below — but these
+  reco-level corrections are separate and still missing.)
 
 Future plans / on the TODO list (not yet started):
 - **ABCD method for QCD background** — the current
@@ -211,18 +213,37 @@ State of the pipeline:
 - **`plotting/`** — every macro that touches histograms either reads them
   from skim outputs (where Sumw2 is set) or uses `Clone()` / `Add()` /
   `Integral()`, all of which propagate the Sumw2 array correctly.
-- **`analysis/charge_asym.C`, `analysis/FBratio.C`** — only call
-  `Integral()` on already-Sumw2'd inputs, so the *yields* are fine. But
-  the error formulas in `analysis/analysis_helpers.h` (`AsymErr`,
-  `RatioErr`) are hand-derived Poisson on raw counts. **Today this is
-  correct** because skim Fill calls are unweighted. **But the moment any
-  event weight enters the skim Fill calls** (lepton SFs, recoil correction,
-  pileup weight, etc.), those analysis errors will be silently wrong —
-  they don't look at the histogram's stored σ². The defensive fix is to
-  switch `YieldInRange` to return both integral and error via
-  `TH1::IntegralAndError`, and have `AsymErr` / `RatioErr` take errors
-  as inputs instead of recomputing them. Not yet done — flag this when
-  the user adds the first event weight.
+- **`analysis/charge_asym.C`, `analysis/FBratio.C`** — error handling is
+  now Sumw2-aware (fixed 2026-05-29, together with the gen-weight change
+  below). `analysis/analysis_helpers.h` defines a `Yield {value, error}`
+  struct; `YieldInRange` returns it via `TH1::IntegralAndError` (reads the
+  stored σ², not √N), and `AsymErr` / `RatioErr` take `Yield`s and do full
+  linear error propagation. These reduce *exactly* to the old Poisson forms
+  when the input is unweighted, so they are correct whether or not the MC
+  weights turn out to be unity. `Yield::operator+` combines independent
+  yields (errors in quadrature) — used for F = W⁺+W⁻ in `FBratio.C`.
+
+## Generator event weight (added 2026-05-29)
+
+`skim/skim.C` now applies the per-event generator weight to MC. The weight is
+`hiEvtAnalyzer/HiTree::weight` (a `Float_t`; the same tree also carries
+`pthat`, `ProcessID`, `ttbar_w`). All four channel functions:
+
+- wire the branch, gated on `has_genWeight = isMC && [haveHiTree &&]
+  HasBranch(tHi, "weight")` (the `haveHiTree` clause only in the Z channels,
+  which tolerate a missing HiTree); warn once if an MC file lacks it;
+- define a per-event `const double w = has_genWeight ? (double)genWeight : 1.0;`
+  right after the `GetEntry` block — **data is always filled with weight 1**;
+- pass `, w` to every one of the 19 `Fill()` calls (MT, MET, FB variants,
+  QCD iso-sidebands, Z mass histos).
+
+The cutflow `N[]` counters are intentionally left as **raw integer event
+counts** (diagnostics, not yields). This is *only* the per-event gen weight —
+absolute cross-section normalization (Σw, lumi·xsec) is still handled
+downstream and the datacards remain shape-only. **TODO for the user:** verify
+the `weight` distribution in the MC (all == 1 → weighting is a no-op; spread or
+negative weights → it matters). If lepton SFs / recoil / pileup weights are
+added later, fold them into the same `w`.
 
 ## Pre-existing asymmetries between channels — user-confirmed status
 
