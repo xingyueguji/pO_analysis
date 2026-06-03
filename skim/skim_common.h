@@ -66,7 +66,10 @@ inline constexpr double ELE_MASS = 0.000511;
 // pO -> CM-frame rapidity boost (used downstream; defined here for reference)
 inline constexpr double Y_SHIFT_pO_CM = 0.3466;
 
-// Default EOS data file (mirrors DATA_FILE in run_all.sh)
+// Default EOS data file. SINGLE SOURCE OF TRUTH for the data-file path:
+// run_all.sh greps this value rather than hardcoding its own (override a
+// single run by exporting DATA_FILE). Change the data file here, and the MC
+// files in ResolveMCSample below -- both live in this header.
 inline const char *kDefaultDataFile =
     "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root";
 

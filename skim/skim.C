@@ -265,6 +265,7 @@ int skim_Wmu(const char *fname, SampleType sample)
     outPrefix += info.outSuffix;
   }
 
+  std::cout << "[INPUT] " << fname << std::endl;
   TFile *f = TFile::Open(fname);
   if (!f || f->IsZombie()) { std::cerr << "ERROR opening file\n"; return 1; }
 
@@ -688,6 +689,7 @@ int skim_Wel(const char *fname, SampleType sample)
     outPrefix += info.outSuffix;
   }
 
+  std::cout << "[INPUT] " << fname << std::endl;
   TFile *f = TFile::Open(fname);
   if (!f || f->IsZombie()) { std::cerr << "ERROR opening file\n"; return 1; }
 
@@ -1128,6 +1130,7 @@ int skim_Zmm(const char *fname, SampleType sample)
   }
   const std::string mcTag = isMC ? "MC" : "Data";
 
+  std::cout << "[INPUT] " << fname << std::endl;
   TFile *f = TFile::Open(fname);
   if (!f || f->IsZombie()) { std::cerr << "ERROR: cannot open " << fname << "\n"; return 1; }
 
@@ -1433,6 +1436,7 @@ int skim_Zee(const char *fname, SampleType sample)
   }
   const std::string mcTag = isMC ? "MC" : "Data";
 
+  std::cout << "[INPUT] " << fname << std::endl;
   TFile *f = TFile::Open(fname);
   if (!f || f->IsZombie()) { std::cerr << "ERROR: cannot open " << fname << "\n"; return 1; }
 
