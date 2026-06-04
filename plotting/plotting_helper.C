@@ -23,7 +23,7 @@ struct ApplyGlobalPlotStyle
     ApplyGlobalPlotStyle()
     {
         if (gStyle)
-            gStyle->SetFrameLineWidth(4);
+            gStyle->SetFrameLineWidth(3);
     }
 };
 const ApplyGlobalPlotStyle kApplyGlobalPlotStyle;
@@ -57,7 +57,7 @@ struct PlotStyle
     double xTitleSize = 0.045, yTitleSize = 0.045;
     double xLabelSize = 0.040, yLabelSize = 0.040;
     double xTitleOffset = 1.10, yTitleOffset = 1.35;
-    double FrameLineWidth = 4; // mirror of the global gStyle->SetFrameLineWidth above
+    double FrameLineWidth = 3; // mirror of the global gStyle->SetFrameLineWidth above
 
     // draw options
     std::string drawOpt = "E"; // e.g. "E", "hist", "E1", etc.

@@ -9,7 +9,7 @@
 #include <vector>
 #include <functional>
 
-void dileptonpeak(bool isElec = 1)
+void dileptonpeak(bool isElec = 0)
 {
     const std::string baseDir = "../skim/rootfile/";
     std::string prefix;
@@ -36,8 +36,13 @@ void dileptonpeak(bool isElec = 1)
 
     auto getRebinned = [&](TFile *file, const char *hname) -> TH1D* {
         if (!file) return nullptr;
-        TH1D *h = (TH1D*)file->Get(hname);
-        if (h && rebinFactor > 1) h->Rebin(rebinFactor);
+        TH1D *src = (TH1D*)file->Get(hname);
+        if (!src) { std::cerr << "[WARN] missing " << hname
+                              << " in " << file->GetName() << "\n"; return nullptr; }
+        static int counter = 0;
+        TH1D *h = (TH1D*)src->Clone(Form("%s_copy%d", hname, counter++));
+        h->SetDirectory(nullptr);                 // we own this copy now
+        if (rebinFactor > 1) h->Rebin(rebinFactor);
         return h;
     };
 
@@ -112,8 +117,11 @@ void dileptonpeak(bool isElec = 1)
 
         // --- normalize total MC stack to data integral (preserve component fractions) ---
         double mcTotal = 0.0;
-        for (TH1 *h : std::vector<TH1*>{h_W, h_DYh, h_DYth, h_Wtau})
+        for (TH1 *h : std::vector<TH1*>{h_W, h_DYh, h_DYth, h_Wtau}){
             if (h) mcTotal += h->Integral();
+            //cout << "current is " << h->Integral() << endl;
+        }
+
 
         const double dataInt = h_data->Integral();
         if (mcTotal > 0 && dataInt > 0) {
