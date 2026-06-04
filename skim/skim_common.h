@@ -71,7 +71,7 @@ inline constexpr double Y_SHIFT_pO_CM = 0.3466;
 // single run by exporting DATA_FILE). Change the data file here, and the MC
 // files in ResolveMCSample below -- both live in this header.
 inline const char *kDefaultDataFile =
-    "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root";
+    "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/Data_May_26.root";
 
 // ============================================================
 // Branch / tree introspection helpers
