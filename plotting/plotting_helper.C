@@ -4,6 +4,11 @@
 #include "TLegend.h"
 #include "TPad.h"
 #include "TLine.h"
+#include "TPaveText.h"
+#include "TGraphErrors.h"
+#include "THStack.h"
+#include "TStyle.h"
+#include "TString.h"
 #include <algorithm>
 
 // -----------------------------
