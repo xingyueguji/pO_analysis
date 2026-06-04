@@ -11,6 +11,24 @@
 #include "TString.h"
 #include <algorithm>
 
+// Global plot style: thicken the frame (the box / "bezel" around every plot).
+// This runs once when the header is loaded, so it applies to ALL pads and
+// canvases — including the ratio sub-pads in SaveDataMCRatio and any plot that
+// doesn't go through ApplyCanvasStyle. Change the number here to taste;
+// PlotStyle::FrameLineWidth below mirrors it for the per-canvas path.
+namespace
+{
+struct ApplyGlobalPlotStyle
+{
+    ApplyGlobalPlotStyle()
+    {
+        if (gStyle)
+            gStyle->SetFrameLineWidth(4);
+    }
+};
+const ApplyGlobalPlotStyle kApplyGlobalPlotStyle;
+} // namespace
+
 // -----------------------------
 // 1) Generic style/options blob
 // -----------------------------
@@ -39,7 +57,7 @@ struct PlotStyle
     double xTitleSize = 0.045, yTitleSize = 0.045;
     double xLabelSize = 0.040, yLabelSize = 0.040;
     double xTitleOffset = 1.10, yTitleOffset = 1.35;
-    double FrameLineWidth = 3;
+    double FrameLineWidth = 4; // mirror of the global gStyle->SetFrameLineWidth above
 
     // draw options
     std::string drawOpt = "E"; // e.g. "E", "hist", "E1", etc.
