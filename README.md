@@ -20,8 +20,9 @@ reads, what it writes, and how to check success.
 | ------------------ | -------------------------------- | ---------------------------------------- |
 | `merge_rootfile/`  | Build consolidated input file    | `make_filelist.sh` + `hadd_from_list.sh` |
 | `skim/`            | Selection → per-sample histos    | `run_all.sh <channel> [samples]`         |
-| `plotting/`        | Data/MC overlays, QCD bkg, plots | several macros — see Module 3 below      |
+| `plotting/`        | Data/MC overlays, plots          | several macros — see Module 3 below      |
 | `analysis/`        | Charge asymmetry, F/B ratio      | `charge_asym.C`, `FBratio.C`             |
+| `correction/`      | QCD bkg, isolation WP, Data/MC checks | several macros — see correction/ module below |
 
 `skim/` is unified post-refactor: shared utilities in `skim/skim_common.h`,
 four channel functions plus a dispatcher in `skim/skim.C`. The pre-refactor
@@ -108,15 +109,13 @@ subset of `Data DY Wp Wm DYtau Wptau Wmtau` (default: all 7).
   Each W file contains 12 rapidity-binned MT/MET histograms per charge
   (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`, ditto MET, plus the `_FB` variants
   and the iso-binned `h_met_iso_*_bin{0..2}` used by the QCD sideband fit).
-  Each Z file contains `hMass`, `hMass_extended`, `hMass_vipul`.
+  Each Z file contains `hMass`, `hMass_extended`, `hMass_vipul`, plus the
+  kinematic histograms (filled for iso-selected OS pairs in the Z peak
+  [60,120] GeV): boson `h_Zpt`, `h_Zeta`, `h_Zphi` and lepton `h_lepPt`,
+  `h_lepEta`, `h_lepPhi` (both legs).
 
-**Optional isolation studies** (only when retuning a working point):
-```bash
-root -l -q 'isolation.C+'        # muon ROC inputs
-root -l -q 'isolation_ele.C+'    # electron ROC inputs
-```
-These write extra ROOT files consumed by `plotting/PlotsIsoROC.C` and
-`plotting/PlotIsoROC_ele.C`.
+**Optional isolation studies** (only when retuning a working point) now live in
+`correction/` (along with their ROC plotters) — see the `correction/` module below.
 
 ## Module 3 — `plotting/`  (data/MC, background estimation, intermediate plots)
 
@@ -131,16 +130,10 @@ All commands assume `cd plotting/`. Outputs land under `plotting/plots/` and
 ```bash
 cd plotting/
 
-# 3.1  QCD background shape (low-iso sideband fit, Rayleigh-like). Standalone.
-#      Currently doesn't work well at the available statistics — replacing
-#      with an ABCD method is on the TODO list.
-root -l -q 'qcd_sideband_fit_and_extrapolate.C+'
+# 3.1  (moved) The QCD sideband fit and the isolation ROC curves now live in
+#      correction/ — see the correction/ module below.
 
-# 3.2  Isolation ROC curves (only run if you re-ran skim/isolation*.C).
-root -l -q 'PlotsIsoROC.C+(0)'           # muon
-root -l -q 'PlotIsoROC_ele.C+'           # electron
-
-# 3.3  Data/MC overlays for MT and MET in each rapidity bin.
+# 3.2  Data/MC overlays for MT and MET in each rapidity bin.
 #      ALSO writes plots/combine_input_inclusive.root (or plots/Elec/...),
 #      which the Combine fork consumes.
 root -l -q 'mtandmet.C+(0)'              # muon channel  -> plots/
@@ -233,14 +226,44 @@ independently (W inclusive, Z→μμ, Z→ee).
 
 ---
 
+## Module 6 — `correction/`  (corrections & studies: QCD bkg, isolation WP, Data/MC checks)
+
+Scope: code that derives/validates corrections and background estimates, kept
+out of the main pipeline. All macros are run **from `correction/`** and write
+their outputs there (`correction/plots/`, `correction/rootfile/`).
+
+```bash
+cd correction/
+
+# QCD background shape (low-iso sideband fit, Rayleigh-like). Reads the main W
+# skim output at ../skim/rootfile/. Doesn't work well at current stats — ABCD
+# method is on the TODO list.
+root -l -q 'qcd_sideband_fit_and_extrapolate.C+'
+
+# Isolation working-point study: produce ROC inputs from the ntuple, then plot.
+root -l -q 'isolation.C+'                 # muon  -> ./rootfile/IsoStudy*/Ptcut*/ggbranch*.root
+root -l -q 'isolation_ele.C+'             # electron -> ./rootfile/IsoStudyOutputs_electron.root
+root -l -q 'PlotsIsoROC.C+(0)'            # muon ROC curves
+root -l -q 'PlotIsoROC_ele.C+'            # electron ROC curves
+
+# Data vs signal-MC kinematic check (boson pT/eta/phi, lepton pT/eta/phi, mass),
+# shape-normalized, with a ratio pad. Reads the Z skim outputs in
+# ../skim/rootfile/; writes correction/plots/dataMC_<channel>/.
+root -l -q 'dataMC_kinematics.C+("Zmm")'  # Z->mumu
+root -l -q 'dataMC_kinematics.C+("Zee")'  # Z->ee
+```
+
+The shared ratio-pad helper `SaveDataMCRatio(...)` lives in
+`plotting/plotting_helper.C` (these macros `#include "../plotting/plotting_helper.C"`).
+
 ## Quick rerun cheat sheet
 
 If everything is set up and you just want to redo from the skim onward:
 
 ```bash
 cd skim                                  && ./run_all.sh all
+cd ../correction                         && root -l -q 'qcd_sideband_fit_and_extrapolate.C+'
 cd ../plotting                           \
-    && root -l -q 'qcd_sideband_fit_and_extrapolate.C+' \
     && root -l -q 'mtandmet.C+(0)'  && root -l -q 'mtandmet.C+(1)'  \
     && root -l -q 'dileptonpeak.C+(0)' && root -l -q 'dileptonpeak.C+(1)' \
     && root -l -q 'plotRpOtheory.C+'
@@ -255,15 +278,13 @@ cd /Users/zhenghuang/HiggsAnalysis-CombinedLimit \
 
 ## Notes / health of the pipeline
 
-- **Sumw2 status (audited May 2026):** all 84 histograms in `skim/skim.C`
-  call `Sumw2()` explicitly at construction, so per-bin errors are tracked
-  through Scale / Clone / Add / Integral. `skim()` also calls
-  `TH1::SetDefaultSumw2(kTRUE)` defensively so any *future* histogram is
-  Sumw2'd by default. **Caveat:** `analysis/analysis_helpers.h::{AsymErr,
-  RatioErr}` derive errors from raw counts (Poisson). Today that's correct
-  because skim fills are unweighted; if event weights ever enter the skim
-  Fill calls, those analysis errors will silently become wrong and need
-  to switch to `TH1::IntegralAndError`.
+- **Sumw2 / weights (updated June 2026):** all histograms in `skim/skim.C`
+  call `Sumw2()` and `skim()` sets `TH1::SetDefaultSumw2(kTRUE)` defensively.
+  The per-event generator weight (`hiEvtAnalyzer/HiTree::weight`) is now
+  applied to every MC Fill (data = weight 1), and `analysis/analysis_helpers.h`
+  was made Sumw2-aware: `YieldInRange` returns a `Yield{value,error}` via
+  `TH1::IntegralAndError`, and `AsymErr`/`RatioErr` propagate the stored σ²
+  (reducing exactly to the old Poisson form when weights are unity).
 
 - **Corrections WIP.** Recoil corrections, lepton scale factors, momentum
   scale/smearing are not all applied yet. Don't assume MC in `skim/rootfile/`

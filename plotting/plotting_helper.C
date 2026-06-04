@@ -1,4 +1,10 @@
 #include "CMS_lumi.C"
+#include "TH1.h"
+#include "TCanvas.h"
+#include "TLegend.h"
+#include "TPad.h"
+#include "TLine.h"
+#include <algorithm>
 
 // -----------------------------
 // 1) Generic style/options blob
@@ -611,6 +617,144 @@ static void SaveNicePlot1D_WithBkg(
     c->Modified();
     c->Update();
 
+    c->SaveAs((outPathNoExt + ".png").c_str());
+    c->SaveAs((outPathNoExt + ".pdf").c_str());
+
+    delete c;
+}
+// ---------------------------------------------------------
+// 8) Data vs MC overlay with a ratio pad (data / MC).
+//    Added for the correction/ Data-vs-MC kinematic (boson-pT) check.
+//      - hData drawn as points, hMC as a filled/line histogram.
+//      - normToData == true (default): MC is scaled to the data integral so the
+//        comparison is shape-only (right for a pT shape check; backgrounds are
+//        negligible in the Z peak). Pass false to compare absolute yields.
+//      - Bottom pad shows hData/hMC via TH1::Divide (binomial-free error prop).
+//    Inputs are cloned, so the caller's histograms are untouched.
+// ---------------------------------------------------------
+static void SaveDataMCRatio(TH1 *hData, TH1 *hMC,
+                            const std::string &outPathNoExt,
+                            const std::string &xTitle,
+                            const std::string &yTitle,
+                            const std::string &mainTitle,
+                            const std::string &subTitle1,
+                            const std::string &subTitle2,
+                            const PlotStyle &ps = PlotStyle(),
+                            bool normToData = true,
+                            const std::string &dataLabel = "Data",
+                            const std::string &mcLabel = "Signal MC")
+{
+    if (!hData || !hMC)
+        return;
+
+    gStyle->SetOptStat(0);
+
+    TH1 *hd = (TH1 *)hData->Clone(Form("%s_dClone", hData->GetName()));
+    TH1 *hm = (TH1 *)hMC->Clone(Form("%s_mClone", hMC->GetName()));
+    hd->SetDirectory(nullptr);
+    hm->SetDirectory(nullptr);
+
+    if (normToData)
+    {
+        const double iD = hd->Integral();
+        const double iM = hm->Integral();
+        if (iM > 0.0 && iD > 0.0)
+            hm->Scale(iD / iM);
+    }
+
+    TCanvas *c = new TCanvas(Form("c_ratio_%s", hData->GetName()), "", ps.w, ps.h);
+
+    // Two pads: top (main) ~70%, bottom (ratio) ~30%.
+    TPad *pTop = new TPad("pTop", "", 0.0, 0.30, 1.0, 1.0);
+    TPad *pBot = new TPad("pBot", "", 0.0, 0.00, 1.0, 0.30);
+    pTop->SetTopMargin(ps.tm);
+    pTop->SetBottomMargin(0.02);
+    pTop->SetLeftMargin(ps.lm);
+    pTop->SetRightMargin(ps.rm);
+    pBot->SetTopMargin(0.04);
+    pBot->SetBottomMargin(0.35);
+    pBot->SetLeftMargin(ps.lm);
+    pBot->SetRightMargin(ps.rm);
+    if (ps.ticks) { pTop->SetTicks(1, 1); pBot->SetTicks(1, 1); }
+    pTop->SetLogy(ps.logy);
+    pTop->Draw();
+    pBot->Draw();
+
+    // ---------------- top pad: overlay ----------------
+    pTop->cd();
+    ApplyHistStyle(hm, ps, "", yTitle); // MC defines the frame
+    hm->GetXaxis()->SetLabelSize(0.0);  // hide x labels on the top pad
+    hm->GetXaxis()->SetTitleSize(0.0);
+
+    hm->SetLineColor(kRed + 1);
+    hm->SetLineWidth(2);
+    hm->SetFillColorAlpha(kRed - 9, 0.5);
+    hm->SetMarkerSize(0);
+
+    hd->SetMarkerStyle(20);
+    hd->SetMarkerSize(0.9);
+    hd->SetLineColor(kBlack);
+    hd->SetMarkerColor(kBlack);
+
+    const double ymax = std::max(hd->GetMaximum(), hm->GetMaximum());
+    hm->SetMaximum(1.4 * ymax);
+    if (!ps.logy)
+        hm->SetMinimum(0.0);
+
+    hm->Draw("HIST");
+    hd->Draw("E1 SAME");
+
+    TLegend *leg = new TLegend(0.62, 0.70, 0.92, 0.88);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+    leg->SetTextFont(ps.font);
+    leg->SetTextSize(ps.boxTextSize);
+    leg->AddEntry(hd, dataLabel.c_str(), "lep");
+    leg->AddEntry(hm, mcLabel.c_str(), "lf");
+    leg->Draw();
+
+    DrawHeader(ps, mainTitle, subTitle1, subTitle2);
+    CMS_lumi(pTop, 13, 10);
+
+    // ---------------- bottom pad: ratio ----------------
+    pBot->cd();
+    TH1 *hr = (TH1 *)hd->Clone(Form("%s_ratio", hData->GetName()));
+    hr->SetDirectory(nullptr);
+    hr->Divide(hm); // data / MC with error propagation
+    hr->SetTitle("");
+    hr->SetMarkerStyle(20);
+    hr->SetMarkerSize(0.9);
+    hr->SetLineColor(kBlack);
+    hr->SetMarkerColor(kBlack);
+
+    hr->GetYaxis()->SetTitle("Data / MC");
+    hr->GetXaxis()->SetTitle(xTitle.c_str());
+
+    // The bottom pad is ~0.3 of the height, so scale fonts up to match the top.
+    const double sf = 0.7 / 0.3;
+    hr->GetXaxis()->SetTitleFont(ps.font); hr->GetYaxis()->SetTitleFont(ps.font);
+    hr->GetXaxis()->SetLabelFont(ps.font); hr->GetYaxis()->SetLabelFont(ps.font);
+    hr->GetXaxis()->SetTitleSize(ps.xTitleSize * sf);
+    hr->GetYaxis()->SetTitleSize(ps.yTitleSize * sf);
+    hr->GetXaxis()->SetLabelSize(ps.xLabelSize * sf);
+    hr->GetYaxis()->SetLabelSize(ps.yLabelSize * sf);
+    hr->GetXaxis()->SetTitleOffset(1.0);
+    hr->GetYaxis()->SetTitleOffset(ps.yTitleOffset / sf);
+    hr->GetYaxis()->SetNdivisions(505);
+
+    hr->SetMinimum(0.5);
+    hr->SetMaximum(1.5);
+    hr->Draw("E1");
+
+    TLine *l1 = new TLine(hr->GetXaxis()->GetXmin(), 1.0,
+                          hr->GetXaxis()->GetXmax(), 1.0);
+    l1->SetLineStyle(2);
+    l1->SetLineColor(kRed + 1);
+    l1->Draw("SAME");
+
+    c->cd();
+    c->Modified();
+    c->Update();
     c->SaveAs((outPathNoExt + ".png").c_str());
     c->SaveAs((outPathNoExt + ".pdf").c_str());
 

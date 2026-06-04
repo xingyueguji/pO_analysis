@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "plotting_helper.C" // <-- put your header (the code you pasted) into this
+#include "../plotting/plotting_helper.C" // <-- put your header (the code you pasted) into this
 
 static TGraphErrors *GraphToGraphErrors(const TGraph *g)
 {
@@ -47,15 +47,24 @@ void PlotsIsoROC(bool isSoft = true)
 
     if (isSoft)
     {
-        h_graph = new TFile("../skim/rootfile/IsoStudyOutputs_soft.root", "READ");
-        h_graph_gg = new TFile("../skim/rootfile/ggbranchStudyOutputs_soft.root", "READ");
-        h_graph_pT = new TFile("../skim/rootfile/PtcutStudyOutputs_soft.root", "READ");
+        h_graph = new TFile("./rootfile/IsoStudyOutputs_soft.root", "READ");
+        h_graph_gg = new TFile("./rootfile/ggbranchStudyOutputs_soft.root", "READ");
+        h_graph_pT = new TFile("./rootfile/PtcutStudyOutputs_soft.root", "READ");
     }
     else
     {
-        h_graph = new TFile("../skim/rootfile/IsoStudyOutputs.root", "READ");
-        h_graph_gg = new TFile("../skim/rootfile/ggbranchStudyOutputs.root", "READ");
-        h_graph_pT = new TFile("../skim/rootfile/PtcutStudyOutputs.root", "READ");
+        h_graph = new TFile("./rootfile/IsoStudyOutputs.root", "READ");
+        h_graph_gg = new TFile("./rootfile/ggbranchStudyOutputs.root", "READ");
+        h_graph_pT = new TFile("./rootfile/PtcutStudyOutputs.root", "READ");
+    }
+
+    if (!h_graph || h_graph->IsZombie() ||
+        !h_graph_gg || h_graph_gg->IsZombie() ||
+        !h_graph_pT || h_graph_pT->IsZombie())
+    {
+        std::cerr << "[ERR] PlotsIsoROC: cannot open IsoStudy/ggbranch/Ptcut "
+                     "ROOT files in ./rootfile/. Run isolation.C first.\n";
+        return;
     }
 
     TString type[3] = {"OS", "SS", "MET"}; // i = 0,1,2

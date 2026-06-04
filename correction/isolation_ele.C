@@ -13,6 +13,7 @@
 #include <TLegend.h>
 #include <TGraph.h>
 #include <TMultiGraph.h>
+#include <TSystem.h>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -209,6 +210,8 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
         std::cerr << "Cannot open: " << fname << "\n";
         return;
     }
+
+    gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists for outputs
 
     // Try common HiForest paths; adjust if your file uses different names
     TTree *tEle = getTree(f, {"ggHiNtuplizer/EventTree"});

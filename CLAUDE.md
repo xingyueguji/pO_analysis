@@ -57,9 +57,11 @@ Layout (post-refactor):
   - `skim(channel, file, sample)` — dispatcher used by `run_all.sh`
 - [skim/legacy/](skim/legacy/) — the original four per-channel macros, preserved verbatim for diffing/fallback. The unified files are intended to be byte-identical in physics output to these.
 
-Isolation studies (ROC curves, working-point tuning) are still per-flavour and were not folded into `skim.C`:
-- [skim/isolation.C](skim/isolation.C) — muon
-- [skim/isolation_ele.C](skim/isolation_ele.C) — electron
+Isolation studies (ROC curves, working-point tuning) are per-flavour and live in
+`correction/` (moved out of `skim/`):
+- [correction/isolation.C](correction/isolation.C) — muon
+- [correction/isolation_ele.C](correction/isolation_ele.C) — electron
+- plotted by [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C) / [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C). See the `correction/` section below.
 
 **Selection (8-step cutflow in the W macros)**:
 1. ≥1 PF lepton with pT > 25 GeV
@@ -71,9 +73,13 @@ Isolation studies (ROC curves, working-point tuning) are still per-flavour and w
 7. Leading lepton PF relIso < 0.15
 8. Trigger matching on leading lepton
 
-**Output**: `skim/rootfile/{channel}_pO_PFMet_{sample}_hist.root` containing
-12 rapidity-binned MT histograms (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`),
-MET distributions, isolation histos, dilepton mass for Z channels.
+**Output**: per-sample ROOT files in `skim/rootfile/` (W: `{channel}_pO_PFMet_{sample}_hist.root`;
+Z: `ZToMuMu_pO2025_*` / `ZToEE_pO2025_*`). W files contain 12 rapidity-binned MT
+histograms (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`), MET distributions, isolation
+histos. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
+plus kinematics of the dilepton system and its leptons (`h_Zpt/h_Zeta/h_Zphi`,
+`h_lepPt/h_lepEta/h_lepPhi` — both legs), filled for iso-selected OS pairs in the
+Z peak [60,120] GeV (consumed by `correction/dataMC_kinematics.C`).
 
 Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
@@ -83,9 +89,8 @@ Data/MC overlay, background estimation, plots.
 
 - [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
-- [plotting/qcd_sideband_fit_and_extrapolate.C](plotting/qcd_sideband_fit_and_extrapolate.C) — QCD shape from low-MT / anti-iso sideband, Rayleigh-like fit, extrapolate to signal region
-- [plotting/PlotsIsoROC.C](plotting/PlotsIsoROC.C), [plotting/PlotIsoROC_ele.C](plotting/PlotIsoROC_ele.C) — isolation ROC curves
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
+- (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
 - [plotting/observables.C](plotting/observables.C), [plotting/plotZcurve.C](plotting/plotZcurve.C), [plotting/plotRpOtheory.C](plotting/plotRpOtheory.C) — final-observable plots, theory comparisons
 - [plotting/CMS_lumi.C](plotting/CMS_lumi.C), [plotting/plotting_helper.C](plotting/plotting_helper.C) — style / helpers
 
@@ -97,6 +102,22 @@ Final observable extraction from the rapidity-binned histograms:
 - [analysis/charge_asym.C](analysis/charge_asym.C) — `A = (N+ − N−) / (N+ + N−)` vs rapidity (12 bins, y ∈ [−2.4, 2.4]).
 - [analysis/FBratio.C](analysis/FBratio.C) — forward/backward ratio in |y_CM|. Lab-frame `yEdges` chosen symmetric around Δy so the CM-frame bins are symmetric around 0 (required for F/B pairing).
 
+### `correction/` — corrections & studies
+
+Orthogonal to the main skim→plotting→analysis flow: code that derives/validates
+corrections and background estimates. **All macros are run from `correction/`**
+and write outputs there (`correction/plots/`, `correction/rootfile/`). The two
+that need `plotting_helper.C` `#include "../plotting/plotting_helper.C"`; the
+isolation study is self-contained (writes/reads `correction/rootfile/`); the QCD
+fit reads the *main* W skim output at `../skim/rootfile/`.
+
+- [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — QCD shape from anti-iso sideband, Rayleigh-like fit (moved from `plotting/`).
+- [correction/isolation.C](correction/isolation.C), [correction/isolation_ele.C](correction/isolation_ele.C) — isolation working-point study inputs (moved from `skim/`).
+- [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C), [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C) — isolation ROC curves (moved from `plotting/`).
+- [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC (DY) overlay + ratio pad for the Z kinematics (`h_Zpt/h_Zeta/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`), shape-normalized. Used for the Data/MC boson-pT check. `root -l -q 'dataMC_kinematics.C+("Zmm")'`.
+
+The shared ratio-pad helper `SaveDataMCRatio(...)` lives in [plotting/plotting_helper.C](plotting/plotting_helper.C).
+
 ### `merge_rootfile/` — input prep
 
 Utilities to scan EOS and `hadd` per-sample ROOT files into the consolidated
@@ -107,7 +128,9 @@ Utilities to scan EOS and `hadd` per-sample ROOT files into the consolidated
 
 ## Input data
 
-Centralized file on EOS, hardcoded in `skim/run_all.sh`:
+Centralized file on EOS. Single source of truth: `kDefaultDataFile` in
+`skim/skim_common.h` (`run_all.sh` greps it; override per-run via the `DATA_FILE`
+env var). MC file paths live in the same header (`ResolveMCSample`).
 
 ```
 root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root
@@ -197,6 +220,13 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
 - `.so` / `_ACLiC_dict_rdict.pcm` files in `skim/` are ROOT's compiled-macro
   cache (now gitignored). Delete them if the macro signature changes and
   ROOT picks up the stale build.
+- **Always create output directories before writing.** Output dirs (`rootfile/`,
+  `plots/`, `output/`, `logs/`) are gitignored and absent on a fresh checkout
+  (e.g. a pull on lxplus), so any code that writes must `gSystem->mkdir(dir,
+  kTRUE)` (C macros) or `mkdir -p` (shell) first. This is already done in
+  `skim/skim.C` (creates `rootfile/`), `skim/run_all.sh` (`rootfile output
+  logs`), and every `correction/` macro (their `plots/` / `rootfile/`). When
+  adding a new writer, do the same — and zombie-check input files you open.
 
 ## Sumw2 / error tracking (audited May 2026)
 

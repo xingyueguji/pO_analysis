@@ -9,7 +9,7 @@
 #include "TSystem.h"
 #include "TFitResultPtr.h"
 #include "TFitResult.h"
-#include "plotting_helper.C"
+#include "../plotting/plotting_helper.C"
 
 #include <iostream>
 #include <string>

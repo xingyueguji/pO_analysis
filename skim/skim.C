@@ -34,6 +34,7 @@
 #include "TBranch.h"
 #include "TPaveText.h"
 #include "TInterpreter.h"
+#include "TSystem.h"
 
 #include <algorithm>
 #include <cmath>
@@ -634,6 +635,7 @@ int skim_Wmu(const char *fname, SampleType sample)
   PrintCutflow(std::cout, N);
   WriteCutflowTxt(outPrefix, isMC, N);
 
+  gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
   for (int i = 0; i < kNY; ++i)
   {
@@ -1069,6 +1071,7 @@ int skim_Wel(const char *fname, SampleType sample)
   PrintCutflow(std::cout, N);
   WriteCutflowTxt(outPrefix, isMC, N);
 
+  gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
   for (int i = 0; i < kNY; ++i)
   {
@@ -1287,6 +1290,18 @@ int skim_Zmm(const char *fname, SampleType sample)
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
 
+  // -------- Kinematics of the dimuon (Z) system and its muons --------
+  // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
+  // Used for the Data/MC kinematic (boson-pT) check in correction/.
+  TH1D *h_Zpt   = new TH1D("h_Zpt",  Form("%s; p_{T}^{#mu#mu} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_Zeta  = new TH1D("h_Zeta", Form("%s; #eta_{#mu#mu}; Events",        outPrefix.c_str()), 50, -5,    5);
+  TH1D *h_Zphi  = new TH1D("h_Zphi", Form("%s; #phi_{#mu#mu}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{#mu} [GeV]; Muons", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{#mu}; Muons",        outPrefix.c_str()), 50, -2.5, 2.5);
+  TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{#mu}; Muons",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();
+  h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
+
   // -------- Loop --------
   const Long64_t nEntries = tMu->GetEntries();
   std::cout << "EventTree entries = " << nEntries << "\n";
@@ -1375,7 +1390,17 @@ int skim_Zmm(const char *fname, SampleType sample)
         if (passIsolead && passIsosec)
         {
           hMass_extended->Fill(m, w);
-          if (!(m < 60 || m > 120)) hMass->Fill(m, w);
+          if (!(m < 60 || m > 120))
+          {
+            hMass->Fill(m, w);
+            const TLorentzVector ll = v1 + v2;
+            h_Zpt ->Fill(ll.Pt(),  w);
+            h_Zeta->Fill(ll.Eta(), w);
+            h_Zphi->Fill(ll.Phi(), w);
+            h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
+            h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
+            h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+          }
         }
 
         if (m < 60 || m > 120) continue;
@@ -1391,10 +1416,13 @@ int skim_Zmm(const char *fname, SampleType sample)
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
 
+  gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
+  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);
+  h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   fout->Close();
 
   std::cout << "Wrote: " << outPrefix << "_mass.png/.pdf and _hist.root\n";
@@ -1608,6 +1636,18 @@ int skim_Zee(const char *fname, SampleType sample)
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
 
+  // -------- Kinematics of the dielectron (Z) system and its electrons --------
+  // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
+  // Used for the Data/MC kinematic (boson-pT) check in correction/.
+  TH1D *h_Zpt   = new TH1D("h_Zpt",  Form("%s; p_{T}^{ee} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_Zeta  = new TH1D("h_Zeta", Form("%s; #eta_{ee}; Events",        outPrefix.c_str()), 50, -5,    5);
+  TH1D *h_Zphi  = new TH1D("h_Zphi", Form("%s; #phi_{ee}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{e} [GeV]; Electrons", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{e}; Electrons",        outPrefix.c_str()), 50, -2.5, 2.5);
+  TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{e}; Electrons",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();
+  h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
+
   // -------- Loop --------
   const Long64_t nEntries = tEle->GetEntries();
   std::cout << "EventTree entries = " << nEntries << "\n";
@@ -1696,7 +1736,17 @@ int skim_Zee(const char *fname, SampleType sample)
         if (passIsolead && passIsosec)
         {
           hMass_extended->Fill(m, w);
-          if (!(m < 60 || m > 120)) hMass->Fill(m, w);
+          if (!(m < 60 || m > 120))
+          {
+            hMass->Fill(m, w);
+            const TLorentzVector ll = v1 + v2;
+            h_Zpt ->Fill(ll.Pt(),  w);
+            h_Zeta->Fill(ll.Eta(), w);
+            h_Zphi->Fill(ll.Phi(), w);
+            h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
+            h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
+            h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+          }
         }
 
         if (m < 60 || m > 120) continue;
@@ -1712,10 +1762,13 @@ int skim_Zee(const char *fname, SampleType sample)
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
 
+  gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
+  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);
+  h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";

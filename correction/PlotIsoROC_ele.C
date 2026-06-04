@@ -10,7 +10,7 @@
 #include <vector>
 #include <string>
 
-#include "plotting_helper.C"
+#include "../plotting/plotting_helper.C"
 
 // --------------------------------------------
 // Convert TGraph -> TGraphErrors
@@ -40,7 +40,7 @@ void PlotIsoROC_ele()
     //--------------------------------------------
     // Open ROOT file
     //--------------------------------------------
-    TFile *h_graph = TFile::Open("../skim/rootfile/IsoStudyOutputs_electron.root", "READ");
+    TFile *h_graph = TFile::Open("./rootfile/IsoStudyOutputs_electron.root", "READ");
 
     if (!h_graph || h_graph->IsZombie())
     {
