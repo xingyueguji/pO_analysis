@@ -91,6 +91,10 @@ void dataMC_kinematics(const char *channel = "Zmm")
 
     PlotStyle ps;            // defaults from plotting_helper.C
     ps.yTitleOffset = 1.55;  // a touch more room for "Events (a.u.)"
+    ps.boxY2 = 0.65;
+    ps.headerY = 0.75;
+    ps.headerX = 0.20;
+    ps.titleSize = 0.04;
 
     int nOK = 0;
     for (const auto &o : obs)
