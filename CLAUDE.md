@@ -227,6 +227,17 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   `skim/skim.C` (creates `rootfile/`), `skim/run_all.sh` (`rootfile output
   logs`), and every `correction/` macro (their `plots/` / `rootfile/`). When
   adding a new writer, do the same — and zombie-check input files you open.
+- **Clone histograms read from a TFile before mutating them** (`Rebin`,
+  `Scale`, normalization, `Add`, …). `file->Get("h")` returns the *file-owned*
+  object; rebinning/scaling it in place mutates the shared histogram, so a
+  repeated `Get` of the same name returns an already-mutated object (e.g.
+  double-rebinned) and normalization comes out wrong. Always
+  `h = (TH1D*)src->Clone(Form("%s_copyN", name))` with a unique name, then
+  `h->SetDirectory(nullptr)`, and operate on the clone. This was the
+  **`plotting/dileptonpeak.C` normalization bug** the user fixed in commit
+  `0f15b45` (the `getRebinned` lambda rebinned the file-owned histogram in
+  place). `plotting_helper.C::SaveDataMCRatio` and the Combine-input scripts
+  already clone; audit any other macro that reads-then-mutates.
 
 ## Sumw2 / error tracking (audited May 2026)
 
