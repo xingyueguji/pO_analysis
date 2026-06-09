@@ -77,9 +77,16 @@ Isolation studies (ROC curves, working-point tuning) are per-flavour and live in
 Z: `ZToMuMu_pO2025_*` / `ZToEE_pO2025_*`). W files contain 12 rapidity-binned MT
 histograms (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`), MET distributions, isolation
 histos. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
-plus kinematics of the dilepton system and its leptons (`h_Zpt/h_Zeta/h_Zphi`,
-`h_lepPt/h_lepEta/h_lepPhi` — both legs), filled for iso-selected OS pairs in the
-Z peak [60,120] GeV (consumed by `correction/dataMC_kinematics.C`).
+plus kinematics of the dilepton system and its leptons (`h_Zpt/h_Zeta/h_Zy/h_Zphi`,
+`h_lepPt/h_lepEta/h_lepPhi` — both legs; `h_Zy` is lab-frame rapidity), filled for
+iso-selected OS pairs in the Z peak [60,120] GeV (consumed by
+`correction/dataMC_kinematics.C`). **`skim_Zmm` additionally** stores the hadronic
+recoil for the MET correction (Sec 6 of AN2017_058): `h_uPar`/`h_uPerp` (1D
+inclusive) and `h_uPar_qT`/`h_uPerp_qT` (2D, recoil component vs q_T), where
+`u = −MET − q_T` and `q_T` is the dimuon pT. u-axis = AN's 2 GeV/c binning; q_T
+axis fine so the fit binning can be chosen later by projecting (no re-skim). PF
+tree is **soft-gated** (loud `[WARN]`, empty recoil histos if `pftree` absent).
+Electron recoil (`skim_Zee`) not added yet.
 
 Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
@@ -114,7 +121,8 @@ fit reads the *main* W skim output at `../skim/rootfile/`.
 - [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — QCD shape from anti-iso sideband, Rayleigh-like fit (moved from `plotting/`).
 - [correction/isolation.C](correction/isolation.C), [correction/isolation_ele.C](correction/isolation_ele.C) — isolation working-point study inputs (moved from `skim/`).
 - [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C), [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C) — isolation ROC curves (moved from `plotting/`).
-- [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC (DY) overlay + ratio pad for the Z kinematics (`h_Zpt/h_Zeta/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`), shape-normalized. Used for the Data/MC boson-pT check. `root -l -q 'dataMC_kinematics.C+("Zmm")'`.
+- [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC (DY) overlay + ratio pad for the Z kinematics (`h_Zpt/h_Zeta/h_Zy/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`), shape-normalized. Used for the Data/MC boson-pT check. `root -l -q 'dataMC_kinematics.C+("Zmm")'`.
+- [correction/recoil_raw.C](correction/recoil_raw.C) — raw look at the Z→μμ hadronic recoil (`u_par`/`u_perp`) for the MET recoil correction: data vs DY MC, inclusive and in q_T slices (projected from the 2D histos), **plus a printed entry-count table per q_T slice** to judge statistics/binning before fitting. Slice edges = editable `kQtEdges` array (projections → no re-skim to change). NO fit yet; the planned `recoil_fit.C` (double-Gaussian per q_T bin → μ(q_T)/σ(q_T), AN Sec 6) is the next step. `root -l -q 'recoil_raw.C+'`.
 
 The shared ratio-pad helper `SaveDataMCRatio(...)` lives in [plotting/plotting_helper.C](plotting/plotting_helper.C).
 
@@ -238,6 +246,18 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   `0f15b45` (the `getRebinned` lambda rebinned the file-owned histogram in
   place). `plotting_helper.C::SaveDataMCRatio` and the Combine-input scripts
   already clone; audit any other macro that reads-then-mutates.
+- **Fast skim: every tree disables all branches, then enables only the ones
+  used.** All TTrees in `skim/skim.C` (all four channels) call
+  `t->SetBranchStatus("*", 0)` and then `SetBranchStatus(name, 1)` for each
+  branch read — `EventTree` is huge, so reading only ~5–15 branches instead of
+  everything is a big speedup. **Pairing is load-bearing:** after `"*",0`, a
+  branch that you `SetBranchAddress` but forget to `SetBranchStatus(name,1)` is
+  **silently not read** — the variable keeps a stale value and the physics is
+  wrong with no error. So always set status AND address together for every
+  branch. For *optional* trees (e.g. `HiTree` in the Z channels, gated on
+  `haveHiTree`) guard the `"*",0` with the have-flag, since the pointer may be
+  null. (Brought the Z channels in line with the W channels 2026-06; W was
+  already done.)
 
 ## Sumw2 / error tracking (audited May 2026)
 

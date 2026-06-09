@@ -82,6 +82,7 @@ void dataMC_kinematics(const char *channel = "Zmm")
     const std::vector<Obs> obs = {
         {"h_Zpt", "p_{T}^{" + bosSym + "} [GeV]"},
         {"h_Zeta", "#eta_{" + bosSym + "}"},
+        {"h_Zy", "y_{" + bosSym + "}"},
         {"h_Zphi", "#phi_{" + bosSym + "}"},
         {"h_lepPt", "p_{T}^{" + lepSym + "} [GeV]"},
         {"h_lepEta", "#eta_{" + lepSym + "}"},

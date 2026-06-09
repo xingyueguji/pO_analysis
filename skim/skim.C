@@ -25,6 +25,7 @@
 #include "TTree.h"
 #include "TCanvas.h"
 #include "TH1D.h"
+#include "TH2D.h"
 #include "TMath.h"
 #include "TVector2.h"
 #include "TLegend.h"
@@ -1143,6 +1144,26 @@ int skim_Zmm(const char *fname, SampleType sample)
   TTree *tHi = (TTree *)f->Get("hiEvtAnalyzer/HiTree");
   const bool haveHiTree = (tHi != nullptr);
 
+  // -------- PF candidates (for the hadronic-recoil / MET correction) --------
+  // Soft-gated: if pftree is absent the Z-mass plots still run, but the recoil
+  // (u_par/u_perp) histograms stay empty -- warn loudly so it isn't silent.
+  TTree *tPF = (TTree *)f->Get("particleFlowAnalyser/pftree");
+  const bool haveRecoil = (tPF != nullptr);
+  std::vector<int>   *pfId  = nullptr;
+  std::vector<float> *pfPt  = nullptr;
+  std::vector<float> *pfPhi = nullptr;
+  if (haveRecoil)
+  {
+    tPF->SetBranchStatus("*", 0); // read only what ComputePFMET needs (speed)
+    tPF->SetBranchStatus("pfPt", 1);
+    tPF->SetBranchStatus("pfPhi", 1);
+    tPF->SetBranchAddress("pfPt", &pfPt);
+    tPF->SetBranchAddress("pfPhi", &pfPhi);
+  }
+  else
+    std::cerr << "[WARN] skim_Zmm: missing particleFlowAnalyser/pftree in " << fname
+              << " -- recoil (u_par/u_perp) histograms will be EMPTY.\n";
+
   // -------- Muon branches --------
   Int_t nMu = 0;
   std::vector<float> *muPt = nullptr, *muEta = nullptr, *muPhi = nullptr;
@@ -1150,6 +1171,12 @@ int skim_Zmm(const char *fname, SampleType sample)
   std::vector<int>   *muIsGood = nullptr, *muIsGlobal = nullptr;
   std::vector<int>   *muIsPF   = nullptr, *muIDTight  = nullptr;
 
+  tMu->SetBranchStatus("*", 0); // speed: read only the muon branches we use
+  tMu->SetBranchStatus("nMu", 1);
+  tMu->SetBranchStatus("muPt", 1);
+  tMu->SetBranchStatus("muEta", 1);
+  tMu->SetBranchStatus("muPhi", 1);
+  tMu->SetBranchStatus("muCharge", 1);
   tMu->SetBranchAddress("nMu",      &nMu);
   tMu->SetBranchAddress("muPt",     &muPt);
   tMu->SetBranchAddress("muEta",    &muEta);
@@ -1161,10 +1188,10 @@ int skim_Zmm(const char *fname, SampleType sample)
   const bool has_muIsPF     = HasBranch(tMu, "muIsPF");
   const bool has_muIDTight  = HasBranch(tMu, "muIDTight");
 
-  if (has_muIsGood)   tMu->SetBranchAddress("muIsGood",   &muIsGood);
-  if (has_muIsGlobal) tMu->SetBranchAddress("muIsGlobal", &muIsGlobal);
-  if (has_muIsPF)     tMu->SetBranchAddress("muIsPF",     &muIsPF);
-  if (has_muIDTight)  tMu->SetBranchAddress("muIDTight",  &muIDTight);
+  if (has_muIsGood)   { tMu->SetBranchStatus("muIsGood",   1); tMu->SetBranchAddress("muIsGood",   &muIsGood);   }
+  if (has_muIsGlobal) { tMu->SetBranchStatus("muIsGlobal", 1); tMu->SetBranchAddress("muIsGlobal", &muIsGlobal); }
+  if (has_muIsPF)     { tMu->SetBranchStatus("muIsPF",     1); tMu->SetBranchAddress("muIsPF",     &muIsPF);     }
+  if (has_muIDTight)  { tMu->SetBranchStatus("muIDTight",  1); tMu->SetBranchAddress("muIDTight",  &muIDTight);  }
 
   // -------- Event branches --------
   Float_t vz    = 999.f;
@@ -1173,13 +1200,14 @@ int skim_Zmm(const char *fname, SampleType sample)
   const bool has_vz    = (haveHiTree && HasBranch(tHi, "vz"));
   const bool has_hiBin = (haveHiTree && HasBranch(tHi, "hiBin"));
 
-  if (has_vz)    tHi->SetBranchAddress("vz",    &vz);
-  if (has_hiBin) tHi->SetBranchAddress("hiBin", &hiBin);
+  if (haveHiTree) tHi->SetBranchStatus("*", 0); // speed (HiTree is optional here)
+  if (has_vz)    { tHi->SetBranchStatus("vz", 1);    tHi->SetBranchAddress("vz",    &vz); }
+  if (has_hiBin) { tHi->SetBranchStatus("hiBin", 1); tHi->SetBranchAddress("hiBin", &hiBin); }
 
   // -------- Generator event weight (MC only) --------
   Float_t    genWeight     = 1.f;
   const bool has_genWeight = isMC && haveHiTree && HasBranch(tHi, "weight");
-  if (has_genWeight) tHi->SetBranchAddress("weight", &genWeight);
+  if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Zmm: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
   // -------- PF iso --------
@@ -1295,12 +1323,25 @@ int skim_Zmm(const char *fname, SampleType sample)
   // Used for the Data/MC kinematic (boson-pT) check in correction/.
   TH1D *h_Zpt   = new TH1D("h_Zpt",  Form("%s; p_{T}^{#mu#mu} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_Zeta  = new TH1D("h_Zeta", Form("%s; #eta_{#mu#mu}; Events",        outPrefix.c_str()), 50, -5,    5);
+  TH1D *h_Zy    = new TH1D("h_Zy",   Form("%s; y_{#mu#mu}; Events",           outPrefix.c_str()), 50, -5,    5);
   TH1D *h_Zphi  = new TH1D("h_Zphi", Form("%s; #phi_{#mu#mu}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
   TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{#mu} [GeV]; Muons", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{#mu}; Muons",        outPrefix.c_str()), 50, -2.5, 2.5);
   TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{#mu}; Muons",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
-  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();
+  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();   h_Zy->Sumw2();
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
+
+  // -------- Hadronic recoil (for the MET recoil correction) --------
+  // u_par / u_perp = recoil components parallel / perpendicular to q_T (the
+  // dimuon pT), from u = -MET - q_T. Stored inclusively (1D) and vs q_T (2D)
+  // so the q_T binning for the recoil fits can be chosen later by projecting
+  // slices -- no need to re-run the skim. u-axis uses the AN's 2 GeV/c binning.
+  // Filled for the same selection as the kinematics (iso OS pairs, Z peak).
+  TH1D *h_uPar  = new TH1D("h_uPar",  Form("%s; u_{#parallel} [GeV]; Events", outPrefix.c_str()), 200, -200, 200);
+  TH1D *h_uPerp = new TH1D("h_uPerp", Form("%s; u_{#perp} [GeV]; Events",     outPrefix.c_str()), 200, -200, 200);
+  TH2D *h_uPar_qT  = new TH2D("h_uPar_qT",  Form("%s; q_{T} [GeV]; u_{#parallel} [GeV]", outPrefix.c_str()), 70, 0, 140, 200, -200, 200);
+  TH2D *h_uPerp_qT = new TH2D("h_uPerp_qT", Form("%s; q_{T} [GeV]; u_{#perp} [GeV]",     outPrefix.c_str()), 70, 0, 140, 200, -200, 200);
+  h_uPar->Sumw2(); h_uPerp->Sumw2(); h_uPar_qT->Sumw2(); h_uPerp_qT->Sumw2();
 
   // -------- Loop --------
   const Long64_t nEntries = tMu->GetEntries();
@@ -1322,6 +1363,7 @@ int skim_Zmm(const char *fname, SampleType sample)
 
     tMu->GetEntry(ie);
     if (haveHiTree) tHi->GetEntry(ie);
+    if (haveRecoil) tPF->GetEntry(ie);
     tHLT->GetEntry(ie);
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
@@ -1396,10 +1438,31 @@ int skim_Zmm(const char *fname, SampleType sample)
             const TLorentzVector ll = v1 + v2;
             h_Zpt ->Fill(ll.Pt(),  w);
             h_Zeta->Fill(ll.Eta(), w);
+            h_Zy  ->Fill(ll.Rapidity(), w);
             h_Zphi->Fill(ll.Phi(), w);
             h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
             h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
             h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+
+            // Hadronic recoil: u = -MET - q_T, with q_T = the dimuon (ll).
+            // u_par is along q_T (should peak near -q_T), u_perp is transverse.
+            if (haveRecoil)
+            {
+              const TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+              const double qT = ll.Pt();
+              if (qT > 0.0)
+              {
+                const double ux = -metv.X() - ll.Px();
+                const double uy = -metv.Y() - ll.Py();
+                const double cphi = ll.Px() / qT, sphi = ll.Py() / qT;
+                const double uPar  =  ux * cphi + uy * sphi;
+                const double uPerp = -ux * sphi + uy * cphi;
+                h_uPar    ->Fill(uPar,  w);
+                h_uPerp   ->Fill(uPerp, w);
+                h_uPar_qT ->Fill(qT, uPar,  w);
+                h_uPerp_qT->Fill(qT, uPerp, w);
+              }
+            }
           }
         }
 
@@ -1421,8 +1484,10 @@ int skim_Zmm(const char *fname, SampleType sample)
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
-  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);
+  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
+  h_uPar->Write("", 2); h_uPerp->Write("", 2);
+  h_uPar_qT->Write("", 2); h_uPerp_qT->Write("", 2);
   fout->Close();
 
   std::cout << "Wrote: " << outPrefix << "_mass.png/.pdf and _hist.root\n";
@@ -1478,6 +1543,12 @@ int skim_Zee(const char *fname, SampleType sample)
   Int_t nEle = 0;
   std::vector<float> *elePt = nullptr, *eleEta = nullptr, *elePhi = nullptr;
   std::vector<int>   *eleCharge = nullptr;
+  tEle->SetBranchStatus("*", 0); // speed: read only the electron branches we use
+  tEle->SetBranchStatus("nEle", 1);
+  tEle->SetBranchStatus("elePt", 1);
+  tEle->SetBranchStatus("eleEta", 1);
+  tEle->SetBranchStatus("elePhi", 1);
+  tEle->SetBranchStatus("eleCharge", 1);
   tEle->SetBranchAddress("nEle",      &nEle);
   tEle->SetBranchAddress("elePt",     &elePt);
   tEle->SetBranchAddress("eleEta",    &eleEta);
@@ -1530,13 +1601,14 @@ int skim_Zee(const char *fname, SampleType sample)
   Int_t   hiBin = -999;
   const bool has_vz    = (haveHiTree && HasBranch(tHi, "vz"));
   const bool has_hiBin = (haveHiTree && HasBranch(tHi, "hiBin"));
-  if (has_vz)    tHi->SetBranchAddress("vz",    &vz);
-  if (has_hiBin) tHi->SetBranchAddress("hiBin", &hiBin);
+  if (haveHiTree) tHi->SetBranchStatus("*", 0); // speed (HiTree is optional here)
+  if (has_vz)    { tHi->SetBranchStatus("vz", 1);    tHi->SetBranchAddress("vz",    &vz); }
+  if (has_hiBin) { tHi->SetBranchStatus("hiBin", 1); tHi->SetBranchAddress("hiBin", &hiBin); }
 
   // -------- Generator event weight (MC only) --------
   Float_t    genWeight     = 1.f;
   const bool has_genWeight = isMC && haveHiTree && HasBranch(tHi, "weight");
-  if (has_genWeight) tHi->SetBranchAddress("weight", &genWeight);
+  if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Zee: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
   // -------- HLT objects --------
@@ -1641,11 +1713,12 @@ int skim_Zee(const char *fname, SampleType sample)
   // Used for the Data/MC kinematic (boson-pT) check in correction/.
   TH1D *h_Zpt   = new TH1D("h_Zpt",  Form("%s; p_{T}^{ee} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_Zeta  = new TH1D("h_Zeta", Form("%s; #eta_{ee}; Events",        outPrefix.c_str()), 50, -5,    5);
+  TH1D *h_Zy    = new TH1D("h_Zy",   Form("%s; y_{ee}; Events",           outPrefix.c_str()), 50, -5,    5);
   TH1D *h_Zphi  = new TH1D("h_Zphi", Form("%s; #phi_{ee}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
   TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{e} [GeV]; Electrons", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{e}; Electrons",        outPrefix.c_str()), 50, -2.5, 2.5);
   TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{e}; Electrons",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
-  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();
+  h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();   h_Zy->Sumw2();
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
 
   // -------- Loop --------
@@ -1742,6 +1815,7 @@ int skim_Zee(const char *fname, SampleType sample)
             const TLorentzVector ll = v1 + v2;
             h_Zpt ->Fill(ll.Pt(),  w);
             h_Zeta->Fill(ll.Eta(), w);
+            h_Zy  ->Fill(ll.Rapidity(), w);
             h_Zphi->Fill(ll.Phi(), w);
             h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
             h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
@@ -1767,7 +1841,7 @@ int skim_Zee(const char *fname, SampleType sample)
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
-  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);
+  h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   fout->Close();
 
