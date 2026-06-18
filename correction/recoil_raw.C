@@ -69,8 +69,12 @@ void recoil_raw()
     const std::string outDir = "./plots/recoil_Zmm";
     gSystem->mkdir(outDir.c_str(), kTRUE);
 
-    PlotStyle ps;
-    ps.yTitleOffset = 1.55;
+    PlotStyle ps;            // defaults from plotting_helper.C
+    ps.yTitleOffset = 1.55;  // a touch more room for "Events (a.u.)"
+    ps.boxY2 = 0.65;
+    ps.headerY = 0.75;
+    ps.headerX = 0.20;
+    ps.titleSize = 0.04;
 
     // ---- inclusive u_par / u_perp (data vs MC, shape-normalized, with ratio) ----
     struct Incl { const char *name; std::string xt; };
