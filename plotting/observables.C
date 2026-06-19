@@ -1,13 +1,16 @@
 #include "TFile.h"
 #include "TGraphErrors.h"
+#include "TH1D.h"
 #include "TSystem.h"
 #include "TLegend.h"
 #include "TLine.h"
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cmath>
 
-#include "plotting_helper.C" // where your PlotStyle + SaveNicePlotGraph live
+#include "plotting_helper.C"               // where your PlotStyle + SaveNicePlotGraph live
+#include "../analysis/analysis_helpers.h"  // pOAnalysis::YieldInRange (Sumw2-aware yields)
 
 void observables()
 {
@@ -170,7 +173,149 @@ void observables()
             tuneRFB, g_theory_1, g_theory_2, g_theory_3, g_theory_4);
     };
 
-    plotRFB(g_RFB_sum, "RFB_mt_sum", "W #rightarrow #mu #nu (sum)");
+    // -------------------------------------------------------------------
+    // Weighted-average theory curve for the SUM channel.
+    //
+    // Theory provides R_FB only for W+ and W- separately. The measured sum is
+    // R_FB^sum = (F+ + F-)/(B+ + B-); the exact identity in terms of the
+    // per-charge ratios is the BACKWARD-yield-weighted average
+    //     R_FB^sum = (B+ R+ + B- R-) / (B+ + B-).
+    // So we weight each PDF set's W+ / W- theory curve, per |y| bin, by the
+    // backward DATA yields B+, B- read from the W muon skim with the same FB
+    // histograms / integration FBratio.C uses. Each theory point's |y| is
+    // mapped to the data |y| bin that contains it (nearest center if outside).
+    // -------------------------------------------------------------------
+    std::vector<TGraphErrors *> sumTheory(4, nullptr);
+    {
+        using pOAnalysis::YieldInRange;
+
+        const char *inFileW = "../skim/rootfile/WToMuNu_pO_PFMet_hist.root";
+        TFile *fW = TFile::Open(inFileW, "READ");
+        if (!fW || fW->IsZombie())
+        {
+            std::cerr << "[WARN] Cannot open W skim file for sum-theory weights: "
+                      << inFileW << " -> sum theory curves skipped\n";
+        }
+        else if (!g_RFB_sum)
+        {
+            std::cerr << "[WARN] Missing g_RFB_mt_sum -> cannot map theory points to |y| bins\n";
+        }
+        else
+        {
+            const int Nabs = g_RFB_sum->GetN(); // |y| bins (6 for NY=12)
+
+            std::vector<double> wP(Nabs, 0.5), wM(Nabs, 0.5); // per-bin weights
+            std::vector<double> xc(Nabs, 0.0), exc(Nabs, 0.0); // bin center / half-width
+
+            for (int iabs = 0; iabs < Nabs; ++iabs)
+            {
+                // Backward bin = negative-side lab bin iyB = iabs (as in FBratio.C).
+                const int iyB = iabs;
+                TH1D *hBp = (TH1D *)fW->Get(Form("h_mt_Wp_y%d_FB", iyB));
+                TH1D *hBm = (TH1D *)fW->Get(Form("h_mt_Wm_y%d_FB", iyB));
+
+                const double Bp = YieldInRange(hBp, 30.0, 200.0, true).value;
+                const double Bm = YieldInRange(hBm, 30.0, 200.0, true).value;
+                const double S = Bp + Bm;
+                if (S > 0.0)
+                {
+                    wP[iabs] = Bp / S;
+                    wM[iabs] = Bm / S;
+                }
+                else
+                {
+                    std::cerr << "[WARN] Zero backward yield in |y| bin " << iabs
+                              << " -> using equal W+/W- weights\n";
+                }
+
+                xc[iabs] = g_RFB_sum->GetPointX(iabs);
+                exc[iabs] = g_RFB_sum->GetErrorX(iabs);
+
+                std::cout << "[INFO] sum-theory weight |y|bin=" << iabs
+                          << " (center " << xc[iabs] << ")"
+                          << "  B+=" << Bp << "  B-=" << Bm
+                          << "  w+=" << wP[iabs] << "  w-=" << wM[iabs] << "\n";
+            }
+
+            // Map a theory point |y| to a data |y| bin: containing bin if any,
+            // otherwise the nearest bin center.
+            auto findBin = [&](double x) -> int
+            {
+                for (int i = 0; i < Nabs; ++i)
+                    if (x >= xc[i] - exc[i] && x <= xc[i] + exc[i])
+                        return i;
+                int best = 0;
+                double bd = 1e30;
+                for (int i = 0; i < Nabs; ++i)
+                {
+                    const double d = std::fabs(x - xc[i]);
+                    if (d < bd) { bd = d; best = i; }
+                }
+                return best;
+            };
+
+            // Build the backward-weighted theory sum from a W+ / W- theory pair.
+            auto buildSumTheory = [&](TGraphErrors *gWp, TGraphErrors *gWm,
+                                      const char *name) -> TGraphErrors *
+            {
+                if (!gWp || !gWm)
+                {
+                    std::cerr << "[WARN] " << name << ": missing W+ or W- theory -> skipped\n";
+                    return nullptr;
+                }
+
+                const int N = gWp->GetN();
+                const bool aligned = (gWm->GetN() == N);
+                if (!aligned)
+                    std::cerr << "[WARN] " << name << ": W+ (" << N << ") and W- ("
+                              << gWm->GetN() << ") theory have different point counts;"
+                              << " interpolating W- with TGraph::Eval\n";
+
+                std::vector<double> vx, vy, vex, vey;
+                vx.reserve(N); vy.reserve(N); vex.reserve(N); vey.reserve(N);
+
+                for (int i = 0; i < N; ++i)
+                {
+                    const double x = gWp->GetPointX(i);
+                    const double Rp = gWp->GetPointY(i);
+                    const double eRp = gWp->GetErrorY(i);
+
+                    double Rm = aligned ? gWm->GetPointY(i) : gWm->Eval(x);
+                    double eRm = aligned ? gWm->GetErrorY(i) : 0.0; // Eval gives no error
+
+                    const int b = findBin(x);
+                    const double Rsum = wP[b] * Rp + wM[b] * Rm;
+                    const double eRsum = std::sqrt(wP[b] * eRp * wP[b] * eRp +
+                                                   wM[b] * eRm * wM[b] * eRm);
+
+                    vx.push_back(x);
+                    vy.push_back(Rsum);
+                    vex.push_back(gWp->GetErrorX(i));
+                    vey.push_back(eRsum);
+                }
+
+                TGraphErrors *g = new TGraphErrors((int)vx.size(), vx.data(), vy.data(),
+                                                   vex.data(), vey.data());
+                g->SetName(name);
+                g->SetTitle(name);
+                return g;
+            };
+
+            sumTheory[0] = buildSumTheory(g_RFB_Wp_EPPS21,    g_RFB_Wm_EPPS21,    "g_RFB_sum_EPPS21");
+            sumTheory[1] = buildSumTheory(g_RFB_Wp_nCTEQ15HQ, g_RFB_Wm_nCTEQ15HQ, "g_RFB_sum_nCTEQ15HQ");
+            sumTheory[2] = buildSumTheory(g_RFB_Wp_nNNPDF30,  g_RFB_Wm_nNNPDF30,  "g_RFB_sum_nNNPDF30");
+            sumTheory[3] = buildSumTheory(g_RFB_Wp_TUJU21,    g_RFB_Wm_TUJU21,    "g_RFB_sum_TUJU21");
+        }
+
+        if (fW)
+        {
+            fW->Close();
+            delete fW;
+        }
+    }
+
+    plotRFB(g_RFB_sum, "RFB_mt_sum", "W #rightarrow #mu #nu (sum)",
+            sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
     plotRFB(g_RFB_Wp, "RFB_mt_Wp", "W^{+} #rightarrow #mu^{+} #nu", g_RFB_Wp_EPPS21,
             g_RFB_Wp_nCTEQ15HQ, g_RFB_Wp_nNNPDF30, g_RFB_Wp_TUJU21);
     plotRFB(g_RFB_Wm, "RFB_mt_Wm", "W^{-} #rightarrow #mu^{-} #bar{#nu}", g_RFB_Wm_EPPS21,

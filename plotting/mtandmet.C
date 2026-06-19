@@ -1,3 +1,4 @@
+#include "TFile.h"
 #include "TCanvas.h"
 #include "TH1.h"
 #include "TLatex.h"
@@ -671,31 +672,53 @@ void mtandmet(bool isElec = 1)
 
         std::vector<std::string> box = {Form("Passing Events: %.0f", h_mt_inclusive->Integral(1, h_mt_inclusive->GetNbinsX()))};
 
-        std::vector<TH1 *> bkgs = {
-            h_mt_inclusive_MC_signal,
-            h_mt_inclusive_MC_Z,
-            h_mt_inclusive_MC_Ztau,
-            h_mt_inclusive_MC_Wtau};
+        if (!isElec)
+        {
+            // Muon inclusive m_T: keep only signal MC + data, with the signal
+            // MC normalized to the data peak (shape comparison, no backgrounds).
+            SaveNicePlot1D_DataSignalPeak(
+                h_mt_inclusive,
+                h_mt_inclusive_MC_signal,
+                outMtDir + Form("/h_mt_inclusive"),
+                "m_{T} (GeV)",
+                "Events / 2.5 GeV",
+                "",
+                Channeltype,
+                "inclusive",
+                box,
+                ps,
+                commonTuner,
+                "Data",
+                "Signal MC (norm. to peak)");
+        }
+        else
+        {
+            std::vector<TH1 *> bkgs = {
+                h_mt_inclusive_MC_signal,
+                h_mt_inclusive_MC_Z,
+                h_mt_inclusive_MC_Ztau,
+                h_mt_inclusive_MC_Wtau};
 
-        std::vector<std::string> names = {
-            "W+/W-",
-            "DY",
-            "DY tau",
-            "W+/W- tau"};
+            std::vector<std::string> names = {
+                "W+/W-",
+                "DY",
+                "DY tau",
+                "W+/W- tau"};
 
-        SaveNicePlot1D_WithBkg(
-            h_mt_inclusive,
-            bkgs,
-            names,
-            outMtDir + Form("/h_mt_inclusive"),
-            "m_{T} (GeV)",
-            "Events / 2.5 GeV",
-            "",
-            Channeltype,
-            "inclusive",
-            box,
-            ps,
-            commonTuner);
+            SaveNicePlot1D_WithBkg(
+                h_mt_inclusive,
+                bkgs,
+                names,
+                outMtDir + Form("/h_mt_inclusive"),
+                "m_{T} (GeV)",
+                "Events / 2.5 GeV",
+                "",
+                Channeltype,
+                "inclusive",
+                box,
+                ps,
+                commonTuner);
+        }
     }
 
     {

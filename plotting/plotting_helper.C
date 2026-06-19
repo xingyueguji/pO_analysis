@@ -198,6 +198,7 @@ static void SaveNicePlot1D(TH1 *h,
     // outPathNoExt could include dirs, so you can mkdir manually outside too.
 
     CMS_lumi(c, 13, 10);
+    c->RedrawAxis(); // redraw frame + ticks on top of the histograms/fills
     c->Modified();
     c->Update();
 
@@ -309,6 +310,7 @@ static void SaveNiceGraph(TGraphErrors *g,
         g4->SetMarkerColor(kPink);
         g4->Draw("P SAME");
     }
+    c->RedrawAxis(); // redraw frame + ticks on top
     c->Modified();
     c->Update();
 
@@ -396,8 +398,8 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g2->SetMarkerStyle(0);               // hide markers
         g2->SetLineWidth(0);                 // hide error bar stems
 
-        // g2->Draw("3");      // A = draw axes, 3 = filled error band
-        // g2->Draw("L SAME"); // draw central line on top
+        g2->Draw("3");      // A = draw axes, 3 = filled error band
+        g2->Draw("L SAME"); // draw central line on top
     }
     if (g3)
     {
@@ -421,8 +423,8 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g4->SetMarkerStyle(0);             // hide markers
         g4->SetLineWidth(0);               // hide error bar stems
 
-        // g4->Draw("3");      // A = draw axes, 3 = filled error band
-        // g4->Draw("L SAME"); // draw central line on top
+        g4->Draw("3");      // A = draw axes, 3 = filled error band
+        g4->Draw("L SAME"); // draw central line on top
     }
 
     TLegend *leg = new TLegend(0.20, 0.15, 0.45, 0.38);
@@ -437,12 +439,13 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
 
     // --- Models: error bands ---
     leg->AddEntry(g1, "EPPS21", "f");
-    // leg->AddEntry(g2, "nCTEQ15HQ", "f");
+    leg->AddEntry(g2, "nCTEQ15HQ", "f");
     leg->AddEntry(g3, "nNNPDF3.0", "f");
-    // leg->AddEntry(g4, "TUJU21nlo", "f");
+    leg->AddEntry(g4, "TUJU21nlo", "f");
 
     leg->Draw();
 
+    c->RedrawAxis(); // redraw frame + ticks on top of the filled error bands
     c->Modified();
     c->Update();
 
@@ -509,6 +512,7 @@ static void SaveNicePlot1D_twoplots(TH1 *h, TH1 *h2,
     // outPathNoExt could include dirs, so you can mkdir manually outside too.
 
     CMS_lumi(c, 13, 10);
+    c->RedrawAxis(); // redraw frame + ticks on top of the histograms/fills
     c->Modified();
     c->Update();
 
@@ -637,6 +641,7 @@ static void SaveNicePlot1D_WithBkg(
 
     CMS_lumi(c, 13, 10);
 
+    c->RedrawAxis(); // redraw frame + ticks on top of the stacked histograms
     c->Modified();
     c->Update();
 
@@ -645,6 +650,93 @@ static void SaveNicePlot1D_WithBkg(
 
     delete c;
 }
+
+// ---------------------------------------------------------
+// 7b) Data vs a SINGLE signal-MC template, overlaid, with the signal
+//     normalized to the DATA PEAK (max-bin content) rather than the integral.
+//       - hSignal drawn as a filled/line histogram, hData as points on top.
+//       - Use for the inclusive m_T shape check where we only want to compare
+//         the signal shape against data (no backgrounds, no stack).
+//     Inputs are cloned, so the caller's histograms are untouched.
+// ---------------------------------------------------------
+static void SaveNicePlot1D_DataSignalPeak(
+    TH1 *hData, TH1 *hSignal,
+    const std::string &outPathNoExt,
+    const std::string &xTitle,
+    const std::string &yTitle,
+    const std::string &mainTitle,
+    const std::string &subTitle1,
+    const std::string &subTitle2,
+    const std::vector<std::string> &boxLines,
+    const PlotStyle &ps = PlotStyle(),
+    PlotTuner tuner = nullptr,
+    const std::string &dataLabel = "Data",
+    const std::string &signalLabel = "Signal MC (norm. to peak)")
+{
+    if (!hData || !hSignal)
+        return;
+
+    gStyle->SetOptStat(ps.showStats ? 1110 : 0);
+
+    TCanvas *c = new TCanvas(Form("c_%s_dsp", hData->GetName()), "", ps.w, ps.h);
+    ApplyCanvasStyle(c, ps);
+    c->cd();
+
+    // Clone so we never mutate the file-owned / caller-owned histograms.
+    TH1 *hd = (TH1 *)hData->Clone(Form("%s_dspD", hData->GetName()));
+    TH1 *hs = (TH1 *)hSignal->Clone(Form("%s_dspS", hSignal->GetName()));
+    hd->SetDirectory(nullptr);
+    hs->SetDirectory(nullptr);
+
+    // Normalize signal MC so its maximum bin matches the data maximum bin
+    // (peak normalization, NOT integral normalization). Computed before any
+    // SetMaximum from the tuner so GetMaximum() returns true bin contents.
+    const double dPeak = hd->GetMaximum();
+    const double sPeak = hs->GetMaximum();
+    if (sPeak > 0.0 && dPeak > 0.0)
+        hs->Scale(dPeak / sPeak);
+
+    // signal: filled histogram (defines the frame); data: points on top.
+    ApplyHistStyle(hs, ps, xTitle, yTitle);
+    hs->SetLineColor(kRed + 1);
+    hs->SetLineWidth(2);
+    hs->SetFillColorAlpha(kRed - 9, 0.5);
+    hs->SetMarkerSize(0);
+
+    hd->SetMarkerStyle(20);
+    hd->SetMarkerSize(1.2);
+    hd->SetLineColor(kBlack);
+    hd->SetMarkerColor(kBlack);
+
+    hs->Draw("HIST");
+    hd->Draw("E SAME");
+
+    DrawHeader(ps, mainTitle, subTitle1, subTitle2);
+    DrawInfoBox(ps, boxLines);
+
+    TLegend *leg = new TLegend(ps.boxX1, ps.boxY1 - 0.2, ps.boxX2, ps.boxY2 - 0.2);
+    leg->SetBorderSize(0);
+    leg->SetFillStyle(0);
+    leg->SetTextFont(ps.font);
+    leg->AddEntry(hd, dataLabel.c_str(), "lep");
+    leg->AddEntry(hs, signalLabel.c_str(), "lf");
+    leg->Draw();
+
+    // Tuner acts on the frame-defining histogram (the signal).
+    if (tuner)
+        tuner(c, hs);
+
+    CMS_lumi(c, 13, 10);
+    c->RedrawAxis(); // redraw frame + ticks on top of the histograms/fills
+    c->Modified();
+    c->Update();
+
+    c->SaveAs((outPathNoExt + ".png").c_str());
+    c->SaveAs((outPathNoExt + ".pdf").c_str());
+
+    delete c;
+}
+
 // ---------------------------------------------------------
 // 8) Data vs MC overlay with a ratio pad (data / MC).
 //    Added for the correction/ Data-vs-MC kinematic (boson-pT) check.
@@ -738,6 +830,7 @@ static void SaveDataMCRatio(TH1 *hData, TH1 *hMC,
 
     DrawHeader(ps, mainTitle, subTitle1, subTitle2);
     CMS_lumi(pTop, 13, 10);
+    pTop->RedrawAxis(); // redraw frame + ticks on top of the filled MC histogram
 
     // ---------------- bottom pad: ratio ----------------
     pBot->cd();
@@ -774,6 +867,7 @@ static void SaveDataMCRatio(TH1 *hData, TH1 *hMC,
     l1->SetLineStyle(2);
     l1->SetLineColor(kRed + 1);
     l1->Draw("SAME");
+    pBot->RedrawAxis(); // redraw frame + ticks on top of the ratio points
 
     c->cd();
     c->Modified();
