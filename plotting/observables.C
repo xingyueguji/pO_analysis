@@ -176,14 +176,22 @@ void observables()
     // -------------------------------------------------------------------
     // Weighted-average theory curve for the SUM channel.
     //
-    // Theory provides R_FB only for W+ and W- separately. The measured sum is
-    // R_FB^sum = (F+ + F-)/(B+ + B-); the exact identity in terms of the
-    // per-charge ratios is the BACKWARD-yield-weighted average
-    //     R_FB^sum = (B+ R+ + B- R-) / (B+ + B-).
-    // So we weight each PDF set's W+ / W- theory curve, per |y| bin, by the
-    // backward DATA yields B+, B- read from the W muon skim with the same FB
-    // histograms / integration FBratio.C uses. Each theory point's |y| is
-    // mapped to the data |y| bin that contains it (nearest center if outside).
+    // Theory provides R_FB only for W+ and W- separately. We build the sum
+    // theory curve as the DATA-COUNT-weighted average of the two per-charge
+    // theory ratios, per |y| bin:
+    //
+    //     R_FB^sum(|y|) = (N+ R+ + N- R-) / (N+ + N-)
+    //
+    // where N+, N- are the TOTAL W+ / W- event counts DATA has in that |y| bin
+    // -- i.e. forward bin + backward mirror, N+ = F+ + B+, read from the same
+    // FB histograms / integration FBratio.C uses. Each charge's theory ratio is
+    // weighted by how abundant that charge is in the data, so the sum sits
+    // closer to whichever charge dominates. Each theory point's |y| is mapped
+    // to the data |y| bin that contains it (nearest center if outside).
+    //
+    // NOTE: this is the abundance-weighted mean of the two ratios; it is NOT
+    // the exact (F+ + F-)/(B+ + B-) identity (the two coincide only when
+    // R+ = R-), but it is the intuitive data-driven combination requested.
     // -------------------------------------------------------------------
     std::vector<TGraphErrors *> sumTheory(4, nullptr);
     {
@@ -203,28 +211,37 @@ void observables()
         else
         {
             const int Nabs = g_RFB_sum->GetN(); // |y| bins (6 for NY=12)
+            const int NY = 2 * Nabs;            // signed-rapidity bins (12)
 
             std::vector<double> wP(Nabs, 0.5), wM(Nabs, 0.5); // per-bin weights
             std::vector<double> xc(Nabs, 0.0), exc(Nabs, 0.0); // bin center / half-width
 
+            // Total DATA yield of one charge in one signed-rapidity bin.
+            auto count = [&](const char *chg, int iy) -> double
+            {
+                TH1D *h = (TH1D *)fW->Get(Form("h_mt_%s_y%d_FB", chg, iy));
+                return YieldInRange(h, 30.0, 200.0, true).value;
+            };
+
             for (int iabs = 0; iabs < Nabs; ++iabs)
             {
-                // Backward bin = negative-side lab bin iyB = iabs (as in FBratio.C).
-                const int iyB = iabs;
-                TH1D *hBp = (TH1D *)fW->Get(Form("h_mt_Wp_y%d_FB", iyB));
-                TH1D *hBm = (TH1D *)fW->Get(Form("h_mt_Wm_y%d_FB", iyB));
+                // A |y| bin pools its backward bin and its forward mirror
+                // (same pairing as FBratio.C), so the total count of a charge is
+                // N = (forward yield) + (backward yield).
+                const int iyB = iabs;          // backward bin (negative y_CM)
+                const int iyF = NY - 1 - iabs; // forward mirror (positive y_CM)
 
-                const double Bp = YieldInRange(hBp, 30.0, 200.0, true).value;
-                const double Bm = YieldInRange(hBm, 30.0, 200.0, true).value;
-                const double S = Bp + Bm;
+                const double Np = count("Wp", iyF) + count("Wp", iyB); // N+ = F+ + B+
+                const double Nm = count("Wm", iyF) + count("Wm", iyB); // N- = F- + B-
+                const double S = Np + Nm;
                 if (S > 0.0)
                 {
-                    wP[iabs] = Bp / S;
-                    wM[iabs] = Bm / S;
+                    wP[iabs] = Np / S;
+                    wM[iabs] = Nm / S;
                 }
                 else
                 {
-                    std::cerr << "[WARN] Zero backward yield in |y| bin " << iabs
+                    std::cerr << "[WARN] Zero W+/W- yield in |y| bin " << iabs
                               << " -> using equal W+/W- weights\n";
                 }
 
@@ -233,7 +250,7 @@ void observables()
 
                 std::cout << "[INFO] sum-theory weight |y|bin=" << iabs
                           << " (center " << xc[iabs] << ")"
-                          << "  B+=" << Bp << "  B-=" << Bm
+                          << "  N+=" << Np << "  N-=" << Nm
                           << "  w+=" << wP[iabs] << "  w-=" << wM[iabs] << "\n";
             }
 
@@ -254,7 +271,7 @@ void observables()
                 return best;
             };
 
-            // Build the backward-weighted theory sum from a W+ / W- theory pair.
+            // Build the count-weighted theory sum from a W+ / W- theory pair.
             auto buildSumTheory = [&](TGraphErrors *gWp, TGraphErrors *gWm,
                                       const char *name) -> TGraphErrors *
             {
