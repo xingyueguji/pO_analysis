@@ -331,7 +331,7 @@ void observables()
         }
     }
 
-    plotRFB(g_RFB_sum, "RFB_mt_sum", "W #rightarrow #mu #nu (sum)",
+    plotRFB(g_RFB_sum, "RFB_mt_sum", "W #rightarrow #mu #nu",
             sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
     plotRFB(g_RFB_Wp, "RFB_mt_Wp", "W^{+} #rightarrow #mu^{+} #nu", g_RFB_Wp_EPPS21,
             g_RFB_Wp_nCTEQ15HQ, g_RFB_Wp_nNNPDF30, g_RFB_Wp_TUJU21);

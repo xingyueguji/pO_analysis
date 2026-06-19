@@ -398,8 +398,9 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g2->SetMarkerStyle(0);               // hide markers
         g2->SetLineWidth(0);                 // hide error bar stems
 
-        g2->Draw("3");      // A = draw axes, 3 = filled error band
-        g2->Draw("L SAME"); // draw central line on top
+        // nCTEQ15HQ: kept available but not drawn (see legend below)
+        // g2->Draw("3");      // A = draw axes, 3 = filled error band
+        // g2->Draw("L SAME"); // draw central line on top
     }
     if (g3)
     {
@@ -423,8 +424,9 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
         g4->SetMarkerStyle(0);             // hide markers
         g4->SetLineWidth(0);               // hide error bar stems
 
-        g4->Draw("3");      // A = draw axes, 3 = filled error band
-        g4->Draw("L SAME"); // draw central line on top
+        // TUJU21nlo: kept available but not drawn (see legend below)
+        // g4->Draw("3");      // A = draw axes, 3 = filled error band
+        // g4->Draw("L SAME"); // draw central line on top
     }
 
     TLegend *leg = new TLegend(0.20, 0.15, 0.45, 0.38);
@@ -439,9 +441,9 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
 
     // --- Models: error bands ---
     leg->AddEntry(g1, "EPPS21", "f");
-    leg->AddEntry(g2, "nCTEQ15HQ", "f");
+    // leg->AddEntry(g2, "nCTEQ15HQ", "f");
     leg->AddEntry(g3, "nNNPDF3.0", "f");
-    leg->AddEntry(g4, "TUJU21nlo", "f");
+    // leg->AddEntry(g4, "TUJU21nlo", "f");
 
     leg->Draw();
 
