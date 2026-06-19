@@ -673,7 +673,7 @@ static void SaveNicePlot1D_DataSignalPeak(
     const PlotStyle &ps = PlotStyle(),
     PlotTuner tuner = nullptr,
     const std::string &dataLabel = "Data",
-    const std::string &signalLabel = "Signal MC (norm. to peak)")
+    const std::string &signalLabel = "W+/W- simulation")
 {
     if (!hData || !hSignal)
         return;

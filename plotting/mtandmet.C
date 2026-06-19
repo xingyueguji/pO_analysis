@@ -689,7 +689,7 @@ void mtandmet(bool isElec = 1)
                 ps,
                 commonTuner,
                 "Data",
-                "Signal MC (norm. to peak)");
+                "W+/W- simulation");
         }
         else
         {
