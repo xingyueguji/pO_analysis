@@ -31,18 +31,24 @@
 
 set -euo pipefail
 
-declare -A CHANNEL_ENUM=(
-  [Zmm]=kZmm
-  [Zee]=kZee
-  [Wmu]=kWmu
-  [Wel]=kWel
-)
+# Name -> skim.C enum mappings. Implemented as case-functions (NOT associative
+# arrays) so the script also runs on macOS's stock bash 3.2, which lacks
+# `declare -A`. On 3.2, `[Zmm]=kZmm` is parsed as an arithmetic array index, so
+# under `set -u` it dies with "Zmm: unbound variable" before reading any args.
+channel_enum() {
+  case "$1" in
+    Zmm) echo kZmm ;; Zee) echo kZee ;; Wmu) echo kWmu ;; Wel) echo kWel ;;
+    *)   return 1 ;;
+  esac
+}
 
-declare -A SAMPLE_ENUM=(
-  [Data]=kData
-  [DY]=kDY    [Wp]=kWp       [Wm]=kWm
-  [DYtau]=kDYtau [Wptau]=kWptau [Wmtau]=kWmtau
-)
+sample_enum() {
+  case "$1" in
+    Data)  echo kData  ;; DY)    echo kDY    ;; Wp)    echo kWp    ;; Wm) echo kWm ;;
+    DYtau) echo kDYtau ;; Wptau) echo kWptau ;; Wmtau) echo kWmtau ;;
+    *)     return 1 ;;
+  esac
+}
 
 ALL_CHANNELS=(Zmm Zee Wmu Wel)
 ALL_SAMPLES=(Data DY Wp Wm DYtau Wptau Wmtau)
@@ -56,8 +62,12 @@ COMMON_H="${SCRIPT_DIR}/skim_common.h"
 if [[ -z "${DATA_FILE:-}" ]]; then
   # `|| true`: keep a failed grep (e.g. header missing) from tripping `set -e`
   # before the guard below can print a useful message.
+  # Pull the quoted *.root literal out of the kDefaultDataFile assignment and
+  # strip its surrounding double quotes. Matches both an xrootd URL
+  # (root://....root) and a local/absolute path (/Users/.../Data_May_26.root),
+  # so it keeps working after the EOS->local switch.
   DATA_FILE=$(grep -A2 'kDefaultDataFile' "$COMMON_H" 2>/dev/null \
-              | grep -oE 'root://[^"]+' | head -1 || true)
+              | grep -oE '"[^"]+\.root"' | head -1 | tr -d '"' || true)
 fi
 [[ -n "${DATA_FILE:-}" ]] || {
   echo "[ERR] could not read the data file (kDefaultDataFile) from $COMMON_H;"
@@ -83,10 +93,10 @@ fi
 
 # --- Validate up front so the job total is correct before we start ---------
 for ch in "${CHANNELS[@]}"; do
-  [[ -n "${CHANNEL_ENUM[$ch]:-}" ]] || { echo "[ERR] unknown channel '$ch'"; exit 2; }
+  channel_enum "$ch" >/dev/null || { echo "[ERR] unknown channel '$ch'"; exit 2; }
 done
 for s in "${SAMPLES[@]}"; do
-  [[ -n "${SAMPLE_ENUM[$s]:-}" ]] || { echo "[ERR] unknown sample '$s'"; exit 2; }
+  sample_enum "$s" >/dev/null || { echo "[ERR] unknown sample '$s'"; exit 2; }
 done
 
 mkdir -p rootfile output logs
@@ -132,9 +142,9 @@ printf "Skim run: %d channel(s) x %d sample(s) = %d job(s)\n" \
 echo "============================================================"
 
 for ch in "${CHANNELS[@]}"; do
-  chEnum="${CHANNEL_ENUM[$ch]}"
+  chEnum=$(channel_enum "$ch")
   for s in "${SAMPLES[@]}"; do
-    sEnum="${SAMPLE_ENUM[$s]}"
+    sEnum=$(sample_enum "$s")
     log="logs/skim_${ch}_${s}.log"
 
     draw_bar "$completed" "$total" "running ${ch}/${s} ..."

@@ -56,6 +56,8 @@ Layout (post-refactor):
   - `skim_Zee(file, sample)` — Z→ee
   - `skim(channel, file, sample)` — dispatcher used by `run_all.sh`
 - [skim/legacy/](skim/legacy/) — the original four per-channel macros, preserved verbatim for diffing/fallback. The unified files are intended to be byte-identical in physics output to these.
+- [skim/count_ngen.C](skim/count_ngen.C) + [skim/run_ngen.sh](skim/run_ngen.sh) — compute N_gen (Σ gen weight over **all** events, no selection) per MC sample → `skim/rootfile/ngen.root` + `skim/output/ngen.txt`. The cross-section-normalization denominator. See "MC normalization" below.
+- [skim/mc_norm.h](skim/mc_norm.h) — single source of truth for the absolute MC→data scale `k_s = σ·L/N_gen` (`pONorm::MCScale`); consumes `ngen.root`. See "MC normalization" below.
 
 Isolation studies (ROC curves, working-point tuning) are per-flavour and live in
 `correction/` (moved out of `skim/`):
@@ -128,24 +130,34 @@ The shared ratio-pad helper `SaveDataMCRatio(...)` lives in [plotting/plotting_h
 
 ### `merge_rootfile/` — input prep
 
-Utilities to scan EOS and `hadd` per-sample ROOT files into the consolidated
-`pO_2025.root` that `skim/run_all.sh` reads:
+Utilities to scan EOS and `hadd` raw ntuple files into the **per-sample** ROOT
+files that `skim/run_all.sh` reads (now the May-26 production — see "Input data";
+earlier it was a single consolidated `pO_2025.root`):
 - [merge_rootfile/make_filelist.sh](merge_rootfile/make_filelist.sh) — discover files on EOS
 - [merge_rootfile/hadd_from_list.sh](merge_rootfile/hadd_from_list.sh) — merge them
 - `MC_*.txt`, `DATA_pass_*.txt`, `version_*.txt` — per-sample filelists
 
 ## Input data
 
-Centralized file on EOS. Single source of truth: `kDefaultDataFile` in
-`skim/skim_common.h` (`run_all.sh` greps it; override per-run via the `DATA_FILE`
-env var). MC file paths live in the same header (`ResolveMCSample`).
+**Per-sample** ROOT files (the May-26 production), not a single consolidated file.
+Single source of truth: `kDefaultDataFile` (data) and `ResolveMCSample` (MC) in
+`skim/skim_common.h` (`run_all.sh` greps the data path; override per-run via the
+`DATA_FILE` env var).
 
-```
-root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root
-```
+Currently pointing at the **local** copy under `~/pO_2026_May_26/` — written as
+absolute paths (`/Users/zhenghuang/pO_2026_May_26/…`) because ROOT's
+`TFile::Open` doesn't reliably expand `~` — switched from EOS 2026-06-23. To read
+off EOS/lxplus again, repoint `kDefaultDataFile` + `inputBase` (in
+`ResolveMCSample`) to
+`root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/`.
+Files: `Data_May_26.root` + 9 MC (`MC_DY{mu,ee}_May26.root`,
+`MC_W{p,m}_{mu,ele}_May26.root`, `MC_DYtau_May26.root`, `MC_W{p,m}_tau_May26.root`).
+Three low-mass DY files (`MC_DY{mu,ee,tau}_low_May26.root`) are present but
+**unwired** (skipped — see "MC normalization").
 
-Tree: `ggHiNtuplizer/EventTree` (~2.2M events). Also contains `hltanalysis/HltTree`
-and PF candidate / muon / electron collections.
+Trees per file: `ggHiNtuplizer/EventTree` (main physics tree),
+`hiEvtAnalyzer/HiTree` (gen `weight`), `hltanalysis/HltTree`, and PF candidate /
+muon / electron collections.
 
 ## Downstream fit (separate repo)
 
@@ -305,6 +317,48 @@ downstream and the datacards remain shape-only. **TODO for the user:** verify
 the `weight` distribution in the MC (all == 1 → weighting is a no-op; spread or
 negative weights → it matters). If lepton SFs / recoil / pileup weights are
 added later, fold them into the same `w`.
+
+## MC normalization — N_gen and the absolute scale (added 2026-06-23)
+
+To make MC comparable to data (and the samples to each other), each MC sample
+`s` is scaled by `k_s = σ_s · L_int / N_gen,s`. The per-event gen weight (above)
+is folded into the skim histograms; `k_s` is the *absolute* normalization layered
+on top, applied **downstream** (plotting / Combine-input time, not in the skim —
+keeps the skim raw and re-skim-free).
+
+- **N_gen** — `skim/count_ngen.C` (run via `skim/run_ngen.sh`) sums
+  `hiEvtAnalyzer/HiTree::weight` over **all** events (no selection) of each of the
+  9 MC files → `skim/rootfile/ngen.root` (`h_ngen`/`h_nraw` + per-sample
+  `TParameter<double> ngen_<label>`) and a readable `skim/output/ngen.txt`. N_gen
+  is per physical file (deduped across the mu/ele/tau routes of `ResolveMCSample`).
+  Its `⟨w⟩`/`N_neg` columns also serve the gen-weight verification TODO above.
+- **k_s** — `skim/mc_norm.h` is the single source of truth: `kLumi_invnb = 46.5`
+  (data lumi, nb⁻¹), per-process `kSigma_Wp/kSigma_Wm/kSigma_DY` (nb), and
+  `pONorm::MCScale("Wp_mu")` → `σ·L/N_gen` reading `ngen.root`. Returns 1.0 + warns
+  until the σ are filled, so it is safe to wire in early. One σ per process serves
+  all three lepton-flavour files (universality); the σ are **per-sample effective**
+  (BR + any generator filter folded in), in a frame matching the 46.5 nb⁻¹
+  (per-pO vs per-NN).
+
+**Decision (2026-06-23):** go absolute — ship **fixed, absolutely-normalized**
+templates; the downstream fit floats only the overall rate (signal strength). This
+makes absolute normalization of the *backgrounds* mandatory — a frozen background
+at the wrong scale biases the signal.
+
+**Current state (2026-06-23): σ resolved + wired into the data/MC stacks.** The
+POWHEG per-event weight IS a cross-section weight (`⟨w⟩ = σ`), so σ is read off
+`skim/output/ngen.txt` — W⁺ 6.376, W⁻ 5.464, DY 1.175 nb, now in `mc_norm.h` — and
+`k_s = σ·L/N_gen` reduces to `L/N_raw`. `plotting/mtandmet.C` and
+`plotting/dileptonpeak.C` now scale each per-sample MC histo by `MCScale(label)`
+(relative composition) **before** the W⁺/W⁻ `Add`, and **keep**
+`SaveNicePlot1D_WithBkg`'s `dataInt/Σbkg` normalization (overall scale → data), so
+the per-pO/per-NN frame factor cancels and the plots test composition + shape. Both
+compile clean. **Still raw / untouched:** the skim (stays gen-weighted only) and the
+Combine fork's `make_combine_input{,_Z}.C` (still shape-only). The `correction/`
+data/MC checks (`SaveDataMCRatio`) are also unchanged. **Low-mass DY skipped**
+(`MC_DY*_low` unwired). NB: the per-sample skim outputs must be (re)built on the
+local files (`run_all.sh`) before the plots produce anything. See README "Module 2b"
+and memory `project_mc_normalization.md`.
 
 ## Pre-existing asymmetries between channels — user-confirmed status
 

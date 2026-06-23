@@ -66,12 +66,18 @@ inline constexpr double ELE_MASS = 0.000511;
 // pO -> CM-frame rapidity boost (used downstream; defined here for reference)
 inline constexpr double Y_SHIFT_pO_CM = 0.3466;
 
-// Default EOS data file. SINGLE SOURCE OF TRUTH for the data-file path:
+// Default data file. SINGLE SOURCE OF TRUTH for the data-file path:
 // run_all.sh greps this value rather than hardcoding its own (override a
 // single run by exporting DATA_FILE). Change the data file here, and the MC
 // files in ResolveMCSample below -- both live in this header.
+//
+// Currently the LOCAL copy under ~/pO_2026_May_26/ (written as an absolute path
+// so ROOT's TFile::Open and run_all.sh resolve it without needing ~ expansion).
+// To read from EOS/lxplus again, point this and `inputBase` in ResolveMCSample
+// back at the prefix
+//   root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/
 inline const char *kDefaultDataFile =
-    "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/Data_May_26.root";
+    "/Users/zhenghuang/pO_2026_May_26/Data_May_26.root";
 
 // ============================================================
 // Branch / tree introspection helpers
@@ -356,8 +362,10 @@ struct SampleFileInfo
 inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
 {
   SampleFileInfo info;
-  const std::string eosBase =
-      "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/";
+  // Local copy under ~/pO_2026_May_26/ (absolute path; see the kDefaultDataFile
+  // note above for how to switch back to EOS).
+  const std::string inputBase =
+      "/Users/zhenghuang/pO_2026_May_26/";
 
   const std::string flav = flavour;
 
@@ -370,27 +378,27 @@ inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
     case kData:
       return info;
     case kDY:
-      info.fname     = eosBase + "MC_DY" + dyFlav + "_May26.root";  // MC_DYee_May26.root
+      info.fname     = inputBase + "MC_DY" + dyFlav + "_May26.root";  // MC_DYee_May26.root
       info.outSuffix = "_DY";
       return info;
     case kWp:
-      info.fname     = eosBase + "MC_Wp_" + wFlav + "_May26.root";
+      info.fname     = inputBase + "MC_Wp_" + wFlav + "_May26.root";
       info.outSuffix = "_Wp";
       return info;
     case kWm:
-      info.fname     = eosBase + "MC_Wm_" + wFlav + "_May26.root";
+      info.fname     = inputBase + "MC_Wm_" + wFlav + "_May26.root";
       info.outSuffix = "_Wm";
       return info;
     case kDYtau:
-      info.fname     = eosBase + "MC_DYtau_May26.root";
+      info.fname     = inputBase + "MC_DYtau_May26.root";
       info.outSuffix = "_DYtau";
       return info;
     case kWptau:
-      info.fname     = eosBase + "MC_Wp_tau_May26.root";
+      info.fname     = inputBase + "MC_Wp_tau_May26.root";
       info.outSuffix = "_Wptau";
       return info;
     case kWmtau:
-      info.fname     = eosBase + "MC_Wm_tau_May26.root";
+      info.fname     = inputBase + "MC_Wm_tau_May26.root";
       info.outSuffix = "_Wmtau";
       return info;
   }

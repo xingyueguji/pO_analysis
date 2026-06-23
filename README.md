@@ -117,6 +117,75 @@ subset of `Data DY Wp Wm DYtau Wptau Wmtau` (default: all 7).
 **Optional isolation studies** (only when retuning a working point) now live in
 `correction/` (along with their ROC plotters) — see the `correction/` module below.
 
+## Module 2b — MC normalization  (N_gen → per-sample scale factors)
+
+Scope: put every MC sample on the data luminosity so the samples are comparable
+to each other and to data. Each sample `s` is scaled by
+`k_s = σ_s · L_int / N_gen,s`, applied downstream as a `TH1::Scale(k_s)` on the
+per-sample template (**not** in the skim — the skim stays raw gen-weighted). A
+bin then holds the absolute predicted yield `σ_s · L_int · (A×ε)`. Ingredients:
+
+- **N_gen,s** — Σ generator weight over **all** events in the sample (no
+  selection); the cross-section denominator. Computed in 2b.1.
+- **L_int = 46.5 nb⁻¹** — the data luminosity (the only data-derived number).
+- **σ_s** — per-sample effective cross section (already includes the branching
+  ratio into the sample's final state and any generator filter). Still TODO —
+  see "Cross sections needed" below.
+
+### 2b.1 — Compute N_gen (once per MC version)
+
+```bash
+cd skim/
+./run_ngen.sh                 # = mkdir + root -l -q -b 'count_ngen.C+'
+```
+
+Reads the 9 per-sample MC files (paths from `ResolveMCSample` in
+`skim_common.h`) and sums `hiEvtAnalyzer/HiTree::weight` over every event, with
+no selection. Writes:
+
+- `skim/output/ngen.txt` — readable table: `N_raw`, `N_gen = Σw`, `⟨w⟩`,
+  `w_min/max`, `N_neg` per file.
+- `skim/rootfile/ngen.root` — `h_ngen` / `h_nraw` (one labeled bin per file) plus
+  a `TParameter<double>` `ngen_<label>` / `nraw_<label>` per sample (so
+  downstream code can `Get("ngen_Wp_mu")`).
+
+**Check success:** the `⟨w⟩` / `N_neg` columns reveal the weight convention — if
+every `⟨w⟩ = 1` and `N_neg = 0` the weights are trivial (`N_gen = N_raw`); a
+spread or negative weights mean the gen weighting matters and `N_gen` (Σw, not
+the raw count) is the right denominator.
+
+### 2b.2 — The scale factors (`skim/mc_norm.h`)
+
+Single source of truth: `kLumi_invnb = 46.5` (nb⁻¹) and the per-process cross
+sections `kSigma_Wp` / `kSigma_Wm` / `kSigma_DY` (nb). `pONorm::MCScale("Wp_mu")`
+returns `σ·L/N_gen`, reading `N_gen` from `ngen.root`. It **returns 1.0 and warns
+until the cross sections are filled in**, so it is safe to `#include` and call
+before the σ are known. By lepton universality one σ per process serves all three
+lepton-flavor files (`Wp_mu`/`Wp_ele`/`Wp_tau` share `kSigma_Wp`; only their
+`N_gen` differ).
+
+**Cross sections needed** (low-mass DY skipped) — three numbers, each the
+**per-sample effective** σ (already folded with the leptonic BR and any
+generator filter; use the value the generator reports for the sample, **not** the
+inclusive PDG W cross section), in a frame consistent with the 46.5 nb⁻¹
+(per-pO vs per-nucleon-nucleon):
+
+| constant     | process                   | covers files                   |
+| ------------ | ------------------------- | ------------------------------ |
+| `kSigma_Wp`  | W⁺→ℓν                     | `Wp_mu`, `Wp_ele`, `Wp_tau`    |
+| `kSigma_Wm`  | W⁻→ℓν                     | `Wm_mu`, `Wm_ele`, `Wm_tau`    |
+| `kSigma_DY`  | DY→ℓℓ (generated window)  | `DYmu`, `DYee`, `DYtau`        |
+
+**Status (2026-06-23):** σ is **filled** (read straight from the MC weights —
+this production's `⟨w⟩ = σ`: W⁺ 6.376, W⁻ 5.464, DY 1.175 nb), and `MCScale()` is
+**wired into** `plotting/mtandmet.C` and `plotting/dileptonpeak.C`: each
+per-sample MC histogram is scaled by its `k_s` (relative composition) before the
+W⁺/W⁻ `Add`, and the existing normalize-stack-to-data is **kept** (overall scale),
+so the per-pO/per-NN frame factor cancels and the plots test composition + shape.
+Build the skim first (`run_all.sh`), then `root -l -q 'mtandmet.C+(0)'` /
+`dileptonpeak.C+(0)` etc. Untouched (still raw / shape-only): the skim and the
+Combine fork's `make_combine_input*.C`.
+
 ## Module 3 — `plotting/`  (data/MC, background estimation, intermediate plots)
 
 Scope: read the skim outputs, build data/MC overlays, estimate QCD background,
@@ -289,6 +358,12 @@ cd /Users/zhenghuang/HiggsAnalysis-CombinedLimit \
 - **Corrections WIP.** Recoil corrections, lepton scale factors, momentum
   scale/smearing are not all applied yet. Don't assume MC in `skim/rootfile/`
   is fully corrected when reading downstream.
+
+- **MC normalization (June 2026).** Absolute per-sample normalization
+  `k_s = σ·L/N_gen` is scaffolded (`skim/count_ngen.C` → `ngen.root`,
+  `skim/mc_norm.h`, `L = 46.5 nb⁻¹`) but **not yet wired** — plots and Combine
+  inputs are still shape-normalized to the data integral, and the cross sections
+  σ are pending. See Module 2b.
 
 - **Pre-existing inter-channel asymmetries** (preserved through the May 2026
   refactor — see CLAUDE.md): DY-veto pT cut differs between Wmu (15 GeV) and

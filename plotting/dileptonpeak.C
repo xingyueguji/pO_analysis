@@ -4,6 +4,7 @@
 #include "TStyle.h"
 #include "TSystem.h"
 #include "plotting_helper.C"
+#include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 
 #include <string>
 #include <vector>
@@ -82,6 +83,20 @@ void dileptonpeak(bool isElec = 0)
         {"hMass_vipul",    "Events / 1.0 GeV",   "mass_vipul"},
     };
 
+    // --- Absolute per-sample MC normalization k_s = sigma*L/N_gen -------------
+    // Scale each MC sample by its own k_s so the components sit in the correct
+    // physical proportion ("fix the relative ratio between MC"); the overall MC
+    // stack is then normalized to the data integral below ("normalize the sum to
+    // data"). sigma is already in the gen weights (<w>=sigma) -> k_s = L/N_raw;
+    // the tau samples share the W/DY cross sections but carry their own N_gen.
+    const double k_Wp    = pONorm::MCScale(isElec ? "Wp_ele" : "Wp_mu");
+    const double k_Wm    = pONorm::MCScale(isElec ? "Wm_ele" : "Wm_mu");
+    const double k_DY    = pONorm::MCScale(isElec ? "DYee"   : "DYmu");
+    const double k_DYtau = pONorm::MCScale("DYtau");
+    const double k_Wptau = pONorm::MCScale("Wp_tau");
+    const double k_Wmtau = pONorm::MCScale("Wm_tau");
+    auto kScale = [](TH1D *h, double k) { if (h) h->Scale(k); };
+
         for (const auto &s : specs) {
         TH1D *h_data  = getRebinned(f,s.hname);
         TH1D *h_DYh   = getRebinned(f_DY,s.hname);
@@ -92,6 +107,12 @@ void dileptonpeak(bool isElec = 0)
         TH1D *h_Wmth  = getRebinned(f_Wmtau,s.hname);
 
         if (!h_data) { std::cerr << "[WARN] Missing data hist " << s.hname << "\n"; continue; }
+
+        // Apply per-sample absolute normalization (relative composition).
+        // getRebinned already returned owned clones, so scaling in place is safe.
+        kScale(h_Wph, k_Wp);     kScale(h_Wmh, k_Wm);
+        kScale(h_DYh, k_DY);     kScale(h_DYth, k_DYtau);
+        kScale(h_Wpth, k_Wptau); kScale(h_Wmth, k_Wmtau);
 
         // --- combine W+ and W- into a single "W+/W-" template ---
         TH1D *h_W = nullptr;
@@ -172,6 +193,12 @@ void dileptonpeak(bool isElec = 0)
             TH1D *h_DYth  = getRebinned(f_DYtau,hname);
             TH1D *h_Wpth  = getRebinned(f_Wptau,hname);
             TH1D *h_Wmth  = getRebinned(f_Wmtau,hname);
+
+            // Same per-sample normalization as the plots above (physical
+            // composition; harmless for the shape-only datacard, correct later).
+            kScale(h_Wph, k_Wp);     kScale(h_Wmh, k_Wm);
+            kScale(h_DYh, k_DY);     kScale(h_DYth, k_DYtau);
+            kScale(h_Wpth, k_Wptau); kScale(h_Wmth, k_Wmtau);
 
             // Combine W+/W- into one template
             TH1D *h_W = nullptr;

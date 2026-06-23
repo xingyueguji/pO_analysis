@@ -6,10 +6,12 @@
 #include "TStyle.h"
 #include "TSystem.h"
 #include "plotting_helper.C"
+#include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 
 #include <string>
 #include <vector>
 #include <functional>
+#include <initializer_list>
 
 void mtandmet(bool isElec = 1)
 {
@@ -185,6 +187,27 @@ void mtandmet(bool isElec = 1)
     TH1D *h_met_inclusive_MC_Wtau = nullptr;
     TH1D *h_mt_inclusive_MC_Wtau = nullptr;
 
+    // --- Absolute per-sample MC normalization k_s = sigma*L/N_gen -------------
+    // Scale each MC sample by its own k_s so the samples sit in the correct
+    // PHYSICAL proportion before stacking ("fix the relative ratio between MC").
+    // sigma is already inside the gen weights (<w>=sigma), so k_s reduces to
+    // L/N_raw; the tau samples share the W/DY cross sections but carry their own
+    // N_gen (per-file label). The OVERALL stack scale is then matched to the data
+    // integral inside SaveNicePlot1D_WithBkg, so the per-pO vs per-NN frame factor
+    // cancels and we test composition + shape ("normalize the sum to data").
+    const double k_Wp    = pONorm::MCScale(isElec ? "Wp_ele" : "Wp_mu");
+    const double k_Wm    = pONorm::MCScale(isElec ? "Wm_ele" : "Wm_mu");
+    const double k_DY    = pONorm::MCScale(isElec ? "DYee"   : "DYmu");
+    const double k_DYtau = pONorm::MCScale("DYtau");
+    const double k_Wptau = pONorm::MCScale("Wp_tau");
+    const double k_Wmtau = pONorm::MCScale("Wm_tau");
+
+    auto scaleAll = [](double k, std::initializer_list<TH1D *> hs)
+    {
+        for (TH1D *h : hs)
+            if (h) h->Scale(k);
+    };
+
     // Loop over rapidity bins and charge
     for (int iy = 0; iy < NY; ++iy)
     {
@@ -295,6 +318,23 @@ void mtandmet(bool isElec = 1)
             std::cerr << "[WARN] Missing histogram(s) at y bin " << iy << "\n";
             continue;
         }
+
+        // Apply per-sample absolute normalization (sets the relative composition).
+        // In-place Scale is safe: each MC histo is Get()'d fresh for this iy and
+        // used once (the name carries iy), so there is no repeated-Get hazard.
+        // Data histos (h_met_Wp/Wm, h_mt_Wp/Wm and their _FB) are NOT scaled.
+        scaleAll(k_Wp,    {h_met_Wp_MC_Wp, h_met_Wm_MC_Wp, h_met_Wp_FB_MC_Wp, h_met_Wm_FB_MC_Wp,
+                           h_mt_Wp_MC_Wp,  h_mt_Wm_MC_Wp,  h_mt_Wp_FB_MC_Wp,  h_mt_Wm_FB_MC_Wp});
+        scaleAll(k_Wm,    {h_met_Wp_MC_Wm, h_met_Wm_MC_Wm, h_met_Wp_FB_MC_Wm, h_met_Wm_FB_MC_Wm,
+                           h_mt_Wp_MC_Wm,  h_mt_Wm_MC_Wm,  h_mt_Wp_FB_MC_Wm,  h_mt_Wm_FB_MC_Wm});
+        scaleAll(k_DY,    {h_met_Wp_MC_Z, h_met_Wm_MC_Z, h_met_Wp_FB_MC_Z, h_met_Wm_FB_MC_Z,
+                           h_mt_Wp_MC_Z,  h_mt_Wm_MC_Z,  h_mt_Wp_FB_MC_Z,  h_mt_Wm_FB_MC_Z});
+        scaleAll(k_DYtau, {h_met_Wp_MC_Ztau, h_met_Wm_MC_Ztau, h_met_Wp_FB_MC_Ztau, h_met_Wm_FB_MC_Ztau,
+                           h_mt_Wp_MC_Ztau,  h_mt_Wm_MC_Ztau,  h_mt_Wp_FB_MC_Ztau,  h_mt_Wm_FB_MC_Ztau});
+        scaleAll(k_Wptau, {h_met_Wp_MC_Wptau, h_met_Wm_MC_Wptau, h_met_Wp_FB_MC_Wptau, h_met_Wm_FB_MC_Wptau,
+                           h_mt_Wp_MC_Wptau,  h_mt_Wm_MC_Wptau,  h_mt_Wp_FB_MC_Wptau,  h_mt_Wm_FB_MC_Wptau});
+        scaleAll(k_Wmtau, {h_met_Wp_MC_Wmtau, h_met_Wm_MC_Wmtau, h_met_Wp_FB_MC_Wmtau, h_met_Wm_FB_MC_Wmtau,
+                           h_mt_Wp_MC_Wmtau,  h_mt_Wm_MC_Wmtau,  h_mt_Wp_FB_MC_Wmtau,  h_mt_Wm_FB_MC_Wmtau});
 
         if (!h_mt_inclusive)
         {
