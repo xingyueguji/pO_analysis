@@ -61,7 +61,16 @@ namespace pONorm
 {
 
 // -------- data luminosity (the only data-derived number) --------
-inline constexpr double kLumi_invnb = 46.5; // [nb^-1]  FRAME: TODO per-pO vs per-NN
+inline constexpr double kLumi_invnb = 46.5; // [nb^-1] -- the pO (hadronic) luminosity
+
+// -------- proton-Oxygen A-scaling -------------------------------
+// The kSigma_* below are per-NUCLEON-NUCLEON (<w> ~ 6 nb, pp-scale; the nuclear
+// PDF modification EPPS21 is already folded into the POWHEG weights). For a hard
+// process the proton can scatter off any of Oxygen's A nucleons, so the cross
+// section A-scales: sigma_pO = A * sigma_NN, with A = 16 for O-16. Multiplying
+// by A (with the pO luminosity above) gives the absolute predicted pO yield.
+// If your luminosity is instead the per-nucleon-nucleon L_NN, set kA_O = 1.0.
+inline constexpr double kA_O = 16.0; // Oxygen mass number (per-NN sigma -> per-pO)
 
 // -------- per-process effective cross sections [nb] --------
 // POWHEG generator cross sections, read straight from the MC weights: this
@@ -119,9 +128,9 @@ inline double NgenForLabel(const std::string &label,
   return ngen;
 }
 
-// k_s = sigma_s * L_int / N_gen,s for the given file-label.
-// Returns 1.0 (no-op) + warns if sigma is unset or N_gen unavailable, so it is
-// safe to wire in before the cross sections are provided.
+// k_s = A_O * sigma_s * L_int / N_gen,s  for the given file-label (absolute pO
+// event yield). Returns 1.0 (no-op) + warns if sigma is unset or N_gen
+// unavailable, so it is safe to wire in before the cross sections are provided.
 inline double MCScale(const std::string &label,
                       const char *ngenFile = "../skim/rootfile/ngen.root")
 {
@@ -139,7 +148,7 @@ inline double MCScale(const std::string &label,
               << "' -> k=1.0 (no-op)\n";
     return 1.0;
   }
-  return sigma * kLumi_invnb / ngen;
+  return kA_O * sigma * kLumi_invnb / ngen; // absolute pO yield scale
 }
 
 } // namespace pONorm

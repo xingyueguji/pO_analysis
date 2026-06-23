@@ -508,6 +508,30 @@ int skim_Wmu(const char *fname, SampleType sample)
     return -1;
   };
 
+  // -------- ABCD inputs: 2D (relIso, MET) and (relIso, MT) per charge --------
+  // Filled for EVERY event passing the full W selection EXCEPT the isolation
+  // cut, so the relIso axis spans the signal (iso pass) and the QCD-enriched
+  // anti-iso sideband (iso fail). The ABCD regions are defined DOWNSTREAM by
+  // projecting these in correction/qcd_abcd.C, so the iso/MET boundaries can be
+  // retuned without re-skimming (same philosophy as the recoil 2D histos).
+  //   x = relIso : 0..1.0 in 0.01-wide bins (boundaries 0.15/0.30/... all align)
+  //   y = MET    : 0..120 GeV / 2.0  (matches h_met_* binning)
+  //   y = m_T    : 0..200 GeV / 2.5  (matches h_mt_*  binning)
+  // MC is filled with the per-event gen weight w (data: w=1); the absolute
+  // per-sample k_s is applied later in the ABCD macro (EWK subtraction).
+  const int    kNIsoAB  = 100;
+  const double kIsoLoAB = 0.0, kIsoHiAB = 1.0;
+  TH2D *h_iso_met_muPlus  = new TH2D("h_iso_met_muPlus",
+      "#mu^{+} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_met_muMinus = new TH2D("h_iso_met_muMinus",
+      "#mu^{-} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_mt_muPlus   = new TH2D("h_iso_mt_muPlus",
+      "#mu^{+} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  TH2D *h_iso_mt_muMinus  = new TH2D("h_iso_mt_muMinus",
+      "#mu^{-} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  h_iso_met_muPlus->Sumw2();  h_iso_met_muMinus->Sumw2();
+  h_iso_mt_muPlus->Sumw2();   h_iso_mt_muMinus->Sumw2();
+
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
   const Long64_t nEntries = tMu->GetEntries();
@@ -610,6 +634,19 @@ int skim_Wmu(const char *fname, SampleType sample)
       else if (muCharge->at(iLead) < 0) h_met_iso_muMinus[isoBin]->Fill(met, w);
     }
 
+    // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
+    // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    if (muCharge->at(iLead) > 0)
+    {
+      h_iso_met_muPlus->Fill(isoLead, met, w);
+      h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
+    }
+    else if (muCharge->at(iLead) < 0)
+    {
+      h_iso_met_muMinus->Fill(isoLead, met, w);
+      h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
+    }
+
     if (!passIsoNominal) continue;
 
     const int q = muCharge->at(iLead);
@@ -654,6 +691,11 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_met_iso_muPlus [b]->Write("", TObject::kOverwrite);
     h_met_iso_muMinus[b]->Write("", TObject::kOverwrite);
   }
+  // ABCD 2D planes (relIso vs MET / m_T), per charge
+  h_iso_met_muPlus ->Write("", TObject::kOverwrite);
+  h_iso_met_muMinus->Write("", TObject::kOverwrite);
+  h_iso_mt_muPlus  ->Write("", TObject::kOverwrite);
+  h_iso_mt_muMinus ->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
@@ -947,6 +989,27 @@ int skim_Wel(const char *fname, SampleType sample)
     return -1;
   };
 
+  // -------- ABCD inputs: 2D (relIso, MET) and (relIso, MT) per charge --------
+  // Electron twin of the skim_Wmu ABCD histos (consumed by correction/qcd_abcd.C
+  // with isElec=true). Filled for every event passing the full W selection
+  // EXCEPT the isolation cut, so the relIso axis spans iso-pass (signal) and the
+  // anti-iso sideband. Regions are chosen downstream by projecting (no re-skim).
+  //   x = relIso : 0..1.0 in 0.01-wide bins (electron signal cut is 0.095)
+  //   y = MET    : 0..120 GeV / 2.0  (matches h_met_* binning)
+  //   y = m_T    : 0..200 GeV / 2.5  (matches h_mt_*  binning)
+  const int    kNIsoAB  = 100;
+  const double kIsoLoAB = 0.0, kIsoHiAB = 1.0;
+  TH2D *h_iso_met_elePlus  = new TH2D("h_iso_met_elePlus",
+      "e^{+} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_met_eleMinus = new TH2D("h_iso_met_eleMinus",
+      "e^{-} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_mt_elePlus   = new TH2D("h_iso_mt_elePlus",
+      "e^{+} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  TH2D *h_iso_mt_eleMinus  = new TH2D("h_iso_mt_eleMinus",
+      "e^{-} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  h_iso_met_elePlus->Sumw2();  h_iso_met_eleMinus->Sumw2();
+  h_iso_mt_elePlus->Sumw2();   h_iso_mt_eleMinus->Sumw2();
+
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
   const Long64_t nEntries = tEle->GetEntries();
@@ -1046,6 +1109,19 @@ int skim_Wel(const char *fname, SampleType sample)
       else if (eleCharge->at(iLead) < 0) h_met_iso_eleMinus[isoBin]->Fill(met, w);
     }
 
+    // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
+    // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    if (eleCharge->at(iLead) > 0)
+    {
+      h_iso_met_elePlus->Fill(isoLead, met, w);
+      h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
+    }
+    else if (eleCharge->at(iLead) < 0)
+    {
+      h_iso_met_eleMinus->Fill(isoLead, met, w);
+      h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
+    }
+
     if (!passIsoNominal) continue;
 
     const int q = eleCharge->at(iLead);
@@ -1090,6 +1166,11 @@ int skim_Wel(const char *fname, SampleType sample)
     h_met_iso_elePlus [b]->Write("", TObject::kOverwrite);
     h_met_iso_eleMinus[b]->Write("", TObject::kOverwrite);
   }
+  // ABCD 2D planes (relIso vs MET / m_T), per charge
+  h_iso_met_elePlus ->Write("", TObject::kOverwrite);
+  h_iso_met_eleMinus->Write("", TObject::kOverwrite);
+  h_iso_mt_elePlus  ->Write("", TObject::kOverwrite);
+  h_iso_mt_eleMinus ->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
@@ -1539,6 +1620,26 @@ int skim_Zee(const char *fname, SampleType sample)
   TTree *tHi = (TTree *)f->Get("hiEvtAnalyzer/HiTree");
   const bool haveHiTree = (tHi != nullptr);
 
+  // -------- PF candidates (for the hadronic-recoil / MET correction) --------
+  // Soft-gated: if pftree is absent the Z-mass plots still run, but the recoil
+  // (u_par/u_perp) histograms stay empty -- warn loudly so it isn't silent.
+  TTree *tPF = (TTree *)f->Get("particleFlowAnalyser/pftree");
+  const bool haveRecoil = (tPF != nullptr);
+  std::vector<int>   *pfId  = nullptr;
+  std::vector<float> *pfPt  = nullptr;
+  std::vector<float> *pfPhi = nullptr;
+  if (haveRecoil)
+  {
+    tPF->SetBranchStatus("*", 0); // read only what ComputePFMET needs (speed)
+    tPF->SetBranchStatus("pfPt", 1);
+    tPF->SetBranchStatus("pfPhi", 1);
+    tPF->SetBranchAddress("pfPt", &pfPt);
+    tPF->SetBranchAddress("pfPhi", &pfPhi);
+  }
+  else
+    std::cerr << "[WARN] skim_Zee: missing particleFlowAnalyser/pftree in " << fname
+              << " -- recoil (u_par/u_perp) histograms will be EMPTY.\n";
+
   // -------- Electron kinematics --------
   Int_t nEle = 0;
   std::vector<float> *elePt = nullptr, *eleEta = nullptr, *elePhi = nullptr;
@@ -1721,6 +1822,19 @@ int skim_Zee(const char *fname, SampleType sample)
   h_Zpt->Sumw2();   h_Zeta->Sumw2();   h_Zphi->Sumw2();   h_Zy->Sumw2();
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
 
+  // -------- Hadronic recoil (for the MET recoil correction) --------
+  // u_par / u_perp = recoil components parallel / perpendicular to q_T (the
+  // dielectron pT), from u = -MET - q_T. Stored inclusively (1D) and vs q_T (2D)
+  // so the q_T binning for the recoil fits can be chosen later by projecting
+  // slices -- no need to re-run the skim. u-axis uses the AN's 2 GeV/c binning.
+  // Filled for the same selection as the kinematics (iso OS pairs, Z peak).
+  // Mirrors skim_Zmm (the muon recoil); see correction/recoil_raw_ele.C.
+  TH1D *h_uPar  = new TH1D("h_uPar",  Form("%s; u_{#parallel} [GeV]; Events", outPrefix.c_str()), 200, -200, 200);
+  TH1D *h_uPerp = new TH1D("h_uPerp", Form("%s; u_{#perp} [GeV]; Events",     outPrefix.c_str()), 200, -200, 200);
+  TH2D *h_uPar_qT  = new TH2D("h_uPar_qT",  Form("%s; q_{T} [GeV]; u_{#parallel} [GeV]", outPrefix.c_str()), 70, 0, 140, 200, -200, 200);
+  TH2D *h_uPerp_qT = new TH2D("h_uPerp_qT", Form("%s; q_{T} [GeV]; u_{#perp} [GeV]",     outPrefix.c_str()), 70, 0, 140, 200, -200, 200);
+  h_uPar->Sumw2(); h_uPerp->Sumw2(); h_uPar_qT->Sumw2(); h_uPerp_qT->Sumw2();
+
   // -------- Loop --------
   const Long64_t nEntries = tEle->GetEntries();
   std::cout << "EventTree entries = " << nEntries << "\n";
@@ -1741,6 +1855,7 @@ int skim_Zee(const char *fname, SampleType sample)
 
     tEle->GetEntry(ie);
     if (haveHiTree) tHi->GetEntry(ie);
+    if (haveRecoil) tPF->GetEntry(ie);
     tHLT->GetEntry(ie);
     tHLTobj->GetEntry(ie);
     tEvent->GetEntry(ie);
@@ -1820,6 +1935,26 @@ int skim_Zee(const char *fname, SampleType sample)
             h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
             h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
             h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+
+            // Hadronic recoil: u = -MET - q_T, with q_T = the dielectron (ll).
+            // u_par is along q_T (should peak near -q_T), u_perp is transverse.
+            if (haveRecoil)
+            {
+              const TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+              const double qT = ll.Pt();
+              if (qT > 0.0)
+              {
+                const double ux = -metv.X() - ll.Px();
+                const double uy = -metv.Y() - ll.Py();
+                const double cphi = ll.Px() / qT, sphi = ll.Py() / qT;
+                const double uPar  =  ux * cphi + uy * sphi;
+                const double uPerp = -ux * sphi + uy * cphi;
+                h_uPar    ->Fill(uPar,  w);
+                h_uPerp   ->Fill(uPerp, w);
+                h_uPar_qT ->Fill(qT, uPar,  w);
+                h_uPerp_qT->Fill(qT, uPerp, w);
+              }
+            }
           }
         }
 
@@ -1843,6 +1978,8 @@ int skim_Zee(const char *fname, SampleType sample)
   hMass_vipul->Write("", 2);
   h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
+  h_uPar->Write("", 2); h_uPerp->Write("", 2);
+  h_uPar_qT->Write("", 2); h_uPerp_qT->Write("", 2);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
