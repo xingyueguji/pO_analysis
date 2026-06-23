@@ -176,15 +176,18 @@ inclusive PDG W cross section), in a frame consistent with the 46.5 nb⁻¹
 | `kSigma_Wm`  | W⁻→ℓν                     | `Wm_mu`, `Wm_ele`, `Wm_tau`    |
 | `kSigma_DY`  | DY→ℓℓ (generated window)  | `DYmu`, `DYee`, `DYtau`        |
 
-**Status (2026-06-23):** σ is **filled** (read straight from the MC weights —
-this production's `⟨w⟩ = σ`: W⁺ 6.376, W⁻ 5.464, DY 1.175 nb), and `MCScale()` is
-**wired into** `plotting/mtandmet.C` and `plotting/dileptonpeak.C`: each
-per-sample MC histogram is scaled by its `k_s` (relative composition) before the
-W⁺/W⁻ `Add`, and the existing normalize-stack-to-data is **kept** (overall scale),
-so the per-pO/per-NN frame factor cancels and the plots test composition + shape.
-Build the skim first (`run_all.sh`), then `root -l -q 'mtandmet.C+(0)'` /
-`dileptonpeak.C+(0)` etc. Untouched (still raw / shape-only): the skim and the
-Combine fork's `make_combine_input*.C`.
+**Status (2026-06-23):** σ is **filled** — read straight from the MC weights (this
+production's `⟨w⟩ = σ`: W⁺ 6.376, W⁻ 5.464, DY 1.175 nb) — `kA_O=16` adds the Oxygen
+A-scaling (σ_pO = A·σ_NN), and `MCScale()` is **wired into** both
+`plotting/mtandmet.C` (W) and `plotting/dileptonpeak.C` (Z): each per-sample MC
+histogram is scaled by its `k_s = A·σ·L/N_gen` before the W⁺/W⁻ `Add`, and both set
+`ps.normBkgToData=false` so the stacks are drawn **ABSOLUTE** (no area
+normalization). Stacked plots are styled with translucent fills + thick
+color-matched outlines. Build the skim first (`run_all.sh`), then
+`root -l -q 'mtandmet.C+(0)'` / `dileptonpeak.C+(0)` etc. If the absolute MC comes
+out ~16× off data, set `kA_O=1.0` (your luminosity was per-nucleon-nucleon).
+Untouched (still raw / shape-only): the skim and the Combine fork's
+`make_combine_input*.C`.
 
 ## Module 3 — `plotting/`  (data/MC, background estimation, intermediate plots)
 

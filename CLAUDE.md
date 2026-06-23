@@ -78,7 +78,13 @@ Isolation studies (ROC curves, working-point tuning) are per-flavour and live in
 **Output**: per-sample ROOT files in `skim/rootfile/` (W: `{channel}_pO_PFMet_{sample}_hist.root`;
 Z: `ZToMuMu_pO2025_*` / `ZToEE_pO2025_*`). W files contain 12 rapidity-binned MT
 histograms (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`), MET distributions, isolation
-histos. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
+histos. **Both `skim_Wmu` and `skim_Wel`** additionally store the ABCD inputs for
+the QCD/low-MET background: per-charge 2D histos `h_iso_met_{mu,ele}{Plus,Minus}`
+(relIso × PF MET) and `h_iso_mt_{mu,ele}{Plus,Minus}` (relIso × m_T), filled for
+every event passing the full W selection **except** the isolation cut, so the
+relIso axis spans iso-pass (signal) and the anti-iso sideband. Binning: relIso
+0–1.0 in 0.01 steps; MET 0–120/2 GeV; m_T 0–200/2.5 GeV. Regions are chosen
+downstream by projecting these (no re-skim) in `correction/qcd_abcd.C`. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
 plus kinematics of the dilepton system and its leptons (`h_Zpt/h_Zeta/h_Zy/h_Zphi`,
 `h_lepPt/h_lepEta/h_lepPhi` — both legs; `h_Zy` is lab-frame rapidity), filled for
 iso-selected OS pairs in the Z peak [60,120] GeV (consumed by
@@ -88,7 +94,9 @@ inclusive) and `h_uPar_qT`/`h_uPerp_qT` (2D, recoil component vs q_T), where
 `u = −MET − q_T` and `q_T` is the dimuon pT. u-axis = AN's 2 GeV/c binning; q_T
 axis fine so the fit binning can be chosen later by projecting (no re-skim). PF
 tree is **soft-gated** (loud `[WARN]`, empty recoil histos if `pftree` absent).
-Electron recoil (`skim_Zee`) not added yet.
+**`skim_Zee` stores the same four recoil histos** (`u = −MET − q_T`, `q_T` = the
+dielectron pT), wired identically (soft-gated PF tree); consumed by
+`correction/recoil_raw_ele.C`.
 
 Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
@@ -96,7 +104,7 @@ Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
 Data/MC overlay, background estimation, plots.
 
-- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots
+- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). Also written as `qcd` into `combine_input_inclusive.root`. Channel auto-selected by `isElec`. (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
@@ -120,11 +128,13 @@ that need `plotting_helper.C` `#include "../plotting/plotting_helper.C"`; the
 isolation study is self-contained (writes/reads `correction/rootfile/`); the QCD
 fit reads the *main* W skim output at `../skim/rootfile/`.
 
-- [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — QCD shape from anti-iso sideband, Rayleigh-like fit (moved from `plotting/`).
+- [correction/qcd_abcd.C](correction/qcd_abcd.C) — **current** data-driven QCD/low-MET background via the ABCD method, **both muon and electron** (`qcd_abcd.C+` = muon, `qcd_abcd.C+(true)` = electron). Plane = relIso × PF MET (also stores relIso × m_T). Regions: iso-pass (`relIso < isoCut`) / iso-fail (anti-iso window `[isoFailLo, isoFailHi)`) × MET high/low (`metCut`); all four counts are QCD-only (`data − Σ EWK·k_s`, absolute MC from `mc_norm.h`). Reports the transfer factor `T = B/D`, the signal-region QCD `A = B·C/D`, and writes the iso-pass QCD MET/m_T **template** (anti-iso shape × T) to `correction/rootfile/qcd_abcd_{mu,ele}.root` for Combine, plus closure overlays (data vs EWK ± ABCD QCD). Channel diffs: electron uses `isoCut=0.095`, anti-iso `[0.20,1.0)` (muon `0.15`, `[0.30,1.0)`) and the `Wp_ele/Wm_ele/DYee` MCScale labels. Boundaries are projections → retune `ABCDConfig` with no re-skim. **Result:** electron QCD is ~10× the muon (T≈0.30 vs 0.17; QCD ≈ 24–26% of the high-MET signal region vs ~3%) — physical, the loose WP95 electron ID + PU-uncorrected iso let jets fake electrons far more; closure is good in both.
+- [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — **superseded** by `qcd_abcd.C`. QCD shape from anti-iso sideband, Rayleigh-like fit + linear shape-parameter extrapolation to signal iso; did not behave at pO statistics. Kept for reference.
 - [correction/isolation.C](correction/isolation.C), [correction/isolation_ele.C](correction/isolation_ele.C) — isolation working-point study inputs (moved from `skim/`).
 - [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C), [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C) — isolation ROC curves (moved from `plotting/`).
 - [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC (DY) overlay + ratio pad for the Z kinematics (`h_Zpt/h_Zeta/h_Zy/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`), shape-normalized. Used for the Data/MC boson-pT check. `root -l -q 'dataMC_kinematics.C+("Zmm")'`.
 - [correction/recoil_raw.C](correction/recoil_raw.C) — raw look at the Z→μμ hadronic recoil (`u_par`/`u_perp`) for the MET recoil correction: data vs DY MC, inclusive and in q_T slices (projected from the 2D histos), **plus a printed entry-count table per q_T slice** to judge statistics/binning before fitting. Slice edges = editable `kQtEdges` array (projections → no re-skim to change). NO fit yet; the planned `recoil_fit.C` (double-Gaussian per q_T bin → μ(q_T)/σ(q_T), AN Sec 6) is the next step. `root -l -q 'recoil_raw.C+'`.
+- [correction/recoil_raw_ele.C](correction/recoil_raw_ele.C) — electron-channel twin of `recoil_raw.C`: same raw-recoil look for Z→ee (reads `ZToEE_pO2025_*`, writes `plots/recoil_Zee/`). `root -l -q 'recoil_raw_ele.C+'`.
 
 The shared ratio-pad helper `SaveDataMCRatio(...)` lives in [plotting/plotting_helper.C](plotting/plotting_helper.C).
 
@@ -198,13 +208,16 @@ Active (in flight, recent commits):
   fully corrected when reading skim output. (The per-event *generator*
   weight IS now applied — see "Generator event weight" below — but these
   reco-level corrections are separate and still missing.)
+- **ABCD QCD background (muon + electron, done 2026-06-23)** — replaces the
+  Rayleigh shape-extrapolation. Both `skim_Wmu`/`skim_Wel` store the relIso × MET
+  (and × m_T) 2D per charge (`h_iso_{met,mt}_{mu,ele}{Plus,Minus}`);
+  `correction/qcd_abcd.C[+(true)]` does `N_A = N_B·N_C/N_D` on QCD-only
+  (EWK-subtracted) counts and emits the iso-pass QCD template, wired into the
+  `mtandmet.C` MET stacks for both channels. Electron QCD is ~10× the muon and
+  is the dominant low-MET background there. Remaining: use these templates in
+  the Combine fork datacards.
 
 Future plans / on the TODO list (not yet started):
-- **ABCD method for QCD background** — the current
-  `qcd_sideband_fit_and_extrapolate.C` (Rayleigh-like shape from low-MT /
-  anti-iso sideband) doesn't work well at the available statistics. Plan is
-  to replace with an ABCD estimate using two ~uncorrelated handles
-  (typically iso × MT): `N_A = N_B · N_C / N_D`.
 - **Tau cross-section measurement** — currently τ is only a background to W/Z.
   Adding W→τν / Z→ττ as their own signal channels is on the wishlist (tagged
   as "probably just an attempt").
@@ -247,6 +260,12 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   `skim/skim.C` (creates `rootfile/`), `skim/run_all.sh` (`rootfile output
   logs`), and every `correction/` macro (their `plots/` / `rootfile/`). When
   adding a new writer, do the same — and zombie-check input files you open.
+- **Shell scripts must be bash-3.2 compatible.** The user runs locally on macOS,
+  whose stock `/bin/bash` is **3.2** — no `declare -A` associative arrays (they
+  crash with a cryptic `unbound variable` under `set -u`). `skim/run_all.sh` uses
+  `case`-functions (`channel_enum`/`sample_enum`) instead. Keep new scripts free of
+  bash-4-only features so they run on both the Mac and lxplus. (Homebrew bash 5 is
+  at `/opt/homebrew/bin/bash`, but don't depend on it.)
 - **Clone histograms read from a TFile before mutating them** (`Rebin`,
   `Scale`, normalization, `Add`, …). `file->Get("h")` returns the *file-owned*
   object; rebinning/scaling it in place mutates the shared histogram, so a
@@ -333,32 +352,39 @@ keeps the skim raw and re-skim-free).
   is per physical file (deduped across the mu/ele/tau routes of `ResolveMCSample`).
   Its `⟨w⟩`/`N_neg` columns also serve the gen-weight verification TODO above.
 - **k_s** — `skim/mc_norm.h` is the single source of truth: `kLumi_invnb = 46.5`
-  (data lumi, nb⁻¹), per-process `kSigma_Wp/kSigma_Wm/kSigma_DY` (nb), and
-  `pONorm::MCScale("Wp_mu")` → `σ·L/N_gen` reading `ngen.root`. Returns 1.0 + warns
-  until the σ are filled, so it is safe to wire in early. One σ per process serves
-  all three lepton-flavour files (universality); the σ are **per-sample effective**
-  (BR + any generator filter folded in), in a frame matching the 46.5 nb⁻¹
-  (per-pO vs per-NN).
+  (pO data lumi, nb⁻¹), `kA_O = 16` (Oxygen A-scaling, σ_pO = A·σ_NN), per-process
+  `kSigma_Wp/kSigma_Wm/kSigma_DY` (nb), and `pONorm::MCScale("Wp_mu")` →
+  `A·σ·L/N_gen` reading `ngen.root`. Returns 1.0 + warns if a σ is unset (safe
+  no-op). One σ per process serves all three lepton-flavour files (universality);
+  the σ here are the POWHEG **per-nucleon-nucleon** cross sections read straight
+  from the weights (this production's `⟨w⟩ = σ`), so ×A=16 lifts them to pO.
 
 **Decision (2026-06-23):** go absolute — ship **fixed, absolutely-normalized**
 templates; the downstream fit floats only the overall rate (signal strength). This
 makes absolute normalization of the *backgrounds* mandatory — a frozen background
 at the wrong scale biases the signal.
 
-**Current state (2026-06-23): σ resolved + wired into the data/MC stacks.** The
-POWHEG per-event weight IS a cross-section weight (`⟨w⟩ = σ`), so σ is read off
-`skim/output/ngen.txt` — W⁺ 6.376, W⁻ 5.464, DY 1.175 nb, now in `mc_norm.h` — and
-`k_s = σ·L/N_gen` reduces to `L/N_raw`. `plotting/mtandmet.C` and
-`plotting/dileptonpeak.C` now scale each per-sample MC histo by `MCScale(label)`
-(relative composition) **before** the W⁺/W⁻ `Add`, and **keep**
-`SaveNicePlot1D_WithBkg`'s `dataInt/Σbkg` normalization (overall scale → data), so
-the per-pO/per-NN frame factor cancels and the plots test composition + shape. Both
-compile clean. **Still raw / untouched:** the skim (stays gen-weighted only) and the
-Combine fork's `make_combine_input{,_Z}.C` (still shape-only). The `correction/`
-data/MC checks (`SaveDataMCRatio`) are also unchanged. **Low-mass DY skipped**
-(`MC_DY*_low` unwired). NB: the per-sample skim outputs must be (re)built on the
-local files (`run_all.sh`) before the plots produce anything. See README "Module 2b"
-and memory `project_mc_normalization.md`.
+**Current state (2026-06-23): σ resolved, A-scaled, both W+Z stacks drawn
+ABSOLUTE.** The POWHEG per-event weight IS a cross-section weight (`⟨w⟩ = σ`), so σ
+was read straight off `skim/output/ngen.txt` — σ(W⁺→ℓν)=6.376, σ(W⁻→ℓν)=5.464,
+σ(DY→ℓℓ,m>50)=1.175 nb (identical across e/μ/τ → universality; ~0.9% NLO negatives
+folded into Σw) — and filled into `mc_norm.h`. Because ⟨w⟩=σ, `k_s = A·σ·L/N_gen`
+reduces to `A·L/N_raw`. `plotting/mtandmet.C` (W) and `plotting/dileptonpeak.C` (Z)
+scale each per-sample MC histo by `MCScale(label)` **before** the W⁺/W⁻ `Add`, and
+both set `ps.normBkgToData=false` so the stacks are drawn **absolute** — no area
+norm (`dileptonpeak`'s own `dataInt/mcTotal` block was removed). First W→μν MET
+stack validated it: composition physical (W±≫DY≫τ), absolute level ≈ data
+(~4400 W + bkg vs 5103), low-MET data excess = QCD (not in MC), residual high-MET
+overshoot = uncalibrated **MET/recoil** (NOT efficiency). The Z mass peak (no MET)
+is the clean lepton-efficiency/scale + absolute-norm cross-check. **Style:** stacked
+plots restyled to translucent fills (α=0.5) + thick color-matched outlines
+(width 2); muon `h_mt_inclusive` reverted from signal-only back to the full stack.
+**Escape hatch:** if absolute MC is ~16× off, set `kA_O=1.0` (lumi was per-NN L_NN).
+**Untouched (still raw / shape-only):** the skim, the Combine fork's
+`make_combine_input{,_Z}.C`, and the `correction/` `SaveDataMCRatio` checks.
+Low-mass DY skipped. NB: per-sample skim outputs must be (re)built on the local
+files (`run_all.sh`) before the plots produce anything. See README "Module 2b" and
+memory `project_mc_normalization.md`.
 
 ## Pre-existing asymmetries between channels — user-confirmed status
 

@@ -66,6 +66,7 @@ void dileptonpeak(bool isElec = 0)
     ps.logy      = true;
     ps.boxY1     = 0.62;
     ps.boxY2     = 0.82;
+    ps.normBkgToData = false; // ABSOLUTE pO scaling (k_s incl. A=16) -- no area norm
 
     PlotTuner commonTuner = [&](TCanvas *c, TH1 *h) {
         (void)c;
@@ -83,12 +84,13 @@ void dileptonpeak(bool isElec = 0)
         {"hMass_vipul",    "Events / 1.0 GeV",   "mass_vipul"},
     };
 
-    // --- Absolute per-sample MC normalization k_s = sigma*L/N_gen -------------
+    // --- Absolute per-sample MC normalization k_s = A*sigma*L/N_gen -----------
     // Scale each MC sample by its own k_s so the components sit in the correct
-    // physical proportion ("fix the relative ratio between MC"); the overall MC
-    // stack is then normalized to the data integral below ("normalize the sum to
-    // data"). sigma is already in the gen weights (<w>=sigma) -> k_s = L/N_raw;
-    // the tau samples share the W/DY cross sections but carry their own N_gen.
+    // physical proportion AND at the absolute pO yield (drawn absolute, no area
+    // norm -- see ps.normBkgToData=false above). sigma is already in the gen
+    // weights (<w>=sigma, per-NN); MCScale multiplies by the Oxygen A-scaling
+    // (A=16) and L. The tau samples share the W/DY cross sections but carry their
+    // own N_gen (per-file label).
     const double k_Wp    = pONorm::MCScale(isElec ? "Wp_ele" : "Wp_mu");
     const double k_Wm    = pONorm::MCScale(isElec ? "Wm_ele" : "Wm_mu");
     const double k_DY    = pONorm::MCScale(isElec ? "DYee"   : "DYmu");
@@ -136,20 +138,9 @@ void dileptonpeak(bool isElec = 0)
             h_Wtau->SetDirectory(nullptr);
         }
 
-        // --- normalize total MC stack to data integral (preserve component fractions) ---
-        double mcTotal = 0.0;
-        for (TH1 *h : std::vector<TH1*>{h_W, h_DYh, h_DYth, h_Wtau}){
-            if (h) mcTotal += h->Integral();
-            //cout << "current is " << h->Integral() << endl;
-        }
-
-
-        const double dataInt = h_data->Integral();
-        if (mcTotal > 0 && dataInt > 0) {
-            const double scale = dataInt / mcTotal;
-            for (TH1 *h : std::vector<TH1*>{h_W, h_DYh, h_DYth, h_Wtau})
-                if (h) h->Scale(scale);
-        }
+        // (No area normalization: the MC is already at its absolute pO yield from
+        // k_s above, and ps.normBkgToData=false keeps SaveNicePlot1D_WithBkg from
+        // rescaling the stack to data.)
 
         std::vector<std::string> box = {
             Form("Passing Events: %.0f", h_data->Integral(1, h_data->GetNbinsX()))

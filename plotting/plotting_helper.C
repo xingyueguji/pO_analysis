@@ -66,6 +66,11 @@ struct PlotStyle
 
     // stat box
     bool showStats = false;
+
+    // background/MC normalization in SaveNicePlot1D_WithBkg:
+    //   true  -> scale the MC stack to the data integral (shape comparison)
+    //   false -> draw the MC at its absolute (already-scaled) yield
+    bool normBkgToData = true;
 };
 
 // -----------------------------
@@ -564,7 +569,7 @@ static void SaveNicePlot1D_WithBkg(
     }
 
     double scale = 1.0;
-    if (bkgSumInt > 0)
+    if (ps.normBkgToData && bkgSumInt > 0)
         scale = dataInt / bkgSumInt;
 
     //--------------------------------------------------
@@ -577,7 +582,9 @@ static void SaveNicePlot1D_WithBkg(
         kOrange - 3,
         kGreen + 2,
         kMagenta - 3,
-        kCyan + 1};
+        kCyan + 1,
+        kRed - 7,
+        kGray + 1}; // 6th/7th added so the 6 MC samples + ABCD QCD each get a distinct color
 
     for (int i = static_cast<int>(bkgs.size()) - 1; i >= 0; --i)
     {
@@ -587,9 +594,10 @@ static void SaveNicePlot1D_WithBkg(
 
         b->Scale(scale);
 
-        b->SetFillColor(colors[i % colors.size()]);
-        b->SetLineColor(kBlack);
-        b->SetLineWidth(1);
+        const int col = colors[i % colors.size()];
+        b->SetFillColorAlpha(col, 0.65); // translucent fill (matches SaveDataMCRatio look)
+        b->SetLineColor(col);            // color-matched outline
+        b->SetLineWidth(3);              // thick edge
 
         hs->Add(b);
     }
@@ -624,7 +632,7 @@ static void SaveNicePlot1D_WithBkg(
     for (size_t i = 0; i < bkgs.size(); i++)
     {
         if (bkgs[i])
-            leg->AddEntry(bkgs[i], bkgNames[i].c_str(), "f");
+            leg->AddEntry(bkgs[i], bkgNames[i].c_str(), "lf"); // line + block (like SaveDataMCRatio)
     }
 
     leg->Draw();
