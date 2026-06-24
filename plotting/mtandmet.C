@@ -311,6 +311,51 @@ void mtandmet(bool isElec = 1)
         return h;
     };
 
+    // --- Structured per-region Combine input -----------------------------------
+    // For every fit region we emit the 6 absolute templates the downstream
+    // Combine datacards consume -- signal, z, ztau, wtau, qcd, data_obs -- each
+    // in its own TDirectory of combine_input_W.root. Regions:
+    //   Wp_lab_y{0..11} / Wm_lab_y{0..11}   standard lab-frame rapidity bins
+    //   Wp_fb_y{0..11}  / Wm_fb_y{0..11}    FB-symmetric bins (forward/backward)
+    //   Wp_incl / Wm_incl                   per-charge, summed over the lab bins
+    //   W_incl                              both charges (inclusive W fit / Z-control link)
+    // "signal" = both W MC samples in that reco-charge region (Wp- and Wm-sample
+    // events reconstructed with the region's charge); "wtau" = Wptau+Wmtau. Every
+    // template is already at its absolute pO yield (k_s applied below) -- NO area
+    // normalization, so the fit floats real normalizations, not shapes-to-data.
+    struct RegionTemplates {
+        std::string dir;
+        TH1D *data, *sig, *z, *ztau, *wtau, *qcd;
+    };
+    std::vector<RegionTemplates> regions;
+
+    auto cloneDetached = [](TH1D *h, const char *nm) -> TH1D * {
+        if (!h) return nullptr;
+        TH1D *c = (TH1D *)h->Clone(nm);
+        c->SetDirectory(nullptr);
+        return c;
+    };
+    auto sum2 = [&](TH1D *a, TH1D *b, const char *nm) -> TH1D * {
+        TH1D *r = cloneDetached(a, nm);
+        if (r) { if (b) r->Add(b); }
+        else if (b) r = cloneDetached(b, nm);
+        return r;
+    };
+    auto makeRegion = [&](const std::string &dir,
+                          TH1D *data, TH1D *sigA, TH1D *sigB,
+                          TH1D *z, TH1D *ztau, TH1D *wtA, TH1D *wtB,
+                          TH1D *qcd) -> RegionTemplates {
+        RegionTemplates r;
+        r.dir  = dir;
+        r.data = cloneDetached(data, (dir + "_data_obs").c_str());
+        r.sig  = sum2(sigA, sigB,    (dir + "_signal").c_str());
+        r.z    = cloneDetached(z,    (dir + "_z").c_str());
+        r.ztau = cloneDetached(ztau, (dir + "_ztau").c_str());
+        r.wtau = sum2(wtA, wtB,      (dir + "_wtau").c_str());
+        r.qcd  = cloneDetached(qcd,  (dir + "_qcd").c_str());
+        return r;
+    };
+
     // Loop over rapidity bins and charge
     for (int iy = 0; iy < NY; ++iy)
     {
@@ -445,6 +490,26 @@ void mtandmet(bool isElec = 1)
         TH1D *qcd_met_Wm    = qcdPerY(qcdMinusBase, wQcdWm[iy],   Form("qcd_met_Wm_y%d", iy));
         TH1D *qcd_met_Wp_FB = qcdPerY(qcdPlusBase,  wQcdWpFB[iy], Form("qcd_met_Wp_y%d_FB", iy));
         TH1D *qcd_met_Wm_FB = qcdPerY(qcdMinusBase, wQcdWmFB[iy], Form("qcd_met_Wm_y%d_FB", iy));
+
+        // Collect the absolute per-region Combine templates (MET discriminant).
+        // signal carries BOTH W samples reconstructed with this charge; the EWK
+        // backgrounds and the per-y ABCD QCD are projected the same way.
+        regions.push_back(makeRegion(Form("Wp_lab_y%d", iy),
+            h_met_Wp, h_met_Wp_MC_Wp, h_met_Wp_MC_Wm,
+            h_met_Wp_MC_Z, h_met_Wp_MC_Ztau, h_met_Wp_MC_Wptau, h_met_Wp_MC_Wmtau,
+            qcd_met_Wp));
+        regions.push_back(makeRegion(Form("Wm_lab_y%d", iy),
+            h_met_Wm, h_met_Wm_MC_Wp, h_met_Wm_MC_Wm,
+            h_met_Wm_MC_Z, h_met_Wm_MC_Ztau, h_met_Wm_MC_Wptau, h_met_Wm_MC_Wmtau,
+            qcd_met_Wm));
+        regions.push_back(makeRegion(Form("Wp_fb_y%d", iy),
+            h_met_Wp_FB, h_met_Wp_FB_MC_Wp, h_met_Wp_FB_MC_Wm,
+            h_met_Wp_FB_MC_Z, h_met_Wp_FB_MC_Ztau, h_met_Wp_FB_MC_Wptau, h_met_Wp_FB_MC_Wmtau,
+            qcd_met_Wp_FB));
+        regions.push_back(makeRegion(Form("Wm_fb_y%d", iy),
+            h_met_Wm_FB, h_met_Wm_FB_MC_Wp, h_met_Wm_FB_MC_Wm,
+            h_met_Wm_FB_MC_Z, h_met_Wm_FB_MC_Ztau, h_met_Wm_FB_MC_Wptau, h_met_Wm_FB_MC_Wmtau,
+            qcd_met_Wm_FB));
 
         if (!h_mt_inclusive)
         {
@@ -905,42 +970,76 @@ void mtandmet(bool isElec = 1)
     }
 
     {
-        std::string combineOut = outBase + "/combine_input_inclusive.root";
-        TFile *fout = TFile::Open(combineOut.c_str(), "RECREATE");
-        if (!fout || fout->IsZombie())
+        // --- Structured per-region Combine input file --------------------------
+        // One TDirectory per fit region; each holds the 6 absolute templates.
+        const std::string combineOut = outBase + "/combine_input_W.root";
+        TFile *fcomb = TFile::Open(combineOut.c_str(), "RECREATE");
+        if (!fcomb || fcomb->IsZombie())
         {
             std::cerr << "[ERROR] Cannot create output file: " << combineOut << "\n";
             return;
         }
 
-        auto write_clone = [&](TH1D *h, const char *name)
-        {
-            if (!h)
-            {
-                std::cerr << "[WARN] Missing histogram: " << name << "\n";
-                return;
+        // Per-charge inclusive = sum over the lab-frame bins; W_incl = both charges.
+        auto accumulate = [&](const std::string &prefix, const std::string &dir) -> RegionTemplates {
+            RegionTemplates s;
+            s.dir = dir;
+            s.data = s.sig = s.z = s.ztau = s.wtau = s.qcd = nullptr;
+            for (auto &r : regions) {
+                if (r.dir.compare(0, prefix.size(), prefix) != 0) continue;
+                auto add = [&](TH1D *&dst, TH1D *src, const char *suf) {
+                    if (!src) return;
+                    if (!dst) { dst = (TH1D *)src->Clone((dir + suf).c_str()); dst->SetDirectory(nullptr); }
+                    else dst->Add(src);
+                };
+                add(s.data, r.data, "_data_obs");
+                add(s.sig,  r.sig,  "_signal");
+                add(s.z,    r.z,    "_z");
+                add(s.ztau, r.ztau, "_ztau");
+                add(s.wtau, r.wtau, "_wtau");
+                add(s.qcd,  r.qcd,  "_qcd");
             }
-            fout->cd();
-            TH1D *hc = (TH1D *)h->Clone(name);
-            hc->SetDirectory(fout);
-            hc->Write(name, TObject::kOverwrite);
+            return s;
+        };
+        RegionTemplates Wp_incl = accumulate("Wp_lab_", "Wp_incl");
+        RegionTemplates Wm_incl = accumulate("Wm_lab_", "Wm_incl");
+        RegionTemplates W_incl;
+        W_incl.dir  = "W_incl";
+        W_incl.data = sum2(Wp_incl.data, Wm_incl.data, "W_incl_data_obs");
+        W_incl.sig  = sum2(Wp_incl.sig,  Wm_incl.sig,  "W_incl_signal");
+        W_incl.z    = sum2(Wp_incl.z,    Wm_incl.z,    "W_incl_z");
+        W_incl.ztau = sum2(Wp_incl.ztau, Wm_incl.ztau, "W_incl_ztau");
+        W_incl.wtau = sum2(Wp_incl.wtau, Wm_incl.wtau, "W_incl_wtau");
+        W_incl.qcd  = sum2(Wp_incl.qcd,  Wm_incl.qcd,  "W_incl_qcd");
+
+        auto writeRegionTemplates = [&](const RegionTemplates &r) {
+            TDirectory *d = fcomb->mkdir(r.dir.c_str());
+            if (!d) { std::cerr << "[WARN] mkdir failed: " << r.dir << "\n"; return; }
+            auto wn = [&](TH1D *h, const char *nm) {
+                if (!h) { std::cerr << "[WARN] " << r.dir << ": missing " << nm << "\n"; return; }
+                d->cd();
+                TH1D *hc = (TH1D *)h->Clone(nm);
+                hc->SetDirectory(d);
+                hc->Write(nm, TObject::kOverwrite);
+            };
+            wn(r.data, "data_obs");
+            wn(r.sig,  "signal");
+            wn(r.z,    "z");
+            wn(r.ztau, "ztau");
+            wn(r.wtau, "wtau");
+            if (r.qcd) wn(r.qcd, "qcd");
         };
 
-        // Data
-        write_clone(h_met_inclusive, "data_obs");
+        for (auto &r : regions) writeRegionTemplates(r);
+        writeRegionTemplates(Wp_incl);
+        writeRegionTemplates(Wm_incl);
+        writeRegionTemplates(W_incl);
 
-        // Main templates
-        write_clone(h_met_inclusive_MC_signal, "signal");
-        write_clone(h_met_inclusive_MC_Z, "z");
-        write_clone(h_met_inclusive_MC_Ztau, "ztau");
-        write_clone(h_met_inclusive_MC_Wtau, "wtau");
-        // Data-driven ABCD QCD (inclusive MET template; null/skipped for electron)
-        if (qcd_met_incl) write_clone(qcd_met_incl, "qcd");
-
-        fout->Close();
-        delete fout;
-
-        std::cout << "[INFO] Saved Combine hist file: " << combineOut << "\n";
+        fcomb->Close();
+        delete fcomb;
+        std::cout << "[INFO] Saved structured Combine input: " << combineOut
+                  << "  (" << regions.size()
+                  << " per-(charge,y) regions + Wp_incl/Wm_incl/W_incl)\n";
     }
 
     f->Close();

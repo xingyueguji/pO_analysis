@@ -104,7 +104,7 @@ Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
 Data/MC overlay, background estimation, plots.
 
-- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). Also written as `qcd` into `combine_input_inclusive.root`. Channel auto-selected by `isElec`. (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
+- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). **Also writes the structured Combine input `plots[/Elec]/combine_input_W.root`** — one TDirectory per fit region (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …) each with the 6 absolute templates `data_obs/signal/z/ztau/wtau/qcd` (consumed by the fork's `run_pO_fits.sh` — see "Downstream fit"). Channel auto-selected by `isElec`. (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
@@ -181,19 +181,70 @@ a working branch). If the checkout is on `main`, switch with
 `git checkout zheng/po-analysis` before doing anything, or read files via
 `git show origin/zheng/po-analysis:<path>`.
 
-Files on `zheng/po-analysis`:
-- `test/run_fit.sh` — driver
-- `test/my_script/make_combine_input.C`, `make_combine_input_Z.C` — read this repo's
-  histograms from `/afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots/`, produce
-  Combine inputs (`data_obs`, signal, backgrounds)
-- `test/my_script/testdatacard_inclusive.txt` — W (inclusive) datacard
-- `test/my_script/testdatacard_Zmumu.txt`, `testdatacard_Zee.txt` — Z datacards
-- `test/my_script/draw_postfit_{inclusive,Zmumu,Zee}.C` — postfit plots
+### Current pipeline — `test/run_pO_fits.sh` (rapidity-binned, automated, 2026-06-24)
 
-Each channel is fit separately. Processes are signal + W/W-tau/Z-tau backgrounds.
-`rateParam`s (range 0–20) on W/Z/tau rates let the fit float them — the POIs
-are effectively the cross-sections. Shape-only datacards (no analytic templates).
-Fit method: `combine -M FitDiagnostics`.
+One driver does everything per channel (muon/electron). Run under `cmsenv`:
+```bash
+./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit]
+```
+It (1) locates this repo's **structured** Combine inputs, (2) generates all
+datacards, (3) runs `text2workspace`+`combine -M FitDiagnostics` per fit region
+into a clean output tree, (4) extracts fitted signal yields, (5) draws postfit
+plots in the same cosmetics as `plotting/mtandmet.C`.
+
+**Full step-by-step runbook (both repos):** `test/README_pO_fits.md` on the
+fork — skim → ngen → ABCD QCD → structured inputs → fit → feed charge_asym/FBratio.
+
+Scripts on `zheng/po-analysis`:
+- `test/run_pO_fits.sh` — master driver (bash-3.2 safe; `--dry-run` builds
+  datacards without `cmsenv`). Output tree: `test/pO_fit_out/<chan>/{datacards,
+  fits/<region>/,postfit,summary}`.
+- `test/my_script/make_pO_datacards.sh` — generates **all** datacards: per-region
+  W (`Wp/Wm` × `lab/fb` × `y0..11` = 48), per-charge `Wp_incl`/`Wm_incl`, `W_incl`,
+  `Z_incl`, and the simultaneous `WZ` card.
+- `test/my_script/extract_pO_yields.C` — reads each region's `fit_s`, computes the
+  fitted signal yield (`r`×prefit-signal-integral, error `rErr`×same) → `summary/
+  <chan>_W_yields.csv`, `<chan>_summary.csv`, and `<chan>_fitted_yields.root`
+  containing single-bin `h_mt_W{p,m}_y{0..11}` (lab) and `..._FB` (FB) histos —
+  the **exact names + Sumw2 errors** that `analysis/charge_asym.C` and
+  `analysis/FBratio.C` read (just pass the file as their first arg → fitted yields
+  replace raw yields, no macro edits).
+- `test/my_script/draw_postfit_pO.C` — generic postfit data/MC plotter routed
+  through the synced `plotting_helper.C::SaveNicePlot1D_WithBkg` (α=0.65 fills,
+  width-3 outlines, `CMS_lumi`) → identical look to `mtandmet.C`.
+- `test/my_script/plotting_helper.C` — **synced** from this repo's
+  `plotting/plotting_helper.C` (was an older solid-fill copy; `CMS_lumi.C` was
+  already identical).
+
+**Structured inputs** (produced HERE, consumed by the fork):
+- `plotting/mtandmet.C` → `plots[/Elec]/combine_input_W.root`: one **TDirectory
+  per fit region** (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …), each
+  holding the 6 **absolute** templates `data_obs/signal/z/ztau/wtau/qcd` (MET
+  discriminant; per-y ABCD `qcd` split from the inclusive template). `signal` =
+  both W MC samples in that reco-charge region; `wtau` = Wptau+Wmtau.
+- `plotting/dileptonpeak.C` → `plots[/Elec]/combine_input_Z.root`: a `Z_incl/`
+  dir with `data_obs/signal/w/wtau/ztau` (mass peak, absolute).
+
+**Fit model** (per the 2026-06-24 decisions):
+- `signal` → POI `r` (the per-region W yield strength we extract). Discriminant
+  = **PF MET shape**.
+- EWK MC backgrounds `z/ztau/wtau` → **one shared `ewk_norm` rateParam** (relative
+  MC composition LOCKED — they're absolute `k_s` templates — only the overall EWK
+  scale floats).
+- data-driven ABCD `qcd` → free `qcd_norm` rateParam.
+- **Simultaneous W+Z** (`datacard_WZ.txt`): a shared `eff_lumi` rateParam
+  multiplies BOTH the W `signal` and the Z signal (renamed `zsig`, not a POI); the
+  high-purity Z peak pins it and it cancels in W/Z ratios. Per-bin W fits remain
+  independent (the common scale cancels in charge-asym / F/B ratios anyway).
+
+All templates are **absolutely** normalized (`k_s = A·σ·L/N_gen`) — NO area
+normalization (the old `make_combine_input*.C` `data_int/mc_sum` rescale is gone).
+
+**Superseded** (kept for reference, not in the new pipeline): `test/run_fit.sh`,
+`test/my_script/make_combine_input{,_Z}.C` (area-normalized + Rayleigh `pdfbkg`),
+`testdatacard_{inclusive,Zmumu,Zee}.txt`, `draw_postfit_{inclusive,Zmumu,Zee}.C`.
+
+Fit method: `combine -M FitDiagnostics --saveShapes --saveWithUncertainties`.
 
 ## Current state of the work
 

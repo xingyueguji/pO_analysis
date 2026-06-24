@@ -159,17 +159,23 @@ void dileptonpeak(bool isElec = 0)
     }
 
         // --- Combine input ROOT file for Z fit ---
+        // Same TDirectory-per-region convention as the W input
+        // (plotting/mtandmet.C -> combine_input_W.root): a single "Z_incl"
+        // directory holds the 5 absolute templates. Z is inclusive only (low
+        // pO statistics). All templates carry their own k_s = A*sigma*L/N_gen
+        // (applied above) -- NOT area- or unit-normalized -- matching the W side.
     {
-        const std::string combineOut = outBase + "/combine_input_dilepton.root";
+        const std::string combineOut = outBase + "/combine_input_Z.root";
         TFile *fout = TFile::Open(combineOut.c_str(), "RECREATE");
         if (!fout || fout->IsZombie()) {
             std::cerr << "[ERROR] Cannot create output file: " << combineOut << "\n";
         } else {
+            TDirectory *zdir = fout->mkdir("Z_incl");
             auto write_clone = [&](TH1D *h, const char *name) {
                 if (!h) { std::cerr << "[WARN] Missing histogram: " << name << "\n"; return; }
-                fout->cd();
+                zdir->cd();
                 TH1D *hc = (TH1D*)h->Clone(name);
-                hc->SetDirectory(fout);
+                hc->SetDirectory(zdir);
                 hc->Write(name, TObject::kOverwrite);
             };
 
