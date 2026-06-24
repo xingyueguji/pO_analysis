@@ -1049,16 +1049,21 @@ int skim_Wel(const char *fname, SampleType sample)
     if (has_hlt && !TriggerFired(HLT_OxyL1SingleEG10_v1)) continue;
     N[3]++;
 
+    // Electron ID: eleMVAIdWP95 (switched from eleCutIdWP95 on 2026-06-24 after the
+    // isolation/ID study in correction/isolation_ele.C — the MVA WP is the best QCD
+    // rejector while CutWP95 was the worst; continuous AUC_MET 0.911 vs 0.870). Used
+    // consistently for the DY veto, the tight-ID gate, and the leading-electron pick.
+    // The leading-electron isolation stays continuous relIso < isoMax (0.095, ~optimal).
     if (!PassDYVeto_Wel(dyElePtMin, dyMassMin, dyMassMax,
                         nEle, elePt, eleEta, elePhi, eleCharge,
-                        eleCutIdWP95, eleMVAIsoWP95))
+                        eleMVAIdWP95, eleMVAIsoWP95))
       continue;
     N[4]++;
 
-    if (!ExistsTightElectron_W(nEle, eleCutIdWP95)) continue;
+    if (!ExistsTightElectron_W(nEle, eleMVAIdWP95)) continue;
     N[5]++;
 
-    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleCutIdWP95);
+    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleMVAIdWP95);
     if (iLead < 0) continue;
 
     if (isMC)
@@ -1086,7 +1091,10 @@ int skim_Wel(const char *fname, SampleType sample)
     const int    isoBin  = FindIsoBin(isoLead);
     const bool   isQCDSideband   = (isoBin >= 0);
     const bool   passIsoNominal  = (isoLead < isoMax);
-    // FIXME: Need to redo electron isolation study, not using working point.
+    // Isolation study DONE (2026-06-24, correction/isolation_ele.C continuous scan):
+    // continuous relIso < 0.095 is the Youden-J(QCD) optimum for the MVA IDs, so the
+    // cut value stands. (Still missing: pileup/deltaBeta correction on the electron
+    // relIso -- re-confirm the 0.095 optimum once that is added.)
 
     if (passIsoNominal) N[7]++;
 

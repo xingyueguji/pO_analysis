@@ -13,6 +13,7 @@
 #include <TLegend.h>
 #include <TGraph.h>
 #include <TMultiGraph.h>
+#include <TParameter.h>
 #include <TSystem.h>
 #include <iostream>
 #include <vector>

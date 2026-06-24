@@ -13,6 +13,7 @@
 #include <TLegend.h>
 #include <TGraph.h>
 #include <TMultiGraph.h>
+#include <TParameter.h>
 #include <TSystem.h>
 #include <iostream>
 #include <vector>
@@ -272,6 +273,19 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
     tEle->SetBranchAddress("eleMVAIsoWP90", &eleMVAIsoWP90);
     tEle->SetBranchAddress("eleMVAIsoWP95", &eleMVAIsoWP95);
 
+    // Continuous PF relIso inputs (elePFChIso/NeuIso/PhoIso) -- these are what
+    // skim_Wel actually cuts on (RelIsoPF < 0.095), NOT the MVA Iso WP above. Wired
+    // so we can scan the continuous relIso and confirm/optimize the real cut.
+    std::vector<float> *elePFChIso = nullptr, *elePFNeuIso = nullptr, *elePFPhoIso = nullptr;
+    const bool hasPFCh  = (tEle->GetBranch("elePFChIso") != nullptr);
+    const bool hasPFNeu = (tEle->GetBranch("elePFNeuIso") != nullptr);
+    const bool hasPFPho = (tEle->GetBranch("elePFPhoIso") != nullptr);
+    if (hasPFCh)  { tEle->SetBranchStatus("elePFChIso", 1);  tEle->SetBranchAddress("elePFChIso", &elePFChIso); }
+    if (hasPFNeu) { tEle->SetBranchStatus("elePFNeuIso", 1); tEle->SetBranchAddress("elePFNeuIso", &elePFNeuIso); }
+    if (hasPFPho) { tEle->SetBranchStatus("elePFPhoIso", 1); tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso); }
+    if (!hasPFCh || !hasPFNeu || !hasPFPho)
+        std::cerr << "[WARN] continuous electron relIso branches missing; continuous scan will be empty\n";
+
     Int_t nPF = 0;
     std::vector<int> *pfId = nullptr;
     std::vector<float> *pfPt = nullptr, *pfEta = nullptr, *pfPhi = nullptr;
@@ -311,6 +325,25 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
     std::vector<std::vector<double>> totSS(nID, std::vector<double>(nIso, 0.0));
     std::vector<std::vector<double>> passMET(nID, std::vector<double>(nIso, 0.0));
     std::vector<std::vector<double>> totMET(nID, std::vector<double>(nIso, 0.0));
+
+    // ---- Continuous PF relIso scan (per ID), matching skim_Wel's actual cut ----
+    const int nCutsCont = 200;
+    std::vector<double> cutsCont(nCutsCont);
+    for (int i = 0; i < nCutsCont; ++i) cutsCont[i] = (double)i / (double)(nCutsCont - 1); // 0..1
+    std::vector<std::vector<double>> passOScont(nID, std::vector<double>(nCutsCont, 0.0));
+    std::vector<std::vector<double>> totOScont(nID, std::vector<double>(nCutsCont, 0.0));
+    std::vector<std::vector<double>> passSScont(nID, std::vector<double>(nCutsCont, 0.0));
+    std::vector<std::vector<double>> totSScont(nID, std::vector<double>(nCutsCont, 0.0));
+    std::vector<std::vector<double>> passMETcont(nID, std::vector<double>(nCutsCont, 0.0));
+    std::vector<std::vector<double>> totMETcont(nID, std::vector<double>(nCutsCont, 0.0));
+
+    auto relIsoEle = [&](int i) -> double
+    {
+        if (!elePt || !elePFChIso || !elePFNeuIso || !elePFPhoIso) return 999.0;
+        const double pt = elePt->at(i);
+        if (pt <= 0) return 999.0;
+        return (elePFChIso->at(i) + elePFNeuIso->at(i) + elePFPhoIso->at(i)) / pt;
+    };
 
     // ---------- Event loop ----------
     Long64_t nEv = std::min(tEle->GetEntries(), tPF->GetEntries());
@@ -405,6 +438,15 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
 
                     if (passIso)
                         passMET[id][iso]++;
+                }
+
+                // continuous relIso scan (MET background)
+                const double riso = relIsoEle(i);
+                for (int ic = 0; ic < nCutsCont; ++ic)
+                {
+                    totMETcont[id][ic] += 1.0;
+                    if (riso < cutsCont[ic])
+                        passMETcont[id][ic] += 1.0;
                 }
             }
         }
@@ -515,6 +557,28 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
                         passSS[id][iso] += 1.0;
                     if (passIso_j)
                         passSS[id][iso] += 1.0;
+                }
+            }
+
+            // continuous relIso scan (OS signal, SS background), same pairs
+            for (const auto &p : osPairs)
+            {
+                const double ri = relIsoEle(p.i), rj = relIsoEle(p.j);
+                for (int ic = 0; ic < nCutsCont; ++ic)
+                {
+                    totOScont[id][ic] += 2.0;
+                    if (ri < cutsCont[ic]) passOScont[id][ic] += 1.0;
+                    if (rj < cutsCont[ic]) passOScont[id][ic] += 1.0;
+                }
+            }
+            for (const auto &p : ssPairs)
+            {
+                const double ri = relIsoEle(p.i), rj = relIsoEle(p.j);
+                for (int ic = 0; ic < nCutsCont; ++ic)
+                {
+                    totSScont[id][ic] += 2.0;
+                    if (ri < cutsCont[ic]) passSScont[id][ic] += 1.0;
+                    if (rj < cutsCont[ic]) passSScont[id][ic] += 1.0;
                 }
             }
         }
@@ -710,6 +774,71 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
         TParameter<double> pAucBkg(TString("aucBkg_") + tag, aucBkg);
         pAucBkg.Write();
     }
+
+    // ======================================================================
+    // Continuous PF relIso scan output (per ID) + optimality summary.
+    // This is the apples-to-apples study for the cut skim_Wel ACTUALLY uses
+    // (continuous relIso < 0.095), as opposed to the discrete MVA Iso WP above.
+    // ======================================================================
+    std::cout << "\n==================== CONTINUOUS relIso scan (electron) ====================\n";
+    std::cout << "Signal = OS Z-window pairs; bkg(SS) = same-sign pairs; bkg(MET) = single-e, MET<5.\n";
+    std::cout << "Youden J = sigEff - bkgEff (maximize); current skim cut = 0.095.\n";
+    std::cout << Form("%-11s %8s %8s | %7s @cut %6s | %7s @cut %6s | %8s %8s\n",
+                      "ID", "aucSS", "aucMET", "J_SS", "", "J_MET", "", "effOS.095", "effMET.095");
+
+    for (int id = 0; id < nID; ++id)
+    {
+        const TString tag = idNames[id].c_str();
+        std::vector<double> xcut(nCutsCont), effOS(nCutsCont), effSS(nCutsCont), effMET(nCutsCont);
+        std::vector<double> pOS(nCutsCont), tOS(nCutsCont), pSS(nCutsCont), pMET(nCutsCont);
+        for (int ic = 0; ic < nCutsCont; ++ic)
+        {
+            xcut[ic]   = cutsCont[ic];
+            effOS[ic]  = safeEff(passOScont[id][ic],  totOScont[id][ic]);
+            effSS[ic]  = safeEff(passSScont[id][ic],  totSScont[id][ic]);
+            effMET[ic] = safeEff(passMETcont[id][ic], totMETcont[id][ic]);
+            pOS[ic] = passOScont[id][ic]; tOS[ic] = totOScont[id][ic];
+            pSS[ic] = passSScont[id][ic]; pMET[ic] = passMETcont[id][ic];
+        }
+
+        // eff + count graphs (for plotting / downstream FoM)
+        auto wg = [&](const char *pre, std::vector<double> &y)
+        { TGraph *g = new TGraph(nCutsCont, xcut.data(), y.data());
+          g->SetName(Form("%s_%s", pre, tag.Data())); g->Write(); };
+        wg("contEffOS", effOS);  wg("contEffSS", effSS);  wg("contEffMET", effMET);
+        wg("contPassOS", pOS);   wg("contTotOS", tOS);    wg("contPassSS", pSS);  wg("contPassMET", pMET);
+
+        // ROC + AUC (continuous)
+        std::vector<double> xRocSS(nCutsCont), yRocSS(nCutsCont), xRocMET(nCutsCont), yRocMET(nCutsCont);
+        for (int ic = 0; ic < nCutsCont; ++ic)
+        { xRocSS[ic] = effOS[ic]; yRocSS[ic] = 1.0 - effSS[ic];
+          xRocMET[ic] = effOS[ic]; yRocMET[ic] = 1.0 - effMET[ic]; }
+        TGraph *gRS = new TGraph(nCutsCont, xRocSS.data(), yRocSS.data());
+        gRS->SetName(Form("contRocSS_%s", tag.Data())); gRS->Write();
+        TGraph *gRM = new TGraph(nCutsCont, xRocMET.data(), yRocMET.data());
+        gRM->SetName(Form("contRocMET_%s", tag.Data())); gRM->Write();
+        const double aucSSc  = rocAUC(xRocSS, yRocSS);
+        const double aucMETc = rocAUC(xRocMET, yRocMET);
+        TParameter<double>(Form("contAucSS_%s", tag.Data()),  aucSSc).Write();
+        TParameter<double>(Form("contAucMET_%s", tag.Data()), aucMETc).Write();
+
+        // Youden's J optima (normalization-free operating point)
+        int ibJSS = 0, ibJMET = 0; double JSS = -1, JMET = -1;
+        for (int ic = 0; ic < nCutsCont; ++ic)
+        {
+            const double jss = effOS[ic] - effSS[ic];
+            const double jmet = effOS[ic] - effMET[ic];
+            if (jss > JSS)  { JSS = jss;   ibJSS = ic; }
+            if (jmet > JMET){ JMET = jmet; ibJMET = ic; }
+        }
+        // operating point at the current cut 0.095
+        const int ic095 = (int)(0.095 * (nCutsCont - 1) + 0.5);
+        std::cout << Form("%-11s %8.4f %8.4f | %7.4f %6.3f | %7.4f %6.3f | %8.4f %8.4f\n",
+                          idNames[id].c_str(), aucSSc, aucMETc,
+                          JSS, cutsCont[ibJSS], JMET, cutsCont[ibJMET],
+                          effOS[ic095], effMET[ic095]);
+    }
+    std::cout << "===========================================================================\n";
 
     fout->Write();
     fout->Close();

@@ -137,7 +137,13 @@ static void DrawInfoBox(const PlotStyle &ps,
     if (lines.empty())
         return;
 
-    TPaveText *p = new TPaveText(ps.boxX1, ps.boxY1, ps.boxX2, ps.boxY2, "NDC");
+    // Size the box to its content (fixed per-line spacing), centered in the
+    // [boxY1,boxY2] band, so 2+ lines pack tightly instead of stretching evenly
+    // across a tall fixed box (a TPaveText spaces lines as boxHeight/nLines).
+    const double lineH = 0.05; // NDC line spacing (boxTextSize is 0.034)
+    const double yC = 0.5 * (ps.boxY1 + ps.boxY2);
+    const double yHalf = 0.5 * lineH * (double)lines.size();
+    TPaveText *p = new TPaveText(ps.boxX1, yC - yHalf, ps.boxX2, yC + yHalf, "NDC");
     p->SetFillStyle(0);
     p->SetBorderSize(0);
     p->SetTextFont(ps.font);

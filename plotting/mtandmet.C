@@ -211,6 +211,16 @@ void mtandmet(bool isElec = 1)
             if (h) h->Scale(k);
     };
 
+    // Sum the absolute integrals of the W signal-MC histos (skips nulls). Used to
+    // annotate the MET plots with the real-W yield (W+ + W-) under "Passing Events".
+    auto sigInt = [](std::initializer_list<TH1D *> hs) -> double
+    {
+        double s = 0.0;
+        for (TH1D *h : hs)
+            if (h) s += h->Integral(1, h->GetNbinsX());
+        return s;
+    };
+
     // --- ABCD QCD (low-MET) background, MET stacks ----------------------------
     // Inclusive-in-rapidity per-charge QCD MET template from
     // correction/qcd_abcd.C (ABCD: data-EWK anti-iso shape x transfer factor),
@@ -532,7 +542,9 @@ void mtandmet(bool isElec = 1)
 
         // --------- MET plots ----------
         {
-            std::vector<std::string> box = {Form("Passing Events: %.0f", h_met_Wp->Integral(1, h_met_Wp->GetNbinsX()))};
+            std::vector<std::string> box = {
+                Form("Passing Events: %.0f", h_met_Wp->Integral(1, h_met_Wp->GetNbinsX())),
+                Form("W signal MC: %.0f", sigInt({h_met_Wp_MC_Wp, h_met_Wp_MC_Wm}))};
 
             std::vector<TH1 *> bkgs = {
                 h_met_Wp_MC_Wp,
@@ -568,7 +580,9 @@ void mtandmet(bool isElec = 1)
         }
 
         {
-            std::vector<std::string> box = {Form("Passing Events: %.0f", h_met_Wm->Integral(1, h_met_Wm->GetNbinsX()))};
+            std::vector<std::string> box = {
+                Form("Passing Events: %.0f", h_met_Wm->Integral(1, h_met_Wm->GetNbinsX())),
+                Form("W signal MC: %.0f", sigInt({h_met_Wm_MC_Wp, h_met_Wm_MC_Wm}))};
 
             std::vector<TH1 *> bkgs = {
                 h_met_Wm_MC_Wp,
@@ -606,7 +620,9 @@ void mtandmet(bool isElec = 1)
         // --------- Met with FB ratio --------
 
         {
-            std::vector<std::string> box = {Form("Passing Events: %.0f", h_met_Wp_FB->Integral(1, h_met_Wp_FB->GetNbinsX()))};
+            std::vector<std::string> box = {
+                Form("Passing Events: %.0f", h_met_Wp_FB->Integral(1, h_met_Wp_FB->GetNbinsX())),
+                Form("W signal MC: %.0f", sigInt({h_met_Wp_FB_MC_Wp, h_met_Wp_FB_MC_Wm}))};
 
             std::vector<TH1 *> bkgs = {
                 h_met_Wp_FB_MC_Wp,
@@ -642,7 +658,9 @@ void mtandmet(bool isElec = 1)
         }
 
         {
-            std::vector<std::string> box = {Form("Passing Events: %.0f", h_met_Wm_FB->Integral(1, h_met_Wm_FB->GetNbinsX()))};
+            std::vector<std::string> box = {
+                Form("Passing Events: %.0f", h_met_Wm_FB->Integral(1, h_met_Wm_FB->GetNbinsX())),
+                Form("W signal MC: %.0f", sigInt({h_met_Wm_FB_MC_Wp, h_met_Wm_FB_MC_Wm}))};
 
             std::vector<TH1 *> bkgs = {
                 h_met_Wm_FB_MC_Wp,
@@ -853,7 +871,9 @@ void mtandmet(bool isElec = 1)
 
     {
 
-        std::vector<std::string> box = {Form("Passing Events: %.0f", h_met_inclusive->Integral(1, h_met_inclusive->GetNbinsX()))};
+        std::vector<std::string> box = {
+            Form("Passing Events: %.0f", h_met_inclusive->Integral(1, h_met_inclusive->GetNbinsX())),
+            Form("W signal MC: %.0f", sigInt({h_met_inclusive_MC_signal}))};
 
         std::vector<TH1 *> bkgs = {
             h_met_inclusive_MC_signal,
