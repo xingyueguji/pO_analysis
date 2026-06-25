@@ -337,22 +337,22 @@ void observables_overlay(const char *muYields = nullptr,
     // charge asymmetry overlay (no theory bands)
     SaveNiceGraph_ErrorBand_TwoData(gC_mu, muLab, gC_el, elLab,
         outDir + "/chargeAsym_overlay", "#eta_{CM}", "A_{ch}", "",
-        "W charge asymmetry", "post-fit signal yield, #mu + e", {}, ps, tuneCharge);
+        "W charge asymmetry", "#mu + e (post-fit)", {}, ps, tuneCharge);
 
     // R_FB overlays (data both channels + all-4-model bands)
     SaveNiceGraph_ErrorBand_TwoData(gS_mu, muLab, gS_el, elLab,
         outDir + "/RFB_sum_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W #rightarrow l #nu", "post-fit signal yield, #mu + e", {}, ps, tuneRFB,
+        "W #rightarrow l #nu", "#mu + e (post-fit)", {}, ps, tuneRFB,
         sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
 
     SaveNiceGraph_ErrorBand_TwoData(gP_mu, muLab, gP_el, elLab,
         outDir + "/RFB_Wp_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W^{+} #rightarrow l^{+} #nu", "post-fit signal yield, #mu + e", {}, ps, tuneRFB,
+        "W^{+} #rightarrow l^{+} #nu", "#mu + e (post-fit)", {}, ps, tuneRFB,
         thWp[0], thWp[1], thWp[2], thWp[3]);
 
     SaveNiceGraph_ErrorBand_TwoData(gM_mu, muLab, gM_el, elLab,
         outDir + "/RFB_Wm_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W^{-} #rightarrow l^{-} #bar{#nu}", "post-fit signal yield, #mu + e", {}, ps, tuneRFB,
+        "W^{-} #rightarrow l^{-} #bar{#nu}", "#mu + e (post-fit)", {}, ps, tuneRFB,
         thWm[0], thWm[1], thWm[2], thWm[3]);
 
     fCmu->Close(); fCel->Close(); fFmu->Close(); fFel->Close();
