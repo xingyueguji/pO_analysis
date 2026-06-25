@@ -1,380 +1,274 @@
-# pO_analysis
+# pO_analysis — end-to-end runbook
 
 W and Z boson cross-section measurement in proton–oxygen (pO) collisions.
 
-Four physics channels — W→μν, W→eν, Z→μμ, Z→ee — each producing cross-sections,
-charge asymmetries vs rapidity, and forward/backward ratios in |y| (CM frame).
-Tau channels (W→τν, Z→ττ) are treated as backgrounds; a possible standalone
-tau measurement is on the wishlist.
+Four physics channels — W→μν, W→eν, Z→μμ, Z→ee — each producing fitted signal
+yields, charge asymmetries vs rapidity, and forward/backward (F/B) ratios in
+|y_CM|. Tau channels (W→τν, Z→ττ) are treated as backgrounds.
 
-The analysis is a three-stage ROOT-C++ pipeline (no python). Histograms produced
-here feed a separate HiggsAnalysis-CombinedLimit fork for the final fit. See
-[CLAUDE.md](CLAUDE.md) for the architectural overview (what each macro does,
-why histogram naming is load-bearing, the inter-channel asymmetries, etc.).
-**This README is the runbook**: in what order to run things, what each step
-reads, what it writes, and how to check success.
+This is the **single runbook for the whole procedure**, across **two repos**:
+
+| repo | role | needs |
+|------|------|-------|
+| `pO_analysis` (this repo) | skim → MC norm → plotting → **structured Combine inputs** → final observables | ROOT 6 (+ACLiC); tested 6.32 |
+| `HiggsAnalysis-CombinedLimit` fork, branch `zheng/po-analysis` | the Combine **fit**: datacards, FitDiagnostics, fitted-yield extraction, postfit plots | **`cmsenv`** (combine + text2workspace.py) |
+
+Only the fit (Module 4) needs `cmsenv`; everything else is plain ROOT. See
+[CLAUDE.md](CLAUDE.md) for the architecture (what each macro does, why histogram
+naming is load-bearing, inter-channel asymmetries). The pipeline:
+
+```
+skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
+     → fit (fork: run_pO_fits.sh)  → <chan>_fitted_yields.root
+     → charge_asym.C / FBratio.C   → observables.C (per-channel + merged overlay)
+```
+
+## TL;DR (full chain)
+
+```bash
+# ---- pO_analysis (plain ROOT) ----
+cd skim        && ./run_all.sh all && ./run_ngen.sh                          # 1,2 skims + N_gen
+cd ../correction && root -l -q 'qcd_abcd.C+' && root -l -q 'qcd_abcd.C+(true)'   # 3a ABCD QCD (mu,ele)
+cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
+                          'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
+                          'plotRpOtheory.C+'; do root -l -q -b "$a"; done       # 3b inputs + theory
+
+# ---- fork (cmsenv) -- locally, or push to lxplus (see Module 4) ----
+cd ../../HiggsAnalysis-CombinedLimit/test && cmsenv && ./run_pO_fits.sh both all   # 4 fit
+
+# ---- pO_analysis (plain ROOT) ----
+cd ../../pO_analysis/analysis                                                    # 5 observables
+for c in mu ele; do F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root
+  root -l -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
+  root -l -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"; done
+cd ../plotting && root -l -q 'observables.C+(false)' && root -l -q 'observables.C+(true)' \
+  && root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
+```
 
 ## Layout
 
-| Directory          | Stage                            | Entry point                              |
-| ------------------ | -------------------------------- | ---------------------------------------- |
-| `merge_rootfile/`  | Build consolidated input file    | `make_filelist.sh` + `hadd_from_list.sh` |
-| `skim/`            | Selection → per-sample histos    | `run_all.sh <channel> [samples]`         |
-| `plotting/`        | Data/MC overlays, plots          | several macros — see Module 3 below      |
-| `analysis/`        | Charge asymmetry, F/B ratio      | `charge_asym.C`, `FBratio.C`             |
-| `correction/`      | QCD bkg, isolation WP, Data/MC checks | several macros — see correction/ module below |
-
-`skim/` is unified post-refactor: shared utilities in `skim/skim_common.h`,
-four channel functions plus a dispatcher in `skim/skim.C`. The pre-refactor
-per-channel macros (`DrawW*`, `DrawDi*`) are preserved in `skim/legacy/` for
-reference / fallback diffing.
-
-`analysis/` uses a shared `analysis/analysis_helpers.h` for `YieldInRange`,
-`AsymErr`, `RatioErr`, and the `kPORapidityShift = 0.3466` constant.
+| Directory          | Stage                                  | Entry point |
+| ------------------ | -------------------------------------- | ----------- |
+| `merge_rootfile/`  | (one-time) discover/hadd EOS ntuples   | `make_filelist.sh`, `hadd_from_list.sh` |
+| `skim/`            | selection → per-sample histos; N_gen   | `run_all.sh`, `run_ngen.sh` |
+| `correction/`      | ABCD QCD, isolation WP, Data/MC checks | `qcd_abcd.C`, … |
+| `plotting/`        | data/MC overlays + **Combine inputs**  | `mtandmet.C`, `dileptonpeak.C`, `plotRpOtheory.C` |
+| `analysis/`        | charge asymmetry, F/B ratio            | `charge_asym.C`, `FBratio.C` |
+| (fork) `test/`     | Combine fit pipeline                   | `run_pO_fits.sh`, `sync_lxplus.sh` |
 
 ## Prerequisites
 
-- ROOT 6 with ACLiC (`.C+` compilation)
-- xrootd / EOS access for the input ntuple (CMS lxplus or equivalent)
-- For the fit stage: CMSSW environment with `combine` and `text2workspace.py`
-  on `PATH`, and your fork of HiggsAnalysis-CombinedLimit checked out to
-  the `zheng/po-analysis` branch (see CLAUDE.md "Downstream fit")
+- ROOT 6 with ACLiC (`.C+`).
+- Input ntuples: per-sample May-26 files; path single-sourced in
+  `skim/skim_common.h` (`kDefaultDataFile` + `ResolveMCSample`), currently the
+  **local** `~/pO_2026_May_26/…`. Repoint there to read off EOS/lxplus.
+- For the fit: `cmsenv` (combine + text2workspace.py) and the fork checked out to
+  `zheng/po-analysis`.
 
 ---
 
 # Workflow
 
-Five modules, run roughly in order. Module 1 is one-time per data version;
-modules 2–5 are the standard reanalyse-everything path.
+## Module 1 — input data (`merge_rootfile/`, one-time per data version)
 
-## Module 1 — `merge_rootfile/`  (build the consolidated input ntuple)
-
-Scope: gather per-sample ROOT files on EOS and `hadd` them into a single
-`pO_2025.root` that the skim reads. Run this once per data/MC version.
+Per-sample ROOT files (the May-26 production): `Data_May_26.root` + 9 MC. The
+skim reads them directly — `merge_rootfile/` only matters when (re)building from
+EOS. Discover + merge:
 
 ```bash
 cd merge_rootfile/
-
-# 1.1  Discover files on EOS for each sample. Writes / updates the per-sample
-#      filelists (MC_Wp_mu.txt, MC_DY_ele_Z.txt, DATA_pass_2.txt, etc.).
-./make_filelist.sh
-
-# 1.2  Inspect and edit the .txt lists if you want to subset / pin versions.
-#      (The version_*.txt files are historical snapshots — don't edit those.)
-
-# 1.3  Merge into the consolidated ROOT file. End result is published at
-#      root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root
-./hadd_from_list.sh
+./make_filelist.sh        # discover EOS files -> per-sample .txt lists
+./hadd_from_list.sh       # hadd into the per-sample ROOT files
 ```
 
-After this, you should not need to touch `merge_rootfile/` until the input
-data changes.
+## Module 2 — skim (`skim/`)
 
-## Module 2 — `skim/`  (event selection → per-sample histograms)
-
-Scope: read the consolidated ntuple, apply the 8-step W cutflow (or the Z
-selection), produce rapidity-binned MT / MET histograms per sample.
+8-step W cutflow / Z selection → rapidity-binned MT & MET histograms per sample.
 
 ```bash
 cd skim/
-
-# 2.1  Sanity: confirm DATA_FILE in run_all.sh points at the right file.
-grep '^DATA_FILE=' run_all.sh
-
-# 2.2  Run a single channel × sample combo to smoke-test the build:
-./run_all.sh Wmu Data
-# This calls: root -l -q -b 'skim.C+(kWmu, "<DATA_FILE>", kData)'
-# On first run, ACLiC will compile skim.C → skim_C.so (a few seconds).
-
-# 2.3  Run a whole channel (all 7 samples):
-./run_all.sh Wmu
-
-# 2.4  Run everything (4 channels × 7 samples = 28 jobs, serial):
-./run_all.sh all
+grep '^DATA_FILE=' run_all.sh           # 2.1 sanity-check the input path
+./run_all.sh Wmu Data                   # 2.2 smoke-test one channel×sample
+./run_all.sh all                        # 2.3 everything (Zmm Zee Wmu Wel × 7 samples)
 ```
+CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples…]` (samples ⊂
+`Data DY Wp Wm DYtau Wptau Wmtau`).
 
-CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples...]` where samples is a
-subset of `Data DY Wp Wm DYtau Wptau Wmtau` (default: all 7).
+**Check:** `skim/logs/*.log` (per-job OK/FAIL), `skim/output/*.txt` (cutflow),
+`skim/rootfile/*_hist.root`. W files hold `h_{mt,met}_W{p,m}_y0..11` (+ `_FB`)
+and the ABCD planes `h_iso_{met,mt}_{mu,ele}{Plus,Minus}`; Z files hold `hMass*`
++ Z kinematics + recoil histos.
 
-**Check success:**
-- `skim/logs/skim_<channel>_<sample>.log` — per-job log; the driver prints
-  `OK` or `FAIL` per job and exits non-zero if any failed.
-- `skim/output/*_{Data,MC}.txt` — human-readable cutflow tables (W channels).
-- `skim/rootfile/*_hist.root` — the histogram outputs. Names:
-  - W: `WToMuNu_pO_PFMet_hist.root` / `..._<sample>_hist.root`
-  - W (ele): `WToElecNu_pO_PFMet_hist.root` / `..._<sample>_hist.root`
-  - Z: `ZToMuMu_pO2025_{Data,MC}_hist.root` (+ per-sample for MC)
-  - Z (ee): `ZToEE_pO2025_{Data,MC}_hist.root` (+ per-sample for MC)
+## Module 2b — MC normalization (`skim/run_ngen.sh` + `skim/mc_norm.h`) — DONE
 
-  Each W file contains 12 rapidity-binned MT/MET histograms per charge
-  (`h_mt_Wp_y0..y11`, `h_mt_Wm_y0..y11`, ditto MET, plus the `_FB` variants
-  and the iso-binned `h_met_iso_*_bin{0..2}` used by the QCD sideband fit).
-  Each Z file contains `hMass`, `hMass_extended`, `hMass_vipul`, plus the
-  kinematic histograms (filled for iso-selected OS pairs in the Z peak
-  [60,120] GeV): boson `h_Zpt`, `h_Zeta`, `h_Zphi` and lepton `h_lepPt`,
-  `h_lepEta`, `h_lepPhi` (both legs).
-
-**Optional isolation studies** (only when retuning a working point) now live in
-`correction/` (along with their ROC plotters) — see the `correction/` module below.
-
-## Module 2b — MC normalization  (N_gen → per-sample scale factors)
-
-Scope: put every MC sample on the data luminosity so the samples are comparable
-to each other and to data. Each sample `s` is scaled by
-`k_s = σ_s · L_int / N_gen,s`, applied downstream as a `TH1::Scale(k_s)` on the
-per-sample template (**not** in the skim — the skim stays raw gen-weighted). A
-bin then holds the absolute predicted yield `σ_s · L_int · (A×ε)`. Ingredients:
-
-- **N_gen,s** — Σ generator weight over **all** events in the sample (no
-  selection); the cross-section denominator. Computed in 2b.1.
-- **L_int = 46.5 nb⁻¹** — the data luminosity (the only data-derived number).
-- **σ_s** — per-sample effective cross section (already includes the branching
-  ratio into the sample's final state and any generator filter). Still TODO —
-  see "Cross sections needed" below.
-
-### 2b.1 — Compute N_gen (once per MC version)
+Every MC sample is scaled (downstream, not in the skim) by
+`k_s = A·σ·L/N_gen` so templates sit at their **absolute** pO yield. A=16
+(Oxygen A-scaling), L=46.5 nb⁻¹, σ read from the POWHEG weights (`⟨w⟩=σ`:
+W⁺ 6.376, W⁻ 5.464, DY 1.175 nb).
 
 ```bash
 cd skim/
-./run_ngen.sh                 # = mkdir + root -l -q -b 'count_ngen.C+'
+./run_ngen.sh        # Σ gen-weight over ALL events -> rootfile/ngen.root + output/ngen.txt
 ```
 
-Reads the 9 per-sample MC files (paths from `ResolveMCSample` in
-`skim_common.h`) and sums `hiEvtAnalyzer/HiTree::weight` over every event, with
-no selection. Writes:
+`pONorm::MCScale("Wp_mu")` (in `mc_norm.h`) reads `ngen.root` and is **wired into**
+`mtandmet.C` + `dileptonpeak.C`, which set `ps.normBkgToData=false` → stacks drawn
+ABSOLUTE (no area norm). Escape hatch: if absolute MC is ~16× off, set `kA_O=1.0`.
 
-- `skim/output/ngen.txt` — readable table: `N_raw`, `N_gen = Σw`, `⟨w⟩`,
-  `w_min/max`, `N_neg` per file.
-- `skim/rootfile/ngen.root` — `h_ngen` / `h_nraw` (one labeled bin per file) plus
-  a `TParameter<double>` `ngen_<label>` / `nraw_<label>` per sample (so
-  downstream code can `Get("ngen_Wp_mu")`).
-
-**Check success:** the `⟨w⟩` / `N_neg` columns reveal the weight convention — if
-every `⟨w⟩ = 1` and `N_neg = 0` the weights are trivial (`N_gen = N_raw`); a
-spread or negative weights mean the gen weighting matters and `N_gen` (Σw, not
-the raw count) is the right denominator.
-
-### 2b.2 — The scale factors (`skim/mc_norm.h`)
-
-Single source of truth: `kLumi_invnb = 46.5` (nb⁻¹) and the per-process cross
-sections `kSigma_Wp` / `kSigma_Wm` / `kSigma_DY` (nb). `pONorm::MCScale("Wp_mu")`
-returns `σ·L/N_gen`, reading `N_gen` from `ngen.root`. It **returns 1.0 and warns
-until the cross sections are filled in**, so it is safe to `#include` and call
-before the σ are known. By lepton universality one σ per process serves all three
-lepton-flavor files (`Wp_mu`/`Wp_ele`/`Wp_tau` share `kSigma_Wp`; only their
-`N_gen` differ).
-
-**Cross sections needed** (low-mass DY skipped) — three numbers, each the
-**per-sample effective** σ (already folded with the leptonic BR and any
-generator filter; use the value the generator reports for the sample, **not** the
-inclusive PDG W cross section), in a frame consistent with the 46.5 nb⁻¹
-(per-pO vs per-nucleon-nucleon):
-
-| constant     | process                   | covers files                   |
-| ------------ | ------------------------- | ------------------------------ |
-| `kSigma_Wp`  | W⁺→ℓν                     | `Wp_mu`, `Wp_ele`, `Wp_tau`    |
-| `kSigma_Wm`  | W⁻→ℓν                     | `Wm_mu`, `Wm_ele`, `Wm_tau`    |
-| `kSigma_DY`  | DY→ℓℓ (generated window)  | `DYmu`, `DYee`, `DYtau`        |
-
-**Status (2026-06-23):** σ is **filled** — read straight from the MC weights (this
-production's `⟨w⟩ = σ`: W⁺ 6.376, W⁻ 5.464, DY 1.175 nb) — `kA_O=16` adds the Oxygen
-A-scaling (σ_pO = A·σ_NN), and `MCScale()` is **wired into** both
-`plotting/mtandmet.C` (W) and `plotting/dileptonpeak.C` (Z): each per-sample MC
-histogram is scaled by its `k_s = A·σ·L/N_gen` before the W⁺/W⁻ `Add`, and both set
-`ps.normBkgToData=false` so the stacks are drawn **ABSOLUTE** (no area
-normalization). Stacked plots are styled with translucent fills + thick
-color-matched outlines. Build the skim first (`run_all.sh`), then
-`root -l -q 'mtandmet.C+(0)'` / `dileptonpeak.C+(0)` etc. If the absolute MC comes
-out ~16× off data, set `kA_O=1.0` (your luminosity was per-nucleon-nucleon).
-Untouched (still raw / shape-only): the skim and the Combine fork's
-`make_combine_input*.C`.
-
-## Module 3 — `plotting/`  (data/MC, background estimation, intermediate plots)
-
-Scope: read the skim outputs, build data/MC overlays, estimate QCD background,
-prepare Combine inputs, draw publication plots. Some macros depend on others;
-the recommended order is below.
-
-All commands assume `cd plotting/`. Outputs land under `plotting/plots/` and
-`plotting/plots/Elec/` (the Combine fork reads these via
-`/afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots/`).
+## Module 3 — plotting + structured Combine inputs (`plotting/`, `correction/`)
 
 ```bash
-cd plotting/
+# 3a. Data-driven ABCD QCD templates (low-MET background). FROM correction/.
+cd correction/
+root -l -q 'qcd_abcd.C+'                 # muon     -> rootfile/qcd_abcd_mu.root
+root -l -q 'qcd_abcd.C+(true)'           # electron -> rootfile/qcd_abcd_ele.root
 
-# 3.1  (moved) The QCD sideband fit and the isolation ROC curves now live in
-#      correction/ — see the correction/ module below.
+# 3b. Data/MC MT+MET plots AND the structured Combine inputs. FROM plotting/.
+cd ../plotting/
+root -l -q 'mtandmet.C+(false)'          # muon  -> plots/combine_input_W.root
+root -l -q 'mtandmet.C+(true)'           # ele   -> plots/Elec/combine_input_W.root
+root -l -q 'dileptonpeak.C+(false)'      # Zmm   -> plots/combine_input_Z.root
+root -l -q 'dileptonpeak.C+(true)'       # Zee   -> plots/Elec/combine_input_Z.root
 
-# 3.2  Data/MC overlays for MT and MET in each rapidity bin.
-#      ALSO writes plots/combine_input_inclusive.root (or plots/Elec/...),
-#      which the Combine fork consumes.
-root -l -q 'mtandmet.C+(0)'              # muon channel  -> plots/
-root -l -q 'mtandmet.C+(1)'              # electron      -> plots/Elec/
-
-# 3.4  Dilepton (Z) peak plots. ALSO writes plots/combine_input_dilepton.root.
-root -l -q 'dileptonpeak.C+(0)'          # Z->mumu
-root -l -q 'dileptonpeak.C+(1)'          # Z->ee
-
-# 3.5  (Optional, cosmetic) muon/electron channel overlay.
-root -l -q 'mtandmet_overlay.C+'
-
-# 3.6  (Optional, cosmetic) Z mass-peak curves.
-root -l -q 'plotZcurve.C+'
-
-# 3.7  Theory predictions for R_FB (reads pQCDLightIon/ + filelist_theory.txt).
-#      MUST run before observables.C in Module 5, because observables.C reads
-#      its output RpO_rootfile/RpO_FB_graphs.root.
-root -l -q 'plotRpOtheory.C+'
-
-# Now switch to Module 4 (analysis/), then come back for 3.8 below.
-
-# 3.8  Final-observable plots: charge asymmetry and R_FB, overlaying data
-#      (from analysis/) with theory (from 3.7). Run AFTER Module 4.
-root -l -q 'observables.C+'
+# 3c. Theory predictions for R_FB (producer; reads pQCDLightIon/ + filelist_theory.txt).
+root -l -q 'plotRpOtheory.C+'            # -> RpO_rootfile/RpO_FB_graphs.root
 ```
 
-**Files that are scratch / stale and should NOT be in the normal run order:**
-`test.C`, `test111.C`, `Z_MC_overlay.C`. (Safe to delete eventually.)
+`combine_input_W.root` is **structured**: one TDirectory per fit region
+(`Wp_lab_y0..11`, `Wm_lab_y*`, `Wp_fb_y*`, `Wm_fb_y*`, `Wp_incl`, `Wm_incl`,
+`W_incl`), each with the 6 **absolute** templates `data_obs/signal/z/ztau/wtau/qcd`
+(MET discriminant; per-y ABCD QCD). `combine_input_Z.root` has a `Z_incl/` dir
+(`data_obs/signal/w/wtau/ztau`, mass peak).
 
-**`plotting_helper.C` and `CMS_lumi.{C,h}`** are headers / helpers `#include`d
-by the macros above. Don't run them directly.
+Optional/cosmetic: `mtandmet_overlay.C`, `plotZcurve.C`. Scratch (ignore):
+`test.C`, `test111.C`, `Z_MC_overlay.C`.
 
-## Module 4 — `analysis/`  (extract final observables)
+## Module 4 — Combine fit (fork `zheng/po-analysis`, needs `cmsenv`)
 
-Scope: read the W-channel rapidity-binned MT histograms from the skim, compute
-charge asymmetry and forward/backward ratio per rapidity bin. Outputs feed
-plotting/observables.C and (downstream) the cross-section fit.
+One driver does everything per channel. Full details:
+`HiggsAnalysis-CombinedLimit/test/README_pO_fits.md`.
+
+```bash
+cd HiggsAnalysis-CombinedLimit/test
+cmsenv
+./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit]
+```
+
+It (1) finds this repo's structured inputs (env `PO_PLOTS` / `--plots-dir`, else
+autodetect), (2) generates **all** datacards (`make_pO_datacards.sh`: 48 per-(charge,y)
+lab+FB, per-charge incl, `W_incl`, `Z_incl`, simultaneous `WZ`), (3) runs
+`text2workspace` + `combine -M FitDiagnostics` per region into a clean tree
+`pO_fit_out/<chan>/{datacards,fits/<region>,postfit,summary}`, (4) extracts
+fitted yields (`extract_pO_yields.C`), (5) draws postfit plots (`draw_postfit_pO.C`,
+same cosmetics as `mtandmet.C`).
+
+**Fit model:** `signal` → POI `r`; EWK `z/ztau/wtau` → ONE shared `ewk_norm`
+rateParam (relative MC composition LOCKED, overall EWK scale floats); ABCD `qcd`
+→ free `qcd_norm`. Simultaneous `WZ` card: a shared `eff_lumi` multiplies the W
+`signal` and the Z signal (`zsig`); the high-purity Z peak pins it and it cancels
+in W/Z ratios.
+
+**Outputs** (`pO_fit_out/<chan>/summary/`): `<chan>_W_yields.csv`,
+`<chan>_summary.csv`, and `<chan>_fitted_yields.root` — single-bin
+`h_mt_W{p,m}_y0..11` (lab) + `..._FB` histos with Sumw2 = fit error, i.e. the
+exact names `charge_asym.C`/`FBratio.C` read.
+
+Channel = `mu|ele|both`; mode = `perbin` (48 per-(charge,y) W regions),
+`incl` (`Wp_incl Wm_incl W_incl Z_incl`), `combined` (the `WZ` fit only), or
+`all`. `--dry-run` builds datacards without `cmsenv`; `--no-postfit` skips plots.
+Per-region failures (e.g. a tail FB bin with an all-zero `qcd` template) are
+logged and skipped, not fatal — check `pO_fit_out/<chan>/fits/<region>/fit.log`.
+Sanity-check `eff_lumi ≈ 1` in `<chan>_summary.csv` after the combined fit.
+
+### Running the fit on lxplus (split workflow)
+
+Build inputs locally (Modules 1–3), fit on lxplus, run observables locally. The
+helper `test/sync_lxplus.sh` wraps every transfer over ONE SSH connection
+(single auth; `kinit zheng@CERN.CH` first for none):
+
+```bash
+cd HiggsAnalysis-CombinedLimit/test
+./sync_lxplus.sh upload                  # 4 inputs + scripts -> lxplus
+ssh zheng@lxplus.cern.ch                 # then: cmsenv; cd $FORK_LX/test
+#   PO_PLOTS=/afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots ./run_pO_fits.sh both all
+./sync_lxplus.sh download                # summary/ (fitted yields + CSVs) <- lxplus
+./sync_lxplus.sh download --postfit      # also the postfit plots
+```
+lxplus paths (override via env): `ANA_LX=/afs/cern.ch/user/z/zheng/pO_analysis`,
+`FORK_LX=/afs/cern.ch/user/z/zheng/CMSSW_14_1_0_pre4/src/HiggsAnalysis/CombinedLimit`.
+
+If a downloaded `<chan>_fitted_yields.root` is ever empty but the CSV is fine,
+rebuild it without re-running the fit:
+`root -l -q 'my_script/make_yields_from_csv.C("<chan>_W_yields.csv","<chan>_fitted_yields.root")'`.
+
+## Module 5 — final observables (`analysis/` + `plotting/`)
+
+Run `charge_asym.C` / `FBratio.C` on the **fitted-yields** file (they take the
+input as their first arg — fitted yields replace raw, no edits), then plot.
 
 ```bash
 cd analysis/
+for c in mu ele; do
+  F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root
+  root -l -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
+  root -l -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"
+done
 
-# 4.1  Charge asymmetry: A(y) = (N+ - N-) / (N+ + N-) per rapidity bin.
-#      Reads ../skim/rootfile/WToMuNu_pO_PFMet_hist.root (and equivalents).
-#      Writes ../skim/rootfile/charge_asym.root with a TGraphErrors per channel.
-root -l -q 'charge_asym.C+'
-
-# 4.2  Forward/backward ratio R_FB(|y_CM|). Same input, same output dir.
-#      Writes ../skim/rootfile/FBratio.root.
-root -l -q 'FBratio.C+'
+cd ../plotting/
+root -l -q 'observables.C+(false)'       # muon individual   -> plots/{charge_asym,FBratio}/
+root -l -q 'observables.C+(true)'        # electron individual -> plots/Elec/...
+# merged muon+electron overlay -> plots/merged/ :
+root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
 ```
 
-Function signatures take optional kwargs (input/output paths, MT vs MET,
-integration range, NY). Default args match the standard workflow — read the
-function prototypes in the .C files if you need to override.
+`observables.C` overlays the data with **all four** nPDF theory bands
+(EPPS21/nCTEQ15HQ/nNNPDF3.0/TUJU21nlo, drawn as filled bands only — no central
+line / error bars). The merged overlay shows muon (black circles) + electron
+(red squares) on the same axes; the sum-channel theory is weighted by the
+combined μ+e fitted yields. Theory file optional (missing → data-only).
+For cross-sections, read the absolute yields from the CSVs.
 
-Once these have run, go back to Module 3 step 3.8 to draw the final plots.
+## Module 6 — corrections & studies (`correction/`)
 
-## Module 5 — Cross-section fit  (HiggsCombine fork, separate repo)
-
-Scope: read the Combine input histograms produced by Module 3.3 / 3.4, run
-the statistical fit per channel, extract cross-sections and post-fit
-distributions. Lives in a **separate** repo with the fit code on a non-default
-branch.
-
-```bash
-# 5.1  Switch to the Combine fork (or open a new shell there).
-cd /Users/zhenghuang/HiggsAnalysis-CombinedLimit
-
-# 5.2  Check out the working branch (main is unmodified stock v10.6.0).
-git checkout zheng/po-analysis
-
-# 5.3  Source the CMSSW environment (combine + text2workspace.py on PATH).
-#      Typical lxplus pattern:
-#   cd /path/to/CMSSW_X_Y_Z/src && cmsenv && cd -
-#      ... your setup may differ.
-
-# 5.4  Make sure plotting/plots/ from this repo is reachable by run_fit.sh.
-#      The fit reads from /afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots/.
-
-# 5.5  Run the fit driver.
-bash test/run_fit.sh
-```
-
-`test/run_fit.sh` invokes `test/my_script/make_combine_input{,_Z}.C` to build
-Combine inputs, runs `text2workspace.py` on each datacard
-(`testdatacard_{inclusive,Zmumu,Zee}.txt`), then `combine -M FitDiagnostics`,
-and finally `draw_postfit_*.C` for postfit plots. Three channels are fit
-independently (W inclusive, Z→μμ, Z→ee).
-
----
-
-## Module 6 — `correction/`  (corrections & studies: QCD bkg, isolation WP, Data/MC checks)
-
-Scope: code that derives/validates corrections and background estimates, kept
-out of the main pipeline. All macros are run **from `correction/`** and write
-their outputs there (`correction/plots/`, `correction/rootfile/`).
+Run from `correction/`; outputs in `correction/plots/`, `correction/rootfile/`.
 
 ```bash
 cd correction/
-
-# QCD background shape (low-iso sideband fit, Rayleigh-like). Reads the main W
-# skim output at ../skim/rootfile/. Doesn't work well at current stats — ABCD
-# method is on the TODO list.
-root -l -q 'qcd_sideband_fit_and_extrapolate.C+'
-
-# Isolation working-point study: produce ROC inputs from the ntuple, then plot.
-root -l -q 'isolation.C+'                 # muon  -> ./rootfile/IsoStudy*/Ptcut*/ggbranch*.root
-root -l -q 'isolation_ele.C+'             # electron -> ./rootfile/IsoStudyOutputs_electron.root
-root -l -q 'PlotsIsoROC.C+(0)'            # muon ROC curves
-root -l -q 'PlotIsoROC_ele.C+'            # electron ROC curves
-
-# Data vs signal-MC kinematic check (boson pT/eta/phi, lepton pT/eta/phi, mass),
-# shape-normalized, with a ratio pad. Reads the Z skim outputs in
-# ../skim/rootfile/; writes correction/plots/dataMC_<channel>/.
-root -l -q 'dataMC_kinematics.C+("Zmm")'  # Z->mumu
-root -l -q 'dataMC_kinematics.C+("Zee")'  # Z->ee
+root -l -q 'qcd_abcd.C+'                       # ABCD QCD (muon)  [also Module 3a]
+root -l -q 'qcd_abcd.C+(true)'                 # ABCD QCD (electron)
+root -l -q 'isolation.C+("<data.root>",false)' # muon iso/ID ROC study
+root -l -q 'isolation_ele.C+'                  # electron iso/ID ROC study
+root -l -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots
+root -l -q 'plot_iso_summary.C+'               # per-ID iso summary
+root -l -q 'dataMC_kinematics.C+("Zmm")'       # Data/MC Z kinematics (Zmm/Zee)
+root -l -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil_raw_ele.C for e)
 ```
-
-The shared ratio-pad helper `SaveDataMCRatio(...)` lives in
-`plotting/plotting_helper.C` (these macros `#include "../plotting/plotting_helper.C"`).
-
-## Quick rerun cheat sheet
-
-If everything is set up and you just want to redo from the skim onward:
-
-```bash
-cd skim                                  && ./run_all.sh all
-cd ../correction                         && root -l -q 'qcd_sideband_fit_and_extrapolate.C+'
-cd ../plotting                           \
-    && root -l -q 'mtandmet.C+(0)'  && root -l -q 'mtandmet.C+(1)'  \
-    && root -l -q 'dileptonpeak.C+(0)' && root -l -q 'dileptonpeak.C+(1)' \
-    && root -l -q 'plotRpOtheory.C+'
-cd ../analysis                           \
-    && root -l -q 'charge_asym.C+' && root -l -q 'FBratio.C+'
-cd ../plotting                           && root -l -q 'observables.C+'
-cd /Users/zhenghuang/HiggsAnalysis-CombinedLimit \
-    && git checkout zheng/po-analysis    && bash test/run_fit.sh
-```
+`qcd_sideband_fit_and_extrapolate.C` is the **superseded** Rayleigh QCD method
+(kept for reference; ABCD replaced it).
 
 ---
 
 ## Notes / health of the pipeline
 
-- **Sumw2 / weights (updated June 2026):** all histograms in `skim/skim.C`
-  call `Sumw2()` and `skim()` sets `TH1::SetDefaultSumw2(kTRUE)` defensively.
-  The per-event generator weight (`hiEvtAnalyzer/HiTree::weight`) is now
-  applied to every MC Fill (data = weight 1), and `analysis/analysis_helpers.h`
-  was made Sumw2-aware: `YieldInRange` returns a `Yield{value,error}` via
-  `TH1::IntegralAndError`, and `AsymErr`/`RatioErr` propagate the stored σ²
-  (reducing exactly to the old Poisson form when weights are unity).
-
-- **Corrections WIP.** Recoil corrections, lepton scale factors, momentum
-  scale/smearing are not all applied yet. Don't assume MC in `skim/rootfile/`
-  is fully corrected when reading downstream.
-
-- **MC normalization (June 2026).** Absolute per-sample normalization
-  `k_s = σ·L/N_gen` is scaffolded (`skim/count_ngen.C` → `ngen.root`,
-  `skim/mc_norm.h`, `L = 46.5 nb⁻¹`) but **not yet wired** — plots and Combine
-  inputs are still shape-normalized to the data integral, and the cross sections
-  σ are pending. See Module 2b.
-
-- **Pre-existing inter-channel asymmetries** (preserved through the May 2026
-  refactor — see CLAUDE.md): DY-veto pT cut differs between Wmu (15 GeV) and
-  Wel (10 GeV); isolation cut differs (0.15 vs 0.095); DY-veto mass-window
-  comments lie ("> 30" but actual is `80 < m < 110`); `tHi->GetEntry` is
-  unguarded in Zmm but guarded in Zee. These may all be intentional but
-  are worth a second look.
-
-- **No tests, no CI.** Validation is by re-running the skim and inspecting
-  cutflow logs + plots. Recent commit messages are placeholders ("xx") so
-  `git log --oneline` is unreliable — read diffs.
+- **MC normalization is wired (absolute).** `k_s = A·σ·L/N_gen` applied in
+  `mtandmet.C` + `dileptonpeak.C`; templates and Combine inputs are absolute (no
+  area norm). The Z peak validates it: Z `signal` lands within ~4% of data.
+- **Combine inputs renamed.** `combine_input_W.root` / `combine_input_Z.root`
+  (structured, TDir per region) replace the old `combine_input_inclusive.root` /
+  `combine_input_dilepton.root`. The old fork pipeline
+  (`run_fit.sh`, `make_combine_input*.C`, `testdatacard_*.txt`,
+  `draw_postfit_{inclusive,Zmumu,Zee}.C`) is **superseded** by `run_pO_fits.sh`.
+- **Sumw2 / weights.** All skim histos `Sumw2()`'d; per-event gen weight applied
+  to MC; `analysis_helpers.h` Sumw2-aware (`YieldInRange`→`IntegralAndError`,
+  `AsymErr`/`RatioErr` propagate σ²). Fitted-yield histos carry the fit error in
+  Sumw2, so charge_asym/FBratio errors are the fit uncertainties.
+- **Corrections WIP.** Recoil, lepton SFs, momentum scale/smearing not all
+  applied — don't assume MC in `skim/rootfile/` is fully corrected.
+- **Acceptance / efficiency.** The fitted yields are reconstructed, in-acceptance
+  yields; the asymmetry / F/B are fiducial, lepton-level observables. Acceptance
+  is only needed to extrapolate to total cross-sections or boson-level theory.
+- **Pre-existing inter-channel asymmetries** (intentional; see CLAUDE.md):
+  DY-veto pT 15 (μ) vs 10 (e) GeV; isolation 0.15 (μ) vs 0.095 (e); `skim_Zee`
+  still on `eleCutIdWP95` while `skim_Wel` uses `eleMVAIdWP95`.
+- **No tests/CI.** Validate by re-running + inspecting logs/plots. Commit
+  messages are often "xx" — read diffs, not `git log`.

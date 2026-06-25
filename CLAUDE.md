@@ -108,7 +108,8 @@ Data/MC overlay, background estimation, plots.
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
-- [plotting/observables.C](plotting/observables.C), [plotting/plotZcurve.C](plotting/plotZcurve.C), [plotting/plotRpOtheory.C](plotting/plotRpOtheory.C) — final-observable plots, theory comparisons
+- [plotting/observables.C](plotting/observables.C) — final charge-asym + F/B plots from the FITTED yields (Combine), with **all four** nPDF theory bands (EPPS21/nCTEQ15HQ/nNNPDF3.0/TUJU21nlo). `observables(isElec)` = per-channel (`./plots` and `./plots/Elec`); `observables_overlay()` = merged μ+e overlay (`./plots/merged/`, run via `gROOT->LoadMacro("observables.C+"); observables_overlay();`). Reads `charge_asym_fit_<chan>.root`/`FBratio_fit_<chan>.root` + `RpO_rootfile/RpO_FB_graphs.root` (theory optional). The old "Projection with Electrons" pseudo-band is gone (real e overlaid instead).
+- [plotting/plotZcurve.C](plotting/plotZcurve.C), [plotting/plotRpOtheory.C](plotting/plotRpOtheory.C) — `plotRpOtheory.C` PRODUCES the theory graphs (`filelist_theory.txt` → `RpO_rootfile/RpO_FB_graphs.root`, channel/yield-independent); plotZcurve = Z curve plot
 - [plotting/CMS_lumi.C](plotting/CMS_lumi.C), [plotting/plotting_helper.C](plotting/plotting_helper.C) — style / helpers
 
 ### Stage 3 — `analysis/`
@@ -192,8 +193,10 @@ datacards, (3) runs `text2workspace`+`combine -M FitDiagnostics` per fit region
 into a clean output tree, (4) extracts fitted signal yields, (5) draws postfit
 plots in the same cosmetics as `plotting/mtandmet.C`.
 
-**Full step-by-step runbook (both repos):** `test/README_pO_fits.md` on the
-fork — skim → ngen → ABCD QCD → structured inputs → fit → feed charge_asym/FBratio.
+**Full step-by-step runbook (both repos):** this repo's `README.md` is the
+single end-to-end procedure (skim → ngen → ABCD QCD → structured inputs → fit →
+charge_asym/FBratio → observables). The fork's `test/README_pO_fits.md` is now
+just the fit-stage quick reference pointing back to it.
 
 Scripts on `zheng/po-analysis`:
 - `test/run_pO_fits.sh` — master driver (bash-3.2 safe; `--dry-run` builds
