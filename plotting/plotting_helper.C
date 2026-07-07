@@ -395,12 +395,33 @@ static void SaveNiceGraph_ErrorBand(TGraphErrors *g,
 
     g->Draw("P SAME"); // data points back on top of the bands
 
+    // >>>>>>>>>>>>>>>> TEMPORARY: "Projection with Electrons" band >>>>>>>>>>>>>>>>
+    // Overlays the data with shrunk error bars (errors/1.4 ~ errors/sqrt(2), i.e.
+    // the stat reach with ~2x the data). To REMOVE later: set kShowProjection to
+    // false (one line), or delete this whole block AND its legend entry below.
+    const bool kShowProjection = false;
+    TGraphErrors *g_stat2x = nullptr;
+    if (kShowProjection)
+    {
+        g_stat2x = (TGraphErrors *)g->Clone(Form("%s_stat2x", g->GetName()));
+        const double scale = 1.0 / 1.4; // ~1/sqrt(2)
+        for (int i = 0; i < g_stat2x->GetN(); ++i)
+            g_stat2x->SetPointError(i, 0, g_stat2x->GetErrorY(i) * scale);
+        g_stat2x->SetLineColor(kRed + 1);
+        g_stat2x->SetMarkerSize(0);
+        g_stat2x->SetLineWidth(3);
+        g_stat2x->Draw("E SAME");
+    }
+    // <<<<<<<<<<<<<<<<<<<< end temporary projection block <<<<<<<<<<<<<<<<<<<<<<<<<
+
     TLegend *leg = new TLegend(0.20, 0.15, 0.45, 0.40);
     leg->SetBorderSize(0);
     leg->SetFillStyle(0);
     leg->SetTextFont(42);
     leg->SetTextSize(0.033);
     leg->AddEntry(g, "Data", "p");
+    if (kShowProjection && g_stat2x) // TEMPORARY -- remove with the projection block above
+        leg->AddEntry(g_stat2x, "Projection with Electrons", "l");
     for (int i = 0; i < 4; ++i)
         if (models[i]) leg->AddEntry(models[i], mname[i], "f");
     leg->Draw();

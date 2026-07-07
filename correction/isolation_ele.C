@@ -273,18 +273,25 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
     tEle->SetBranchAddress("eleMVAIsoWP90", &eleMVAIsoWP90);
     tEle->SetBranchAddress("eleMVAIsoWP95", &eleMVAIsoWP95);
 
-    // Continuous PF relIso inputs (elePFChIso/NeuIso/PhoIso) -- these are what
+    // Continuous PF relIso inputs (elePFChIso/NeuIso/PhoIso/PUIso) -- these are what
     // skim_Wel actually cuts on (RelIsoPF < 0.095), NOT the MVA Iso WP above. Wired
     // so we can scan the continuous relIso and confirm/optimize the real cut.
+    // 2026-07-06: relIso now Delta-beta PU-corrected (MuonPOG convention), matching
+    // the updated skim RelIsoPF: (ch + max(0, neu + pho - 0.5*PU)) / pT.
     std::vector<float> *elePFChIso = nullptr, *elePFNeuIso = nullptr, *elePFPhoIso = nullptr;
+    std::vector<float> *elePFPUIso = nullptr;
     const bool hasPFCh  = (tEle->GetBranch("elePFChIso") != nullptr);
     const bool hasPFNeu = (tEle->GetBranch("elePFNeuIso") != nullptr);
     const bool hasPFPho = (tEle->GetBranch("elePFPhoIso") != nullptr);
+    const bool hasPFPU  = (tEle->GetBranch("elePFPUIso") != nullptr);
     if (hasPFCh)  { tEle->SetBranchStatus("elePFChIso", 1);  tEle->SetBranchAddress("elePFChIso", &elePFChIso); }
     if (hasPFNeu) { tEle->SetBranchStatus("elePFNeuIso", 1); tEle->SetBranchAddress("elePFNeuIso", &elePFNeuIso); }
     if (hasPFPho) { tEle->SetBranchStatus("elePFPhoIso", 1); tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso); }
+    if (hasPFPU)  { tEle->SetBranchStatus("elePFPUIso", 1);  tEle->SetBranchAddress("elePFPUIso", &elePFPUIso); }
     if (!hasPFCh || !hasPFNeu || !hasPFPho)
         std::cerr << "[WARN] continuous electron relIso branches missing; continuous scan will be empty\n";
+    if (!hasPFPU)
+        std::cerr << "[WARN] no elePFPUIso branch; continuous relIso falls back to uncorrected (no Delta-beta)\n";
 
     Int_t nPF = 0;
     std::vector<int> *pfId = nullptr;
@@ -337,12 +344,17 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
     std::vector<std::vector<double>> passMETcont(nID, std::vector<double>(nCutsCont, 0.0));
     std::vector<std::vector<double>> totMETcont(nID, std::vector<double>(nCutsCont, 0.0));
 
+    // Delta-beta PU-corrected relIso (MuonPOG convention), same formula as the
+    // skim's RelIsoPF. Reproduces the ntuplizer's elePFRelIsoWithDBeta exactly.
     auto relIsoEle = [&](int i) -> double
     {
         if (!elePt || !elePFChIso || !elePFNeuIso || !elePFPhoIso) return 999.0;
         const double pt = elePt->at(i);
         if (pt <= 0) return 999.0;
-        return (elePFChIso->at(i) + elePFNeuIso->at(i) + elePFPhoIso->at(i)) / pt;
+        const double pu      = (elePFPUIso ? (double)elePFPUIso->at(i) : 0.0);
+        const double neutral = std::max(0.0, (double)elePFNeuIso->at(i)
+                                           + (double)elePFPhoIso->at(i) - 0.5 * pu);
+        return (elePFChIso->at(i) + neutral) / pt;
     };
 
     // ---------- Event loop ----------

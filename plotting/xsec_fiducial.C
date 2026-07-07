@@ -131,7 +131,7 @@ void xsec_fiducial(
     tx.SetTextFont(42);
     tx.SetTextSize(0.030);
     tx.DrawLatex(0.18, 0.255, "stat. unc. only"); // L is already in the CMS_lumi label
-    tx.DrawLatex(0.18, 0.21, "no #epsilon correction (#equiv #sigma^{fid}#times#epsilon)");
+    tx.DrawLatex(0.18, 0.21, "no eff and acc. correction");
 
     TLegend *leg = new TLegend(0.20, 0.66, 0.44, 0.82); // upper-left (header is upper-right)
     leg->SetBorderSize(0);
@@ -259,7 +259,7 @@ void xsec_fiducial_diff(bool isElec = false,
 
     TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.030);
     tx.DrawLatex(0.18, 0.235, "stat. unc. only"); // L is already in the CMS_lumi label
-    tx.DrawLatex(0.18, 0.190, "no #epsilon correction (#equiv #sigma^{fid}#times#epsilon)");
+    tx.DrawLatex(0.18, 0.190, "no eff and acc. correction");
 
     TLegend *leg = new TLegend(0.18, 0.61, 0.40, 0.79); // upper-left, below CMS (header is upper-right)
     leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.036);

@@ -118,7 +118,8 @@ static bool PassDYVeto_Wmu(double dyMuPtMin, double isoMax,
                            bool has_muIsPF,    std::vector<int> *muIsPF,
                            std::vector<float> *muPFChIso,
                            std::vector<float> *muPFNeuIso,
-                           std::vector<float> *muPFPhoIso)
+                           std::vector<float> *muPFPhoIso,
+                           std::vector<float> *muPFPUIso)
 {
   if (!muPt || !muEta || !muPhi || !muCharge) return true;
   if (!has_muIDTight || !muIDTight)            return true;
@@ -131,7 +132,7 @@ static bool PassDYVeto_Wmu(double dyMuPtMin, double isoMax,
     if (muPt->at(i) <= dyMuPtMin) continue;
     if (muIDTight->at(i) == 0)     continue;
     if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
-    if (RelIsoPF(i, muPt, muPFChIso, muPFNeuIso, muPFPhoIso) >= isoMax) continue;
+    if (RelIsoPF(i, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso) >= isoMax) continue;
     cand.push_back(i);
   }
 
@@ -191,9 +192,13 @@ static int FindLeadingElectron_TightPF(int nEle,
   return best;
 }
 
-// Step 4 (electron W): OS dielectron DY veto. Uses integer WP gates
-// (eleIDTight + eleIso) — different surface from the muon version.
-static bool PassDYVeto_Wel(double dyElePtMin,
+// Step 4 (electron W): OS dielectron DY veto. Veto if exists OS pair where
+// both electrons are ID'd (eleMVAIdWP95) with continuous PF relIso < isoMax,
+// pT > dyElePtMin, AND mll in (dyMassMin, dyMassMax) — same surface as the
+// muon veto. (Iso gate switched from the integer eleMVAIsoWP95 WP to the
+// continuous RelIsoPF on 2026-07-02: the isolation study characterized the
+// continuous cut, and the MVA-Iso WP was shown NOT to track it.)
+static bool PassDYVeto_Wel(double dyElePtMin, double isoMax,
                            double dyMassMin, double dyMassMax,
                            int nEle,
                            std::vector<float> *elePt,
@@ -201,7 +206,10 @@ static bool PassDYVeto_Wel(double dyElePtMin,
                            std::vector<float> *elePhi,
                            std::vector<int>   *eleCharge,
                            std::vector<int>   *eleIDTight,
-                           std::vector<int>   *eleIso)
+                           std::vector<float> *elePFChIso,
+                           std::vector<float> *elePFNeuIso,
+                           std::vector<float> *elePFPhoIso,
+                           std::vector<float> *elePFPUIso)
 {
   if (!elePt || !eleEta || !elePhi || !eleCharge) return true;
 
@@ -212,7 +220,7 @@ static bool PassDYVeto_Wel(double dyElePtMin,
   {
     if (elePt->at(i) <= dyElePtMin) continue;
     if (eleIDTight->at(i) == 0)      continue;
-    if (eleIso->at(i)    == 0)       continue;
+    if (RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso) >= isoMax) continue;
     cand.push_back(i);
   }
 
@@ -304,6 +312,7 @@ int skim_Wmu(const char *fname, SampleType sample)
   std::vector<int>   *muCharge = nullptr;
   std::vector<int>   *muIDTight = nullptr, *muIsPF = nullptr;
   std::vector<float> *muPFChIso = nullptr, *muPFNeuIso = nullptr, *muPFPhoIso = nullptr;
+  std::vector<float> *muPFPUIso = nullptr;
 
   tMu->SetBranchStatus("*", 0);
   tMu->SetBranchStatus("nMu", 1);
@@ -316,6 +325,7 @@ int skim_Wmu(const char *fname, SampleType sample)
   if (HasBranch(tMu, "muPFChIso"))   tMu->SetBranchStatus("muPFChIso", 1);
   if (HasBranch(tMu, "muPFNeuIso"))  tMu->SetBranchStatus("muPFNeuIso", 1);
   if (HasBranch(tMu, "muPFPhoIso"))  tMu->SetBranchStatus("muPFPhoIso", 1);
+  if (HasBranch(tMu, "muPFPUIso"))   tMu->SetBranchStatus("muPFPUIso", 1);
 
   tMu->SetBranchAddress("nMu",      &nMu);
   tMu->SetBranchAddress("muPt",     &muPt);
@@ -331,9 +341,13 @@ int skim_Wmu(const char *fname, SampleType sample)
   const bool has_muPFChIso  = HasBranch(tMu, "muPFChIso");
   const bool has_muPFNeuIso = HasBranch(tMu, "muPFNeuIso");
   const bool has_muPFPhoIso = HasBranch(tMu, "muPFPhoIso");
+  const bool has_muPFPUIso  = HasBranch(tMu, "muPFPUIso");
   if (has_muPFChIso)  tMu->SetBranchAddress("muPFChIso",  &muPFChIso);
   if (has_muPFNeuIso) tMu->SetBranchAddress("muPFNeuIso", &muPFNeuIso);
   if (has_muPFPhoIso) tMu->SetBranchAddress("muPFPhoIso", &muPFPhoIso);
+  if (has_muPFPUIso)  tMu->SetBranchAddress("muPFPUIso",  &muPFPUIso);
+  if (!has_muPFPUIso)
+    std::cout << "[WARN] skim_Wmu: no muPFPUIso branch; relIso falls back to uncorrected (no Delta-beta).\n";
 
   // -------- HLT bit (step 3) --------
   const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleMuOpen_v1");
@@ -575,7 +589,7 @@ int skim_Wmu(const char *fname, SampleType sample)
                         nMu, muPt, muEta, muPhi, muCharge,
                         has_muIDTight, muIDTight,
                         has_muIsPF, muIsPF,
-                        muPFChIso, muPFNeuIso, muPFPhoIso))
+                        muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso))
       continue;
     N[4]++;
 
@@ -608,7 +622,7 @@ int skim_Wmu(const char *fname, SampleType sample)
     if (std::abs(muEta->at(iLead)) > muEtaMax) continue;
     N[6]++;
 
-    const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
+    const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
     const int    isoBin  = FindIsoBin(isoLead);
     const bool   isQCDSideband   = (isoBin >= 0);
     const bool   passIsoNominal  = (isoLead < isoMax);
@@ -801,13 +815,18 @@ int skim_Wel(const char *fname, SampleType sample)
   if (HasBranch(tEle, "elePFChIso"))  tEle->SetBranchStatus("elePFChIso", 1);
   if (HasBranch(tEle, "elePFNeuIso")) tEle->SetBranchStatus("elePFNeuIso", 1);
   if (HasBranch(tEle, "elePFPhoIso")) tEle->SetBranchStatus("elePFPhoIso", 1);
+  if (HasBranch(tEle, "elePFPUIso"))  tEle->SetBranchStatus("elePFPUIso", 1);
 
   const bool has_elePFChIso  = HasBranch(tEle, "elePFChIso");
   const bool has_elePFNeuIso = HasBranch(tEle, "elePFNeuIso");
   const bool has_elePFPhoIso = HasBranch(tEle, "elePFPhoIso");
+  const bool has_elePFPUIso  = HasBranch(tEle, "elePFPUIso");
   if (has_elePFChIso)  tEle->SetBranchAddress("elePFChIso",  &elePFChIso);
   if (has_elePFNeuIso) tEle->SetBranchAddress("elePFNeuIso", &elePFNeuIso);
   if (has_elePFPhoIso) tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso);
+  if (has_elePFPUIso)  tEle->SetBranchAddress("elePFPUIso",  &elePFPUIso);
+  if (!has_elePFPUIso)
+    std::cout << "[WARN] skim_Wel: no elePFPUIso branch; relIso falls back to uncorrected (no Delta-beta).\n";
 
   std::vector<int> *eleMVAIsoWP80 = nullptr, *eleMVAIsoWP85 = nullptr;
   std::vector<int> *eleMVAIsoWP90 = nullptr, *eleMVAIsoWP95 = nullptr;
@@ -1053,10 +1072,12 @@ int skim_Wel(const char *fname, SampleType sample)
     // isolation/ID study in correction/isolation_ele.C — the MVA WP is the best QCD
     // rejector while CutWP95 was the worst; continuous AUC_MET 0.911 vs 0.870). Used
     // consistently for the DY veto, the tight-ID gate, and the leading-electron pick.
-    // The leading-electron isolation stays continuous relIso < isoMax (0.095, ~optimal).
-    if (!PassDYVeto_Wel(dyElePtMin, dyMassMin, dyMassMax,
+    // ALL isolation gates are the continuous PF relIso < isoMax (0.095, ~optimal):
+    // the leading electron AND (since 2026-07-02) the DY-veto legs, which
+    // previously used the integer eleMVAIsoWP95 WP.
+    if (!PassDYVeto_Wel(dyElePtMin, isoMax, dyMassMin, dyMassMax,
                         nEle, elePt, eleEta, elePhi, eleCharge,
-                        eleMVAIdWP95, eleMVAIsoWP95))
+                        eleMVAIdWP95, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso))
       continue;
     N[4]++;
 
@@ -1087,14 +1108,14 @@ int skim_Wel(const char *fname, SampleType sample)
 
     // (7) Leading electron Iso (continuous PF rel-iso; legacy WP path kept commented):
     // if (eleMVAIsoWP95->at(iLead) != 1) continue;
-    const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
+    const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
     const int    isoBin  = FindIsoBin(isoLead);
     const bool   isQCDSideband   = (isoBin >= 0);
     const bool   passIsoNominal  = (isoLead < isoMax);
     // Isolation study DONE (2026-06-24, correction/isolation_ele.C continuous scan):
     // continuous relIso < 0.095 is the Youden-J(QCD) optimum for the MVA IDs, so the
-    // cut value stands. (Still missing: pileup/deltaBeta correction on the electron
-    // relIso -- re-confirm the 0.095 optimum once that is added.)
+    // cut value stands. (2026-07-06: relIso now carries the Delta-beta PU correction,
+    // consistent with the MuonPOG definition used in the muon channel.)
 
     if (passIsoNominal) N[7]++;
 
@@ -1301,14 +1322,19 @@ int skim_Zmm(const char *fname, SampleType sample)
 
   // -------- PF iso --------
   std::vector<float> *muPFChIso = nullptr, *muPFNeuIso = nullptr, *muPFPhoIso = nullptr;
+  std::vector<float> *muPFPUIso = nullptr;
 
   const bool has_muPFChIso  = HasBranch(tMu, "muPFChIso");
   const bool has_muPFNeuIso = HasBranch(tMu, "muPFNeuIso");
   const bool has_muPFPhoIso = HasBranch(tMu, "muPFPhoIso");
+  const bool has_muPFPUIso  = HasBranch(tMu, "muPFPUIso");
 
   if (has_muPFChIso)  { tMu->SetBranchStatus("muPFChIso",  1); tMu->SetBranchAddress("muPFChIso",  &muPFChIso);  }
   if (has_muPFNeuIso) { tMu->SetBranchStatus("muPFNeuIso", 1); tMu->SetBranchAddress("muPFNeuIso", &muPFNeuIso); }
   if (has_muPFPhoIso) { tMu->SetBranchStatus("muPFPhoIso", 1); tMu->SetBranchAddress("muPFPhoIso", &muPFPhoIso); }
+  if (has_muPFPUIso)  { tMu->SetBranchStatus("muPFPUIso",  1); tMu->SetBranchAddress("muPFPUIso",  &muPFPUIso);  }
+  if (!has_muPFPUIso)
+    std::cout << "[WARN] skim_Zmm: no muPFPUIso branch; relIso falls back to uncorrected (no Delta-beta).\n";
 
   // -------- HLT objects --------
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleMuOpen_v");
@@ -1486,7 +1512,7 @@ int skim_Zmm(const char *fname, SampleType sample)
       if (requirePF      && has_muIsPF     && muIsPF->at(i)     == 0) continue;
       if (requireTightID && has_muIDTight  && muIDTight->at(i)  == 0) continue;
 
-      const double isoLead = RelIsoPF(i, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
+      const double isoLead = RelIsoPF(i, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
       if (isoLead >= isoMax) passIsolead = false;
 
       for (int j = i + 1; j < nMu; ++j)
@@ -1515,7 +1541,7 @@ int skim_Zmm(const char *fname, SampleType sample)
         v2.SetPtEtaPhiM(muPt->at(j), muEta->at(j), muPhi->at(j), MU_MASS);
         const double m = (v1 + v2).M();
 
-        const double isosub = RelIsoPF(j, muPt, muPFChIso, muPFNeuIso, muPFPhoIso);
+        const double isosub = RelIsoPF(j, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
         if (isosub >= isoMax) passIsosec = false;
 
         if (passIsolead && passIsosec)
@@ -1598,7 +1624,7 @@ int skim_Zee(const char *fname, SampleType sample)
   double ptMin2  = 10.0;
   const double etaMax         = 2.4;   // FIXME: ECAL is 2.5 with 1.4442-1.566 gap
   const bool   requireOS      = true;
-  const bool   requireTightID = true;  // active gate uses eleCutIdWP95 (FIXME: WP95 is loose)
+  const bool   requireTightID = true;  // active gate: eleMVAIdWP95 (switched from eleCutIdWP95 2026-07-02, matching skim_Wel + the iso/ID study)
   const bool   applyVz        = true;
   const double vzMax          = 15.0;
   const bool   applyHiBin     = false;
@@ -1664,7 +1690,7 @@ int skim_Zee(const char *fname, SampleType sample)
   tEle->SetBranchAddress("elePhi",    &elePhi);
   tEle->SetBranchAddress("eleCharge", &eleCharge);
 
-  // -------- Electron IDs (kept around; active gate uses eleCutIdWP95) --------
+  // -------- Electron IDs (kept around; active gate uses eleMVAIdWP95) --------
   std::vector<int> *eleMVAIdWP80 = nullptr, *eleMVAIdWP85 = nullptr;
   std::vector<int> *eleMVAIdWP90 = nullptr, *eleMVAIdWP95 = nullptr;
   std::vector<int> *eleCutIdWP70 = nullptr, *eleCutIdWP80 = nullptr;
@@ -1687,7 +1713,7 @@ int skim_Zee(const char *fname, SampleType sample)
   hookID("eleCutIdWP90", &eleCutIdWP90);
   hookID("eleCutIdWP95", &eleCutIdWP95);
 
-  const bool has_eleID = HasBranch(tEle, "eleCutIdWP95");
+  const bool has_eleID = HasBranch(tEle, "eleMVAIdWP95");
 
   // -------- Iso WPs (kept around; active gate uses RelIsoPF) --------
   std::vector<int> *eleMVAIsoWP80 = nullptr, *eleMVAIsoWP85 = nullptr;
@@ -1698,12 +1724,17 @@ int skim_Zee(const char *fname, SampleType sample)
   hookID("eleMVAIsoWP95", &eleMVAIsoWP95);
 
   std::vector<float> *elePFChIso = nullptr, *elePFNeuIso = nullptr, *elePFPhoIso = nullptr;
+  std::vector<float> *elePFPUIso = nullptr;
   const bool has_elePFChIso  = HasBranch(tEle, "elePFChIso");
   const bool has_elePFNeuIso = HasBranch(tEle, "elePFNeuIso");
   const bool has_elePFPhoIso = HasBranch(tEle, "elePFPhoIso");
+  const bool has_elePFPUIso  = HasBranch(tEle, "elePFPUIso");
   if (has_elePFChIso)  { tEle->SetBranchStatus("elePFChIso", 1);  tEle->SetBranchAddress("elePFChIso",  &elePFChIso);  }
   if (has_elePFNeuIso) { tEle->SetBranchStatus("elePFNeuIso", 1); tEle->SetBranchAddress("elePFNeuIso", &elePFNeuIso); }
   if (has_elePFPhoIso) { tEle->SetBranchStatus("elePFPhoIso", 1); tEle->SetBranchAddress("elePFPhoIso", &elePFPhoIso); }
+  if (has_elePFPUIso)  { tEle->SetBranchStatus("elePFPUIso", 1);  tEle->SetBranchAddress("elePFPUIso",  &elePFPUIso);  }
+  if (!has_elePFPUIso)
+    std::cout << "[WARN] skim_Zee: no elePFPUIso branch; relIso falls back to uncorrected (no Delta-beta).\n";
 
   // -------- Event branches --------
   Float_t vz    = 999.f;
@@ -1892,12 +1923,12 @@ int skim_Zee(const char *fname, SampleType sample)
       if (elePt->at(i) < ptMin2) continue;
       if (TMath::Abs(eleEta->at(i)) > etaMax) continue;
 
-      if (requireTightID && has_eleID && eleCutIdWP95->at(i) == 0) continue;
+      if (requireTightID && has_eleID && eleMVAIdWP95->at(i) == 0) continue;
 
       /* WP-based iso, kept for cross-check
       if (eleMVAIsoWP95->at(i) != 1) passIsolead = false;
       */
-      const double isoLead = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
+      const double isoLead = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
       if (isoLead >= isoMax) passIsolead = false;
       // FIXME: redo electron isolation study; not using a working point.
 
@@ -1907,7 +1938,7 @@ int skim_Zee(const char *fname, SampleType sample)
 
         if (elePt->at(j) < ptMin2) continue;
         if (TMath::Abs(eleEta->at(j)) > etaMax) continue;
-        if (requireTightID && has_eleID && eleCutIdWP95->at(j) == 0) continue;
+        if (requireTightID && has_eleID && eleMVAIdWP95->at(j) == 0) continue;
 
         if (requireOS && eleCharge->at(i) * eleCharge->at(j) >= 0) continue;
 
@@ -1926,7 +1957,7 @@ int skim_Zee(const char *fname, SampleType sample)
         /* WP-based iso, kept for cross-check
         if (eleMVAIsoWP95->at(j) != 1) passIsosec = false;
         */
-        const double isosub = RelIsoPF(j, elePt, elePFChIso, elePFNeuIso, elePFPhoIso);
+        const double isosub = RelIsoPF(j, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
         if (isosub >= isoMax) passIsosec = false;
 
         if (passIsolead && passIsosec)

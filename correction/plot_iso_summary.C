@@ -7,13 +7,17 @@
 //
 // Electron: one canvas per ID (8), reading the continuous-relIso scan added to
 //           isolation_ele.C  -> plotsROC_ele/summary_<ID>.png
-// Muon:     one canvas (single tight ID), reading the branch-relIso (= skim
-//           RelIsoPF) scan from isolation.C -> plotsROC/summary_muon.png
+// Muon:     one canvas (single tight ID), reading the pure tight-ID scan from
+//           isolation_mu_tight.C -> plotsROC/summary_muon.png
 //           (muon needs no ID study; shown the same way for consistency).
 //
-// Inputs (run isolation.C+ / isolation_ele.C+ first):
-//   rootfile/IsoStudyOutputs_electron.root   (contEff*_<ID>, contRocMET_<ID>, contAucMET_<ID>)
-//   rootfile/ggbranchStudyOutputs.root       (eff*gg_case0_R0.3, rocMETgg_..., aucMETgg_...)
+// Both scans use the Delta-beta PU-corrected relIso (MuonPOG convention),
+// (ch + max(0, neu + pho - 0.5*PU))/pT -- same as the skim's RelIsoPF
+// (switched 2026-07-06; before that both were the uncorrected sum).
+//
+// Inputs (run isolation_mu_tight.C+ / isolation_ele.C+ first):
+//   rootfile/IsoStudyOutputs_electron.root    (contEff*_<ID>, contRocMET_<ID>, contAucMET_<ID>)
+//   rootfile/IsoStudyOutputs_muon_tight.root  (contEff*_dbeta, contRocMET_dbeta, contAucMET_dbeta)
 //
 // Run from correction/:  root -l -q 'plot_iso_summary.C+'
 
@@ -65,7 +69,7 @@ void drawOne(const std::string &outNoExt, const std::string &title,
     gPad->SetGridx(); gPad->SetGridy();
     gOS->SetLineColor(cSig); gOS->SetLineWidth(3); gOS->SetMarkerColor(cSig);
     gMET->SetLineColor(cQCD); gMET->SetLineWidth(3);
-    gOS->SetTitle(";relIso cut;efficiency");
+    gOS->SetTitle(";relIso (#Delta#beta-corr.) cut;efficiency");
     gOS->GetXaxis()->SetLimits(0.0, isoXmax);
     gOS->GetYaxis()->SetRangeUser(0.0, 1.08);
     gOS->GetYaxis()->SetTitleOffset(1.4);
@@ -149,22 +153,22 @@ void plot_iso_summary()
     }
     else printf("[WARN] no rootfile/IsoStudyOutputs_electron.root (run isolation_ele.C+ first)\n");
 
-    // ---------------- MUON: single tight ID, branch relIso (= skim RelIsoPF) ----------------
-    TFile *fm = TFile::Open("rootfile/ggbranchStudyOutputs.root", "READ");
+    // ---------------- MUON: single tight ID, Delta-beta relIso (= skim RelIsoPF) ----------------
+    TFile *fm = TFile::Open("rootfile/IsoStudyOutputs_muon_tight.root", "READ");
     if (fm && !fm->IsZombie())
     {
-        TGraph *gOS = (TGraph *)fm->Get("effOSgg_case0_R0.3");
-        TGraph *gMET = (TGraph *)fm->Get("effMETgg_case0_R0.3");
-        TGraph *gSS = (TGraph *)fm->Get("effSSgg_case0_R0.3");
-        TGraph *gROC = (TGraph *)fm->Get("rocMETgg_case0_R0.3");
-        TParameter<double> *pa = (TParameter<double> *)fm->Get("aucMETgg_case0_R0.3");
+        TGraph *gOS = (TGraph *)fm->Get("contEffOS_dbeta");
+        TGraph *gMET = (TGraph *)fm->Get("contEffMET_dbeta");
+        TGraph *gSS = (TGraph *)fm->Get("contEffSS_dbeta");
+        TGraph *gROC = (TGraph *)fm->Get("contRocMET_dbeta");
+        TParameter<double> *pa = (TParameter<double> *)fm->Get("contAucMET_dbeta");
         if (gOS && gMET && gROC)
             drawOne("plotsROC/summary_muon", "W#rightarrow#mu#nu   ID = muIDTight",
                     gOS, gMET, gSS, gROC, pa ? pa->GetVal() : -1.0, 0.15, 0.50);
-        else printf("[WARN] missing muon ggbranch graphs\n");
+        else printf("[WARN] missing muon dbeta graphs\n");
         fm->Close();
     }
-    else printf("[WARN] no rootfile/ggbranchStudyOutputs.root (run isolation.C+ first)\n");
+    else printf("[WARN] no rootfile/IsoStudyOutputs_muon_tight.root (run isolation_mu_tight.C+ first)\n");
 
     printf("[DONE] iso summary -> plotsROC_ele/summary_<ID>.png , plotsROC/summary_muon.png\n");
 }

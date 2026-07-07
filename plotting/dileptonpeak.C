@@ -176,6 +176,16 @@ void dileptonpeak(bool isElec = 0)
                 zdir->cd();
                 TH1D *hc = (TH1D*)h->Clone(name);
                 hc->SetDirectory(zdir);
+                // text2workspace cannot build a pdf from an ALL-ZERO shape (its
+                // normalization integral is zero) and every card containing this
+                // channel would fail. Floor empty MC templates to a negligible
+                // epsilon in the central bin (e.g. wtau under the Z peak went to
+                // exactly 0 events after the 2026-07-02 eleMVAIdWP95 switch).
+                if (strcmp(name, "data_obs") != 0 && hc->Integral() <= 0.0) {
+                    std::cerr << "[WARN] combine_input_Z Z_incl/" << name
+                              << " is empty -> flooring central bin to 1e-6 for Combine\n";
+                    hc->SetBinContent(hc->GetNbinsX() / 2, 1e-6);
+                }
                 hc->Write(name, TObject::kOverwrite);
             };
 

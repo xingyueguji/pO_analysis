@@ -137,21 +137,29 @@ inline TVector2 ComputePFMET(std::vector<int> *pfId,
   return TVector2(-sumPx, -sumPy);
 }
 
-// Relative PF isolation, (chHad + neuHad + pho) / pT.
-// Generic over the lepton flavour: pass the lepton pT vector + three iso vectors.
+// Relative PF isolation with the Delta-beta pileup correction (MuonPOG
+// convention), (chHad + max(0, neuHad + pho - 0.5*PU)) / pT.
+// Generic over the lepton flavour: pass the lepton pT vector + four iso vectors.
+// Verified 2026-07-06: this formula applied to the ele component branches
+// reproduces the ntuplizer's elePFRelIsoWithDBeta exactly.
+// If the PU vector is null (branch absent), degrades to the uncorrected
+// (ch + neu + pho)/pT sum.
 inline double RelIsoPF(int i,
                        std::vector<float> *lepPt,
                        std::vector<float> *lepPFChIso,
                        std::vector<float> *lepPFNeuIso,
-                       std::vector<float> *lepPFPhoIso)
+                       std::vector<float> *lepPFPhoIso,
+                       std::vector<float> *lepPFPUIso)
 {
   if (!lepPt || !lepPFChIso || !lepPFNeuIso || !lepPFPhoIso)
     return 999.0;
   const double pt = lepPt->at(i);
   if (pt <= 0)
     return 999.0;
-  const double isoAbs = lepPFChIso->at(i) + lepPFNeuIso->at(i) + lepPFPhoIso->at(i);
-  return isoAbs / pt;
+  const double pu      = (lepPFPUIso ? (double)lepPFPUIso->at(i) : 0.0);
+  const double neutral = std::max(0.0, (double)lepPFNeuIso->at(i)
+                                     + (double)lepPFPhoIso->at(i) - 0.5 * pu);
+  return (lepPFChIso->at(i) + neutral) / pt;
 }
 
 // MT for a (lepton, MET) pair, given lepton phi & MET TVector2.

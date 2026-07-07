@@ -28,7 +28,7 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 ```bash
 # ---- pO_analysis (plain ROOT) ----
 cd skim        && ./run_all.sh all && ./run_ngen.sh                          # 1,2 skims + N_gen
-cd ../correction && root -l -q 'qcd_abcd.C+' && root -l -q 'qcd_abcd.C+(true)'   # 3a ABCD QCD (mu,ele)
+cd ../correction && root -l -b -q 'qcd_abcd.C+' && root -l -b -q 'qcd_abcd.C+(true)'   # 3a ABCD QCD (mu,ele)
 cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
                           'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
                           'plotRpOtheory.C+'; do root -l -q -b "$a"; done       # 3b inputs + theory
@@ -39,9 +39,9 @@ cd ../../HiggsAnalysis-CombinedLimit/test && cmsenv && ./run_pO_fits.sh both all
 # ---- pO_analysis (plain ROOT) ----
 cd ../../pO_analysis/analysis                                                    # 5 observables
 for c in mu ele; do F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root
-  root -l -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
-  root -l -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"; done
-cd ../plotting && root -l -q 'observables.C+(false)' && root -l -q 'observables.C+(true)' \
+  root -l -b -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
+  root -l -b -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"; done
+cd ../plotting && root -l -b -q 'observables.C+(false)' && root -l -b -q 'observables.C+(true)' \
   && root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
 ```
 
@@ -120,18 +120,18 @@ ABSOLUTE (no area norm). Escape hatch: if absolute MC is ~16× off, set `kA_O=1.
 ```bash
 # 3a. Data-driven ABCD QCD templates (low-MET background). FROM correction/.
 cd correction/
-root -l -q 'qcd_abcd.C+'                 # muon     -> rootfile/qcd_abcd_mu.root
-root -l -q 'qcd_abcd.C+(true)'           # electron -> rootfile/qcd_abcd_ele.root
+root -l -b -q 'qcd_abcd.C+'                 # muon     -> rootfile/qcd_abcd_mu.root
+root -l -b -q 'qcd_abcd.C+(true)'           # electron -> rootfile/qcd_abcd_ele.root
 
 # 3b. Data/MC MT+MET plots AND the structured Combine inputs. FROM plotting/.
 cd ../plotting/
-root -l -q 'mtandmet.C+(false)'          # muon  -> plots/combine_input_W.root
-root -l -q 'mtandmet.C+(true)'           # ele   -> plots/Elec/combine_input_W.root
-root -l -q 'dileptonpeak.C+(false)'      # Zmm   -> plots/combine_input_Z.root
-root -l -q 'dileptonpeak.C+(true)'       # Zee   -> plots/Elec/combine_input_Z.root
+root -l -b -q 'mtandmet.C+(false)'          # muon  -> plots/combine_input_W.root
+root -l -b -q 'mtandmet.C+(true)'           # ele   -> plots/Elec/combine_input_W.root
+root -l -b -q 'dileptonpeak.C+(false)'      # Zmm   -> plots/combine_input_Z.root
+root -l -b -q 'dileptonpeak.C+(true)'       # Zee   -> plots/Elec/combine_input_Z.root
 
 # 3c. Theory predictions for R_FB (producer; reads pQCDLightIon/ + filelist_theory.txt).
-root -l -q 'plotRpOtheory.C+'            # -> RpO_rootfile/RpO_FB_graphs.root
+root -l -b -q 'plotRpOtheory.C+'            # -> RpO_rootfile/RpO_FB_graphs.root
 ```
 
 `combine_input_W.root` is **structured**: one TDirectory per fit region
@@ -151,34 +151,49 @@ One driver does everything per channel. Full details:
 ```bash
 cd HiggsAnalysis-CombinedLimit/test
 cmsenv
-./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit]
+./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit] [--draw-only]
 ```
 
 It (1) finds this repo's structured inputs (env `PO_PLOTS` / `--plots-dir`, else
 autodetect), (2) generates **all** datacards (`make_pO_datacards.sh`: 48 per-(charge,y)
-lab+FB, per-charge incl, `W_incl`, `Z_incl`, simultaneous `WZ`), (3) runs
+lab+FB — each a **two-channel card fitted simultaneously with `Z_incl`** —
+per-charge incl, `W_incl`, `Z_incl`, simultaneous `WZ`), (3) runs
 `text2workspace` + `combine -M FitDiagnostics` per region into a clean tree
 `pO_fit_out/<chan>/{datacards,fits/<region>,postfit,summary}`, (4) extracts
 fitted yields (`extract_pO_yields.C`), (5) draws postfit plots (`draw_postfit_pO.C`,
 same cosmetics as `mtandmet.C`).
 
-**Fit model:** `signal` → POI `r`; EWK `z/ztau/wtau` → ONE shared `ewk_norm`
-rateParam (relative MC composition LOCKED, overall EWK scale floats); ABCD `qcd`
-→ free `qcd_norm`. Simultaneous `WZ` card: a shared `eff_lumi` multiplies the W
-`signal` and the Z signal (`zsig`); the high-purity Z peak pins it and it cancels
-in W/Z ratios.
+**Fit model (two-parameter, 2026-07-01):** two MC scales per fit — the POI
+**`r` = all W-related MC** (W `signal` + `wtau`; plus the `w`/`wtau` backgrounds
+under the Z peak in simultaneous cards) and **`dy_norm` = all DY-related MC**
+(`z` + `ztau`; plus the Z signal in simultaneous cards). Composition WITHIN each
+group stays locked by the absolute `k_s` templates. Standalone `Z_incl` card:
+roles flip — the POI `r` IS the DY scale (`signal`+`ztau`), the W backgrounds
+get a free `w_norm`. Data-driven ABCD `qcd` → its own free `qcd_norm`.
+**Simultaneous cards** (`WZ` and every per-bin W card) have two fit channels
+(W region + `Z_incl`): `r` scales the W-related in both, the shared `dy_norm`
+scales the DY-related in both — the high-purity Z peak pins it (this replaces
+the old shared `eff_lumi`). Systematics deliberately deferred (stat-only fits).
 
 **Outputs** (`pO_fit_out/<chan>/summary/`): `<chan>_W_yields.csv`,
 `<chan>_summary.csv`, and `<chan>_fitted_yields.root` — single-bin
 `h_mt_W{p,m}_y0..11` (lab) + `..._FB` histos with Sumw2 = fit error, i.e. the
 exact names `charge_asym.C`/`FBratio.C` read.
 
-Channel = `mu|ele|both`; mode = `perbin` (48 per-(charge,y) W regions),
-`incl` (`Wp_incl Wm_incl W_incl Z_incl`), `combined` (the `WZ` fit only), or
-`all`. `--dry-run` builds datacards without `cmsenv`; `--no-postfit` skips plots.
+Channel = `mu|ele|both`; mode = `perbin` (48 per-(charge,y) W regions, each
+simultaneous with `Z_incl`), `incl` (`Wp_incl Wm_incl W_incl Z_incl`,
+standalone), `combined` (the `WZ` fit only), or `all`. `--dry-run` builds
+datacards without `cmsenv`; `--no-postfit` skips plots; `--draw-only` redraws
+the postfit plots from an existing fit run (only `root` needed — for cosmetic
+`draw_postfit_pO.C` changes; requires the `fits/` tree, so redraw where the
+fits ran and `sync_lxplus.sh download --postfit`).
 Per-region failures (e.g. a tail FB bin with an all-zero `qcd` template) are
 logged and skipped, not fatal — check `pO_fit_out/<chan>/fits/<region>/fit.log`.
-Sanity-check `eff_lumi ≈ 1` in `<chan>_summary.csv` after the combined fit.
+Sanity-check `dy_norm ≈ 1` in `<chan>_summary.csv` after the fits (`w_norm ≈ 1`
+for `Z_incl`). Each postfit plot also carries on-plot fit-quality: `χ²/ndf (p)`
+(Poisson GoF), the fitted `r`, the fitted `DY norm`/`W norm`/`QCD norm`
+(whichever float in that fit), and a red `status/covQ` flag if the fit didn't
+converge cleanly (see the fork README "Diagnosing fit quality").
 
 ### Running the fit on lxplus (split workflow)
 
@@ -199,7 +214,7 @@ lxplus paths (override via env): `ANA_LX=/afs/cern.ch/user/z/zheng/pO_analysis`,
 
 If a downloaded `<chan>_fitted_yields.root` is ever empty but the CSV is fine,
 rebuild it without re-running the fit:
-`root -l -q 'my_script/make_yields_from_csv.C("<chan>_W_yields.csv","<chan>_fitted_yields.root")'`.
+`root -l -b -q 'my_script/make_yields_from_csv.C("<chan>_W_yields.csv","<chan>_fitted_yields.root")'`.
 
 ## Module 5 — final observables (`analysis/` + `plotting/`)
 
@@ -210,15 +225,22 @@ input as their first arg — fitted yields replace raw, no edits), then plot.
 cd analysis/
 for c in mu ele; do
   F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root
-  root -l -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
-  root -l -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"
+  root -l -b -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"
+  root -l -b -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"
 done
 
+## one line version: 
+cd /Users/zhenghuang/pO_analysis/analysis && for c in mu ele; do F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root; root -l -b -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_$c.root\")"; root -l -b -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_$c.root\")"; done
+
 cd ../plotting/
-root -l -q 'observables.C+(false)'       # muon individual   -> plots/{charge_asym,FBratio}/
-root -l -q 'observables.C+(true)'        # electron individual -> plots/Elec/...
+root -l -b -q 'observables.C+(false)'       # muon individual   -> plots/{charge_asym,FBratio}/
+root -l -b -q 'observables.C+(true)'        # electron individual -> plots/Elec/...
 # merged muon+electron overlay -> plots/merged/ :
 root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
+
+## one line version
+cd /Users/zhenghuang/pO_analysis/plotting && root -l -b -q 'observables.C+(false)' && root -l -b -q 'observables.C+(true)' && root -l -b -q -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
+
 ```
 
 `observables.C` overlays the data with **all four** nPDF theory bands
@@ -226,7 +248,20 @@ root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay();'
 line / error bars). The merged overlay shows muon (black circles) + electron
 (red squares) on the same axes; the sum-channel theory is weighted by the
 combined μ+e fitted yields. Theory file optional (missing → data-only).
-For cross-sections, read the absolute yields from the CSVs.
+Fiducial W cross sections (W⁺, W⁻, W inclusive; μ and e overlaid) straight from
+the summary CSVs:
+```bash
+root -l -b -q 'xsec_fiducial.C+'        # W+/W-/W incl (mu+e) -> plots/xsec/W_fiducial.{png,pdf}
+#   sigma_fid = N_fit / L (L = pONorm::kLumi_invnb = 46.5 nb^-1).
+# differential vs CM-frame lepton pseudorapidity, d(sigma_fid)/d(eta), per channel
+# (uses the per-bin <chan>_W_yields.csv; eta bins taken from g_chargeAsym_mt):
+root -l -q -b -e 'gROOT->LoadMacro("xsec_fiducial.C+"); xsec_fiducial_diff(false); xsec_fiducial_diff(true);'
+#   -> plots/xsec/W_dsigma_deta_{mu,ele}.{png,pdf}
+```
+NB this is the fiducial σ **before** the lepton-efficiency correction (= σ_fid×ε),
+which is why μ and e differ — the gap is the channel efficiency, and they should
+converge once ε is applied (universality). Stat (fit) uncertainty only.
+For arbitrary regions, read the absolute yields directly from the CSVs.
 
 ## Module 6 — corrections & studies (`correction/`)
 
@@ -234,14 +269,15 @@ Run from `correction/`; outputs in `correction/plots/`, `correction/rootfile/`.
 
 ```bash
 cd correction/
-root -l -q 'qcd_abcd.C+'                       # ABCD QCD (muon)  [also Module 3a]
-root -l -q 'qcd_abcd.C+(true)'                 # ABCD QCD (electron)
-root -l -q 'isolation.C+("<data.root>",false)' # muon iso/ID ROC study
-root -l -q 'isolation_ele.C+'                  # electron iso/ID ROC study
-root -l -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots
-root -l -q 'plot_iso_summary.C+'               # per-ID iso summary
-root -l -q 'dataMC_kinematics.C+("Zmm")'       # Data/MC Z kinematics (Zmm/Zee)
-root -l -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil_raw_ele.C for e)
+root -l -b -q 'qcd_abcd.C+'                       # ABCD QCD (muon)  [also Module 3a]
+root -l -b -q 'qcd_abcd.C+(true)'                 # ABCD QCD (electron)
+root -l -b -q 'isolation_mu_tight.C+("<data.root>")' # muon iso study (TightID, Δβ relIso) [current]
+root -l -b -q 'isolation_ele.C+("<data.root>")'   # electron iso/ID ROC study (Δβ relIso)
+root -l -b -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots
+root -l -b -q 'plot_iso_summary.C+'               # per-ID iso summary (reads both studies)
+# isolation.C = legacy muon multi-cone/multi-def scan (uncorrected iso, kept for reference)
+root -l -b -q 'dataMC_kinematics.C+("Zmm")'       # Data/MC Z kinematics (Zmm/Zee)
+root -l -b -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil_raw_ele.C for e)
 ```
 `qcd_sideband_fit_and_extrapolate.C` is the **superseded** Rayleigh QCD method
 (kept for reference; ABCD replaced it).
@@ -268,7 +304,9 @@ root -l -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil_ra
   yields; the asymmetry / F/B are fiducial, lepton-level observables. Acceptance
   is only needed to extrapolate to total cross-sections or boson-level theory.
 - **Pre-existing inter-channel asymmetries** (intentional; see CLAUDE.md):
-  DY-veto pT 15 (μ) vs 10 (e) GeV; isolation 0.15 (μ) vs 0.095 (e); `skim_Zee`
-  still on `eleCutIdWP95` while `skim_Wel` uses `eleMVAIdWP95`.
+  DY-veto pT 15 (μ) vs 10 (e) GeV; isolation 0.15 (μ) vs 0.095 (e) — both
+  re-confirmed optimal under the Δβ-corrected relIso (2026-07-06, MuonPOG
+  convention, all channels; needs re-skim). All electron ID gates are
+  `eleMVAIdWP95` since 2026-07-02 (`skim_Zee` included).
 - **No tests/CI.** Validate by re-running + inspecting logs/plots. Commit
   messages are often "xx" — read diffs, not `git log`.

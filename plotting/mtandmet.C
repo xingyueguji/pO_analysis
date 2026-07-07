@@ -1020,6 +1020,14 @@ void mtandmet(bool isElec = 1)
                 d->cd();
                 TH1D *hc = (TH1D *)h->Clone(nm);
                 hc->SetDirectory(d);
+                // text2workspace cannot build a pdf from an ALL-ZERO shape; floor
+                // empty MC templates (possible in sparse tail bins) to a
+                // negligible epsilon so the region's card stays fittable.
+                if (strcmp(nm, "data_obs") != 0 && hc->Integral() <= 0.0) {
+                    std::cerr << "[WARN] combine_input_W " << r.dir << "/" << nm
+                              << " is empty -> flooring central bin to 1e-6 for Combine\n";
+                    hc->SetBinContent(hc->GetNbinsX() / 2, 1e-6);
+                }
                 hc->Write(nm, TObject::kOverwrite);
             };
             wn(r.data, "data_obs");
