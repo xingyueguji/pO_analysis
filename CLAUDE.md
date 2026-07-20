@@ -120,7 +120,7 @@ Data/MC overlay, background estimation, plots.
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
 - [plotting/observables.C](plotting/observables.C) — final charge-asym + F/B plots from the FITTED yields (Combine), with **all four** nPDF theory bands (EPPS21/nCTEQ15HQ/nNNPDF3.0/TUJU21nlo). `observables(isElec)` = per-channel (`./plots` and `./plots/Elec`); `observables_overlay()` = merged μ+e overlay (`./plots/merged/`, run via `gROOT->LoadMacro("observables.C+"); observables_overlay();`). Reads `charge_asym_fit_<chan>.root`/`FBratio_fit_<chan>.root` + `RpO_rootfile/RpO_FB_graphs.root` (theory optional). The old "Projection with Electrons" pseudo-band is gone (real e overlaid instead).
 - [plotting/plotZcurve.C](plotting/plotZcurve.C), [plotting/plotRpOtheory.C](plotting/plotRpOtheory.C) — `plotRpOtheory.C` PRODUCES the theory graphs (`filelist_theory.txt` → `RpO_rootfile/RpO_FB_graphs.root`, channel/yield-independent); plotZcurve = Z curve plot
-- [plotting/CMS_lumi.C](plotting/CMS_lumi.C), [plotting/plotting_helper.C](plotting/plotting_helper.C) — style / helpers
+- [plotting/CMS_lumi.C](plotting/CMS_lumi.C), [plotting/plotting_helper.C](plotting/plotting_helper.C) — style / helpers. **Pull sub-pad (2026-07-19):** `SaveNicePlot1D_WithBkg` grew an opt-in bottom pull pad (`ps.pullPad`, default off): per-bin `(data − MC_total)/σ` with the Poisson-correct `σ² = MC_total + σ_MCstat²` (NOT the observed data error — that blows up empty-data bins against a small-error MC tail), drawn as zero-anchored bars (`"B"`), red dashed 0-line + dotted ±2σ guides, auto-symmetric y-range `max(3, 1.15·max|pull|)` (fix via `ps.pullYRange`). The canvas stays NEAR-SQUARE (height × `ps.pullCanvasScale`=1.125, so 800×900); the main pad compresses slightly — everything is pad-relative so the layout scales consistently. Enabled in `mtandmet.C` (all MT/MET stacks, both channels) and the fork's `draw_postfit_pO.C`; `dileptonpeak.C` left single-pad (flip `ps.pullPad` there to add it).
 
 ### Stage 3 — `analysis/`
 
@@ -231,7 +231,10 @@ Scripts on `zheng/po-analysis`:
   width-3 outlines, `CMS_lumi`) → identical look to `mtandmet.C`.
 - `test/my_script/plotting_helper.C` — **synced** from this repo's
   `plotting/plotting_helper.C` (was an older solid-fill copy; `CMS_lumi.C` was
-  already identical).
+  already identical). Re-synced 2026-07-19 with the pull-pad helper;
+  `draw_postfit_pO.C` sets `ps.pullPad=true`, so postfit plots gain the pull
+  sub-pad on the next fit run (the local `pO_fit_out/` tree has no `fits/`
+  dirs left, so `--draw-only` can't regenerate them without re-fitting).
 
 **Structured inputs** (produced HERE, consumed by the fork):
 - `plotting/mtandmet.C` → `plots[/Elec]/combine_input_W.root`: one **TDirectory

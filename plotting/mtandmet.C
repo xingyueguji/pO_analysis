@@ -158,6 +158,7 @@ void mtandmet(bool isElec = 1)
     ps.boxY1 = 0.62;
     ps.boxY2 = 0.82;
     ps.normBkgToData = false; // ABSOLUTE pO scaling (k_s incl. A=16) -- no area norm
+    ps.pullPad = true;        // (data-MC)/sigma bars in a sub-pad under each plot
 
     // (Optional) one tuner you can reuse for all plots
     PlotTuner commonTuner = [&](TCanvas *c, TH1 *h)
