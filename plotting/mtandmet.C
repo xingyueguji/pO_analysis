@@ -115,8 +115,14 @@ void mtandmet(bool isElec = 1)
     }
     const std::string outMetDir = outBase + "/met";
     const std::string outMtDir = outBase + "/mt";
+    const std::string outLepPtDir = outBase + "/leppt";
     gSystem->mkdir(outMetDir.c_str(), kTRUE);
     gSystem->mkdir(outMtDir.c_str(), kTRUE);
+    gSystem->mkdir(outLepPtDir.c_str(), kTRUE);
+
+    // Lepton-pT stacks (2026-07-29) are DISPLAY ONLY: they are never written
+    // into combine_input_W.root -- the fit discriminant stays PF MET.
+    const char *ptTitle = isElec ? "p_{T}^{e} (GeV)" : "p_{T}^{#mu} (GeV)";
 
     const int NY = 12;
     double yEdges[NY + 1] = {
@@ -237,6 +243,7 @@ void mtandmet(bool isElec = 1)
     const std::string qlep = isElec ? "ele" : "mu";
     const std::string qcdFile = "../correction/rootfile/qcd_abcd_" + qlep + ".root";
     TH1D *qcdPlusBase = nullptr, *qcdMinusBase = nullptr, *qcd_met_incl = nullptr;
+    TH1D *qcdPtPlusBase = nullptr, *qcdPtMinusBase = nullptr, *qcd_pt_incl = nullptr;
     {
         TFile *fqcd = TFile::Open(qcdFile.c_str(), "READ");
         if (fqcd && !fqcd->IsZombie())
@@ -245,6 +252,11 @@ void mtandmet(bool isElec = 1)
             TH1D *qm = (TH1D *)fqcd->Get(Form("qcd_met_%sMinus", qlep.c_str()));
             if (qp) { qcdPlusBase  = (TH1D *)qp->Clone("qcd_met_Plus_base");  qcdPlusBase->SetDirectory(nullptr); }
             if (qm) { qcdMinusBase = (TH1D *)qm->Clone("qcd_met_Minus_base"); qcdMinusBase->SetDirectory(nullptr); }
+            // lepton-pT QCD template (same iso-pass yield, anti-iso pT shape)
+            TH1D *pp = (TH1D *)fqcd->Get(Form("qcd_pt_%sPlus", qlep.c_str()));
+            TH1D *pm = (TH1D *)fqcd->Get(Form("qcd_pt_%sMinus", qlep.c_str()));
+            if (pp) { qcdPtPlusBase  = (TH1D *)pp->Clone("qcd_pt_Plus_base");  qcdPtPlusBase->SetDirectory(nullptr); }
+            if (pm) { qcdPtMinusBase = (TH1D *)pm->Clone("qcd_pt_Minus_base"); qcdPtMinusBase->SetDirectory(nullptr); }
             fqcd->Close();
             delete fqcd;
         }
@@ -258,6 +270,16 @@ void mtandmet(bool isElec = 1)
             std::cerr << "[WARN] ABCD QCD template not found (" << qcdFile
                       << "); run qcd_abcd.C" << (isElec ? "+(true)" : "+")
                       << " first. MET stacks will omit QCD.\n";
+        if (qcdPtPlusBase && qcdPtMinusBase)
+        {
+            qcd_pt_incl = (TH1D *)qcdPtPlusBase->Clone("qcd_pt_incl");
+            qcd_pt_incl->SetDirectory(nullptr);
+            qcd_pt_incl->Add(qcdPtMinusBase);
+        }
+        else
+            std::cerr << "[WARN] lepton-pT QCD template (qcd_pt_*) not in " << qcdFile
+                      << "; re-run qcd_abcd.C on a skim with the h_iso_pt planes."
+                      << " Lepton-pT stacks will omit QCD.\n";
     }
 
     // Per-y QCD weights (normalized to 1, clamped >=0) from the low-MET excess.
@@ -310,6 +332,83 @@ void mtandmet(bool isElec = 1)
         h->SetDirectory(nullptr);
         h->Scale(w);
         return h;
+    };
+
+    // --- Lepton-pT stacks (display only) ---------------------------------------
+    // Absolute data-vs-stack comparisons in the leading-lepton pT (the pT twins
+    // of the MET stacks: h_leppt_* from the skim + the qcd_pt_* ABCD template).
+    // These are NOT written into combine_input_W.root -- the fit stays on MET.
+    TH1D *h_leppt_inclusive = nullptr, *h_leppt_inclusive_MC_signal = nullptr,
+         *h_leppt_inclusive_MC_Z = nullptr, *h_leppt_inclusive_MC_Ztau = nullptr,
+         *h_leppt_inclusive_MC_Wtau = nullptr;
+
+    // Get + absolute-scale one MC histo (fresh Get per name/file, scaled in
+    // place and used once -- same convention as scaleAll above).
+    auto getScaled = [](TFile *ff, double k, const char *name) -> TH1D *
+    {
+        TH1D *h = (TH1D *)ff->Get(name);
+        if (h) h->Scale(k);
+        return h;
+    };
+
+    // One lepton-pT stack region. accumulate=true (lab bins) also feeds the
+    // inclusive accumulators, mirroring how h_met_inclusive* are built.
+    auto lepPtStack = [&](int iy, const char *chg, const char *suf,
+                          TH1D *qcdH, const char *sub1, const std::string &sub2,
+                          const std::string &outPath, bool accumulate) -> bool
+    {
+        const std::string nm = Form("h_leppt_%s_y%d%s", chg, iy, suf);
+        TH1D *hD = (TH1D *)f->Get(nm.c_str());
+        if (!hD) return false;
+        TH1D *hWp    = getScaled(f_Wp,    k_Wp,    nm.c_str());
+        TH1D *hWm    = getScaled(f_Wm,    k_Wm,    nm.c_str());
+        TH1D *hZ     = getScaled(f_DY,    k_DY,    nm.c_str());
+        TH1D *hZtau  = getScaled(f_DYtau, k_DYtau, nm.c_str());
+        TH1D *hWptau = getScaled(f_Wptau, k_Wptau, nm.c_str());
+        TH1D *hWmtau = getScaled(f_Wmtau, k_Wmtau, nm.c_str());
+
+        std::vector<TH1 *> bkgs;
+        std::vector<std::string> names;
+        auto pushIf = [&](TH1 *h, const char *n) { if (h) { bkgs.push_back(h); names.push_back(n); } };
+        pushIf(hWp, "W+");
+        pushIf(hWm, "W-");
+        pushIf(hZ, "DY");
+        pushIf(hZtau, "DY Tau");
+        pushIf(hWptau, "Wp Tau");
+        pushIf(hWmtau, "Wm Tau");
+        pushIf(qcdH, "QCD");
+
+        std::vector<std::string> box = {
+            Form("Passing Events: %.0f", hD->Integral(1, hD->GetNbinsX())),
+            Form("W signal MC: %.0f", sigInt({hWp, hWm}))};
+
+        SaveNicePlot1D_WithBkg(hD, bkgs, names, outPath,
+                               ptTitle, "Events / 2.0 GeV", "",
+                               sub1, sub2, box, ps, commonTuner);
+
+        if (accumulate)
+        {
+            auto acc = [](TH1D *&dst, const char *dnm, std::initializer_list<TH1D *> hs)
+            {
+                for (TH1D *h : hs)
+                {
+                    if (!h) continue;
+                    if (!dst)
+                    {
+                        dst = (TH1D *)h->Clone(dnm);
+                        dst->Reset();
+                        dst->SetDirectory(nullptr);
+                    }
+                    dst->Add(h);
+                }
+            };
+            acc(h_leppt_inclusive,           "h_leppt_inclusive",           {hD});
+            acc(h_leppt_inclusive_MC_signal, "h_leppt_inclusive_MC_signal", {hWp, hWm});
+            acc(h_leppt_inclusive_MC_Z,      "h_leppt_inclusive_MC_Z",      {hZ});
+            acc(h_leppt_inclusive_MC_Ztau,   "h_leppt_inclusive_MC_Ztau",   {hZtau});
+            acc(h_leppt_inclusive_MC_Wtau,   "h_leppt_inclusive_MC_Wtau",   {hWptau, hWmtau});
+        }
+        return true;
     };
 
     // --- Structured per-region Combine input -----------------------------------
@@ -898,6 +997,30 @@ void mtandmet(bool isElec = 1)
                 ps,
                 commonTuner);
         }
+
+        // --------- lepton-pT plots (display only; NOT in combine_input) ----------
+        {
+            // Per-y QCD = inclusive pT template shape x the SAME per-bin low-MET
+            // excess weights as the MET stacks (the QCD y-distribution does not
+            // depend on which variable is plotted).
+            TH1D *qcd_pt_Wp    = qcdPerY(qcdPtPlusBase,  wQcdWp[iy],   Form("qcd_pt_Wp_y%d", iy));
+            TH1D *qcd_pt_Wm    = qcdPerY(qcdPtMinusBase, wQcdWm[iy],   Form("qcd_pt_Wm_y%d", iy));
+            TH1D *qcd_pt_Wp_FB = qcdPerY(qcdPtPlusBase,  wQcdWpFB[iy], Form("qcd_pt_Wp_y%d_FB", iy));
+            TH1D *qcd_pt_Wm_FB = qcdPerY(qcdPtMinusBase, wQcdWmFB[iy], Form("qcd_pt_Wm_y%d_FB", iy));
+
+            bool ok = true;
+            ok &= lepPtStack(iy, "Wp", "",    qcd_pt_Wp,    Channeltypewplus,  yLabel[iy],
+                             outLepPtDir + Form("/leppt_Wp_y%d", iy),    /*accumulate=*/true);
+            ok &= lepPtStack(iy, "Wm", "",    qcd_pt_Wm,    Channeltypewminus, yLabel[iy],
+                             outLepPtDir + Form("/leppt_Wm_y%d", iy),    /*accumulate=*/true);
+            ok &= lepPtStack(iy, "Wp", "_FB", qcd_pt_Wp_FB, Channeltypewplus,  yLabel_FB[iy],
+                             outLepPtDir + Form("/leppt_Wp_y%d_FB", iy), /*accumulate=*/false);
+            ok &= lepPtStack(iy, "Wm", "_FB", qcd_pt_Wm_FB, Channeltypewminus, yLabel_FB[iy],
+                             outLepPtDir + Form("/leppt_Wm_y%d_FB", iy), /*accumulate=*/false);
+            if (!ok && iy == 0)
+                std::cerr << "[WARN] h_leppt_* not found (skim output predates the"
+                          << " lepton-pT histos); lepton-pT stacks skipped.\n";
+        }
     }
 
     {
@@ -961,6 +1084,39 @@ void mtandmet(bool isElec = 1)
             names,
             outMetDir + Form("/h_met_inclusive"),
             "PF MET (GeV)",
+            "Events / 2.0 GeV",
+            "",
+            Channeltype,
+            "inclusive",
+            box,
+            ps,
+            commonTuner);
+    }
+
+    if (h_leppt_inclusive)
+    {
+        // Inclusive lepton-pT stack (display only): the absolute-normalization
+        // closure test in the pT variable -- the ABCD QCD should fill the
+        // low-pT (25-35 GeV) data excess the way it fills low MET.
+        std::vector<std::string> box = {
+            Form("Passing Events: %.0f", h_leppt_inclusive->Integral(1, h_leppt_inclusive->GetNbinsX())),
+            Form("W signal MC: %.0f", sigInt({h_leppt_inclusive_MC_signal}))};
+
+        std::vector<TH1 *> bkgs;
+        std::vector<std::string> names;
+        auto pushIf = [&](TH1 *h, const char *n) { if (h) { bkgs.push_back(h); names.push_back(n); } };
+        pushIf(h_leppt_inclusive_MC_signal, "W+/W-");
+        pushIf(h_leppt_inclusive_MC_Z, "DY");
+        pushIf(h_leppt_inclusive_MC_Ztau, "DY tau");
+        pushIf(h_leppt_inclusive_MC_Wtau, "W+/W- tau");
+        pushIf(qcd_pt_incl, "QCD (ABCD)");
+
+        SaveNicePlot1D_WithBkg(
+            h_leppt_inclusive,
+            bkgs,
+            names,
+            outLepPtDir + Form("/h_leppt_inclusive"),
+            ptTitle,
             "Events / 2.0 GeV",
             "",
             Channeltype,

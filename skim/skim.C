@@ -543,8 +543,53 @@ int skim_Wmu(const char *fname, SampleType sample)
       "#mu^{+} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
   TH2D *h_iso_mt_muMinus  = new TH2D("h_iso_mt_muMinus",
       "#mu^{-} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  //   y = lepton pT : 0..100 GeV / 2.0 (matches h_lepPt / h_leppt_* binning).
+  // Third ABCD plane (2026-07-29): provides the anti-iso lepton-pT SHAPE for
+  // the QCD template in the lepton-pT stacks (normalization still comes from
+  // the relIso x MET counting -- relIso has pT in its denominator, so this
+  // plane is NOT used for the 2x2 factorization itself).
+  TH2D *h_iso_pt_muPlus   = new TH2D("h_iso_pt_muPlus",
+      "#mu^{+} ABCD;relIso;p_{T}^{#mu} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  TH2D *h_iso_pt_muMinus  = new TH2D("h_iso_pt_muMinus",
+      "#mu^{-} ABCD;relIso;p_{T}^{#mu} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   h_iso_met_muPlus->Sumw2();  h_iso_met_muMinus->Sumw2();
   h_iso_mt_muPlus->Sumw2();   h_iso_mt_muMinus->Sumw2();
+  h_iso_pt_muPlus->Sumw2();   h_iso_pt_muMinus->Sumw2();
+
+  // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
+  // pT twins of the h_met_*/h_mt_* rapidity-binned histos, for the lepton-pT
+  // data/MC stacks in plotting/mtandmet.C (plots only -- NOT written into the
+  // Combine input) and a possible future pT-discriminant fit. 2 GeV bins,
+  // matching h_lepPt.
+  TH1D *h_leppt_Wp[kNY], *h_leppt_Wm[kNY];
+  TH1D *h_leppt_Wp_FB[kNY], *h_leppt_Wm_FB[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    const double y1 = kYEdges[b],     y2 = kYEdges[b + 1];
+    const double y1FB = kYEdgesFB[b], y2FB = kYEdgesFB[b + 1];
+
+    h_leppt_Wp[b] = new TH1D(Form("h_leppt_Wp_y%d", b),
+        Form("W+ lepton p_{T};p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", y1, y2), 50, 0, 100);
+    h_leppt_Wm[b] = new TH1D(Form("h_leppt_Wm_y%d", b),
+        Form("W- lepton p_{T};p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", y1, y2), 50, 0, 100);
+    h_leppt_Wp_FB[b] = new TH1D(Form("h_leppt_Wp_y%d_FB", b),
+        Form("W+ lepton p_{T};p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
+    h_leppt_Wm_FB[b] = new TH1D(Form("h_leppt_Wm_y%d_FB", b),
+        Form("W- lepton p_{T};p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
+
+    h_leppt_Wp[b]->Sumw2();    h_leppt_Wm[b]->Sumw2();
+    h_leppt_Wp_FB[b]->Sumw2(); h_leppt_Wm_FB[b]->Sumw2();
+  }
+
+  // -------- Leading-lepton kinematics (full W selection) --------
+  // Data/MC shape check for the W channel (correction/dataMC_kinematics.C),
+  // mirroring the Z-channel h_lep* histos (same names, so the macro reads both
+  // W and Z files uniformly). Filled once per event with the LEADING muon after
+  // the full selection (isolation + trigger match included), charges combined.
+  TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{#mu} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{#mu}; Events",        outPrefix.c_str()), 50, -2.5, 2.5);
+  TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{#mu}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
@@ -654,14 +699,20 @@ int skim_Wmu(const char *fname, SampleType sample)
     {
       h_iso_met_muPlus->Fill(isoLead, met, w);
       h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
+      h_iso_pt_muPlus ->Fill(isoLead, muPt->at(iLead), w);
     }
     else if (muCharge->at(iLead) < 0)
     {
       h_iso_met_muMinus->Fill(isoLead, met, w);
       h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
+      h_iso_pt_muMinus ->Fill(isoLead, muPt->at(iLead), w);
     }
 
     if (!passIsoNominal) continue;
+
+    h_lepPt ->Fill(muPt->at(iLead),  w);
+    h_lepEta->Fill(muEta->at(iLead), w);
+    h_lepPhi->Fill(muPhi->at(iLead), w);
 
     const int q = muCharge->at(iLead);
     const bool isWp = (q > 0), isWm = (q < 0);
@@ -673,13 +724,13 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(muPt->at(iLead), w); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(muPt->at(iLead), w); }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
     }
   }
 
@@ -699,17 +750,27 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_met_Wm_FB[i]->Write("", 2);
     h_mt_Wp_FB [i]->Write("", 2);
     h_mt_Wm_FB [i]->Write("", 2);
+    h_leppt_Wp[i]->Write("", 2);
+    h_leppt_Wm[i]->Write("", 2);
+    h_leppt_Wp_FB[i]->Write("", 2);
+    h_leppt_Wm_FB[i]->Write("", 2);
   }
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_muPlus [b]->Write("", TObject::kOverwrite);
     h_met_iso_muMinus[b]->Write("", TObject::kOverwrite);
   }
-  // ABCD 2D planes (relIso vs MET / m_T), per charge
+  // ABCD 2D planes (relIso vs MET / m_T / lepton pT), per charge
   h_iso_met_muPlus ->Write("", TObject::kOverwrite);
   h_iso_met_muMinus->Write("", TObject::kOverwrite);
   h_iso_mt_muPlus  ->Write("", TObject::kOverwrite);
   h_iso_mt_muMinus ->Write("", TObject::kOverwrite);
+  h_iso_pt_muPlus  ->Write("", TObject::kOverwrite);
+  h_iso_pt_muMinus ->Write("", TObject::kOverwrite);
+  // Leading-lepton kinematics (full selection)
+  h_lepPt ->Write("", TObject::kOverwrite);
+  h_lepEta->Write("", TObject::kOverwrite);
+  h_lepPhi->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
@@ -1026,8 +1087,50 @@ int skim_Wel(const char *fname, SampleType sample)
       "e^{+} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
   TH2D *h_iso_mt_eleMinus  = new TH2D("h_iso_mt_eleMinus",
       "e^{-} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+  //   y = lepton pT : 0..100 GeV / 2.0 (matches h_lepPt / h_leppt_* binning).
+  // Third ABCD plane (2026-07-29): anti-iso lepton-pT SHAPE for the QCD
+  // template in the lepton-pT stacks (normalization from the relIso x MET
+  // counting -- this plane is NOT used for the 2x2 factorization).
+  TH2D *h_iso_pt_elePlus   = new TH2D("h_iso_pt_elePlus",
+      "e^{+} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  TH2D *h_iso_pt_eleMinus  = new TH2D("h_iso_pt_eleMinus",
+      "e^{-} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   h_iso_met_elePlus->Sumw2();  h_iso_met_eleMinus->Sumw2();
   h_iso_mt_elePlus->Sumw2();   h_iso_mt_eleMinus->Sumw2();
+  h_iso_pt_elePlus->Sumw2();   h_iso_pt_eleMinus->Sumw2();
+
+  // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
+  // Electron twins of the skim_Wmu h_leppt_* histos: pT versions of the
+  // rapidity-binned h_met_*/h_mt_*, for the lepton-pT data/MC stacks in
+  // plotting/mtandmet.C (plots only -- NOT in the Combine input). 2 GeV bins.
+  TH1D *h_leppt_Wp[kNY], *h_leppt_Wm[kNY];
+  TH1D *h_leppt_Wp_FB[kNY], *h_leppt_Wm_FB[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    const double y1 = kYEdges[b],     y2 = kYEdges[b + 1];
+    const double y1FB = kYEdgesFB[b], y2FB = kYEdgesFB[b + 1];
+
+    h_leppt_Wp[b] = new TH1D(Form("h_leppt_Wp_y%d", b),
+        Form("W+ lepton p_{T};p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", y1, y2), 50, 0, 100);
+    h_leppt_Wm[b] = new TH1D(Form("h_leppt_Wm_y%d", b),
+        Form("W- lepton p_{T};p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", y1, y2), 50, 0, 100);
+    h_leppt_Wp_FB[b] = new TH1D(Form("h_leppt_Wp_y%d_FB", b),
+        Form("W+ lepton p_{T};p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
+    h_leppt_Wm_FB[b] = new TH1D(Form("h_leppt_Wm_y%d_FB", b),
+        Form("W- lepton p_{T};p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
+
+    h_leppt_Wp[b]->Sumw2();    h_leppt_Wm[b]->Sumw2();
+    h_leppt_Wp_FB[b]->Sumw2(); h_leppt_Wm_FB[b]->Sumw2();
+  }
+
+  // -------- Leading-lepton kinematics (full W selection) --------
+  // Electron twin of the skim_Wmu h_lep* histos (correction/dataMC_kinematics.C):
+  // LEADING electron after the full selection (isolation + trigger match
+  // included), charges combined. Same names as the Z-channel histos on purpose.
+  TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{e} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
+  TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{e}; Events",        outPrefix.c_str()), 50, -2.5, 2.5);
+  TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{e}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
@@ -1144,14 +1247,20 @@ int skim_Wel(const char *fname, SampleType sample)
     {
       h_iso_met_elePlus->Fill(isoLead, met, w);
       h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
+      h_iso_pt_elePlus ->Fill(isoLead, elePt->at(iLead), w);
     }
     else if (eleCharge->at(iLead) < 0)
     {
       h_iso_met_eleMinus->Fill(isoLead, met, w);
       h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
+      h_iso_pt_eleMinus ->Fill(isoLead, elePt->at(iLead), w);
     }
 
     if (!passIsoNominal) continue;
+
+    h_lepPt ->Fill(elePt->at(iLead),  w);
+    h_lepEta->Fill(eleEta->at(iLead), w);
+    h_lepPhi->Fill(elePhi->at(iLead), w);
 
     const int q = eleCharge->at(iLead);
     const bool isWp = (q > 0), isWm = (q < 0);
@@ -1163,13 +1272,13 @@ int skim_Wel(const char *fname, SampleType sample)
 
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(elePt->at(iLead), w); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(elePt->at(iLead), w); }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
     }
   }
 
@@ -1189,17 +1298,27 @@ int skim_Wel(const char *fname, SampleType sample)
     h_met_Wm_FB[i]->Write("", 2);
     h_mt_Wp_FB [i]->Write("", 2);
     h_mt_Wm_FB [i]->Write("", 2);
+    h_leppt_Wp[i]->Write("", 2);
+    h_leppt_Wm[i]->Write("", 2);
+    h_leppt_Wp_FB[i]->Write("", 2);
+    h_leppt_Wm_FB[i]->Write("", 2);
   }
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_elePlus [b]->Write("", TObject::kOverwrite);
     h_met_iso_eleMinus[b]->Write("", TObject::kOverwrite);
   }
-  // ABCD 2D planes (relIso vs MET / m_T), per charge
+  // ABCD 2D planes (relIso vs MET / m_T / lepton pT), per charge
   h_iso_met_elePlus ->Write("", TObject::kOverwrite);
   h_iso_met_eleMinus->Write("", TObject::kOverwrite);
   h_iso_mt_elePlus  ->Write("", TObject::kOverwrite);
   h_iso_mt_eleMinus ->Write("", TObject::kOverwrite);
+  h_iso_pt_elePlus  ->Write("", TObject::kOverwrite);
+  h_iso_pt_eleMinus ->Write("", TObject::kOverwrite);
+  // Leading-lepton kinematics (full selection)
+  h_lepPt ->Write("", TObject::kOverwrite);
+  h_lepEta->Write("", TObject::kOverwrite);
+  h_lepPhi->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
