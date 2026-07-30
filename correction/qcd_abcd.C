@@ -429,14 +429,18 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
     ps2.headerX = 0.60;
     ps2.headerY = 0.66;
     ps2.titleSize = 0.04;
+    // NB both inputs are DATA-derived (EWK-subtracted sideband slices) -- the
+    // "data" point style / "MC" fill style are just the helper's cosmetics, so
+    // relabel the ratio pad accordingly (low slice / high slice).
     SaveDataMCRatio(sLo, sHi,
                     outDir + Form("/antiiso_shape_pt_%s%s", lep.c_str(), chg.c_str()),
                     ytit, "Events (a.u.)",
                     Form("anti-iso pT shape, %s", chgLatex.c_str()),
                     "slice stability check", "shape-normalized", ps2,
                     /*normToData=*/true,
-                    Form("relIso [%.2f,%.2f)", cfg.isoFailLo, mid),
-                    Form("relIso [%.2f,%.2f)", mid, cfg.isoFailHi));
+                    Form("QCD, relIso [%.2f,%.2f)", cfg.isoFailLo, mid),
+                    Form("QCD, relIso [%.2f,%.2f)", mid, cfg.isoFailHi),
+                    "low / high slice");
   }
   delete sLo;
   delete sHi;
