@@ -12,7 +12,8 @@
 void charge_asym(
     const char *inFile = "../skim/rootfile/WToMuNu_pO_PFMet_hist.root",
     const char *outFile = "../skim/rootfile/charge_asym.root", // can overwrite/update same
-    bool useMT = true,                                         // true -> use h_mt_*, false -> use h_met_*
+    bool useMT = true,                    // raw skim files only: h_mt_* vs h_met_*
+                                          // (ignored when h_yield_* is present)
     bool integrateFull = true,                                 // true -> integrate full x-range (excluding under/overflow)
     double xMin = 30.0,                                        // if integrateFull=false, integrate [xMin, xMax]
     double xMax = 200.0,
@@ -30,7 +31,8 @@ void charge_asym(
 
     // yEdges: rapidity bin edges in the *lab frame*, used only to label the
     // x-axis of the output TGraph. The histogram integration uses bin
-    // contents already produced by the skim macros (h_mt_W{p,m}_y0..y11).
+    // contents: either the raw skim histos (h_mt_/h_met_W{p,m}_y0..y11) or,
+    // in the production path, the fork's fitted-yield containers h_yield_*.
     //
     // These edges are symmetric around 0 in the *lab* frame (unlike FBratio.C
     // which uses edges symmetric around deltaY for F/B pairing). Charge
@@ -56,8 +58,19 @@ void charge_asym(
 
     for (int iy = 0; iy < NY; ++iy)
     {
-        TString hWpName = useMT ? Form("h_mt_Wp_y%d", iy) : Form("h_met_Wp_y%d", iy);
-        TString hWmName = useMT ? Form("h_mt_Wm_y%d", iy) : Form("h_met_Wm_y%d", iy);
+        // The Combine fork's <chan>_fitted_yields.root stores 1-bin FITTED
+        // yields under the discriminant-neutral name h_yield_* (the fit uses the
+        // PF MET shape, so calling them h_mt_* was misleading -- that legacy
+        // alias is still written and still accepted below). A RAW skim file
+        // instead holds the real distributions, where h_mt_*/h_met_* do mean
+        // m_T / MET and `useMT` genuinely chooses between them.
+        TString hWpName = Form("h_yield_Wp_y%d", iy);
+        TString hWmName = Form("h_yield_Wm_y%d", iy);
+        if (!f->Get(hWpName) || !f->Get(hWmName))
+        {
+            hWpName = useMT ? Form("h_mt_Wp_y%d", iy) : Form("h_met_Wp_y%d", iy);
+            hWmName = useMT ? Form("h_mt_Wm_y%d", iy) : Form("h_met_Wm_y%d", iy);
+        }
 
         TH1D *hWp = (TH1D *)f->Get(hWpName);
         TH1D *hWm = (TH1D *)f->Get(hWmName);
@@ -107,7 +120,10 @@ void charge_asym(
     }
 
     // Build graph
-    TString gname = useMT ? "g_chargeAsym_mt" : "g_chargeAsym_met";
+    // Honest primary name + the legacy "_mt"/"_met" alias (observables.C
+    // prefers the primary and falls back to the alias for old files).
+    TString gname      = "g_chargeAsym";
+    TString gnameLegacy = useMT ? "g_chargeAsym_mt" : "g_chargeAsym_met";
     TString gtitle = useMT
                          ? "Charge asymmetry from m_{T} yields; y-bin; (N^{+}-N^{-})/(N^{+}+N^{-})"
                          : "Charge asymmetry from MET yields; y-bin; (N^{+}-N^{-})/(N^{+}+N^{-})";
@@ -129,6 +145,7 @@ void charge_asym(
 
     fout->cd();
     g->Write("", TObject::kOverwrite);
+    g->Write(gnameLegacy, TObject::kOverwrite); // deprecated alias
 
     fout->Close();
     delete fout;

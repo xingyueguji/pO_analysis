@@ -23,8 +23,10 @@
 // (The familiar "QCD ~3% mu / ~10% e" figures are HIGH-MET-region numbers.)
 // QCD peaks at low lepton pT, so expect a data excess at pT ~ 25-32 GeV; read
 // the W ratio as a shape check, not a precision statement. A QCD-subtracted
-// version needs the anti-iso lepton-pT shape (relIso x lepPt 2D, not stored
-// yet -- see the lepton-pT-discriminant plan).
+// version needs the anti-iso lepton-pT shape, which HAS existed since
+// 2026-07-29: skim h_iso_pt_{mu,ele}{Plus,Minus} -> correction/qcd_abcd.C
+// writes the qcd_pt_* / qcd_pt_mt40_* templates (used by the mtandmet.C
+// lepton-pT stacks, which ARE background-subtracted-equivalent stacks).
 //
 // Inputs  : Z: ../skim/rootfile/<base>_Data_hist.root   (data)
 //              ../skim/rootfile/<base>_DY_MC_hist.root  (DY signal MC)
@@ -59,8 +61,27 @@
 
 void dataMC_kinematics(const char *channel = "Zmm")
 {
-    const std::string ch = channel;
+    std::string ch = channel;
+
+    // "Wmu_mt40" / "Wel_mt40": the lepton-pT-DISCRIMINANT selection (pT > 25 &&
+    // m_T > 40). Same plots, but reading the `_mt40` histogram set. The m_T cut
+    // suppresses QCD unevenly: muon ~19% -> ~5% (a genuinely clean shape check),
+    // electron ~50% -> ~27% (better, but still background-dominated -- read the
+    // electron ratio with that in mind).
+    bool isMt40 = false;
+    const std::string mt40Sfx = "_mt40";
+    if (ch.size() > mt40Sfx.size() &&
+        ch.compare(ch.size() - mt40Sfx.size(), mt40Sfx.size(), mt40Sfx) == 0)
+    {
+        isMt40 = true;
+        ch = ch.substr(0, ch.size() - mt40Sfx.size());
+    }
     const bool isW = (ch == "Wmu" || ch == "Wel");
+    if (isMt40 && !isW)
+    {
+        std::cerr << "[ERR] the _mt40 variant exists only for the W channels\n";
+        return;
+    }
 
     std::string base, lepSym, bosSym;
     if (ch == "Zmm")
@@ -139,12 +160,13 @@ void dataMC_kinematics(const char *channel = "Zmm")
                   << ")\n";
     }
 
-    const std::string outDir = "./plots/dataMC_" + ch;
+    const std::string outDir = "./plots/dataMC_" + ch + (isMt40 ? mt40Sfx : "");
     gSystem->mkdir(outDir.c_str(), kTRUE);
 
     struct Obs
     {
-        const char *hist;
+        std::string hist; // std::string, not const char*: the W branch builds
+                          // these with Form(), whose buffer is recycled
         std::string xTitle;
     };
     std::vector<Obs> obs;
@@ -163,17 +185,19 @@ void dataMC_kinematics(const char *channel = "Zmm")
     }
     else
     {
+        const std::string s = isMt40 ? mt40Sfx : "";
         obs = {
-            {"h_lepPt", "p_{T}^{" + lepSym + "} [GeV]"},
-            {"h_lepEta", "#eta_{" + lepSym + "}"},
-            {"h_lepPhi", "#phi_{" + lepSym + "}"},
+            {Form("h_lepPt%s", s.c_str()),  "p_{T}^{" + lepSym + "} [GeV]"},
+            {Form("h_lepEta%s", s.c_str()), "#eta_{" + lepSym + "}"},
+            {Form("h_lepPhi%s", s.c_str()), "#phi_{" + lepSym + "}"},
         };
     }
 
     // Labels / subtitles (Z cosmetics kept identical; W follows the same style)
     const std::string header = ch + (isW ? ": Data vs W MC" : ": Data vs DY MC");
     const std::string sub1 = isW
-        ? "full W#rightarrow" + lepSym + "#nu selection"
+        ? (isMt40 ? "W#rightarrow" + lepSym + "#nu, p_{T}>25, m_{T}>40 GeV"
+                  : "full W#rightarrow" + lepSym + "#nu selection")
         : "Z peak [60,120] GeV";
     const std::string sub2 = isW ? "shape-norm., bkg not subtracted"
                                  : "shape-normalized";
@@ -189,22 +213,22 @@ void dataMC_kinematics(const char *channel = "Zmm")
     int nOK = 0;
     for (const auto &o : obs)
     {
-        TH1 *hD = (TH1 *)fData->Get(o.hist);
+        TH1 *hD = (TH1 *)fData->Get(o.hist.c_str());
 
         TH1 *hM = nullptr;
         if (!isW)
         {
-            hM = (TH1 *)fMC->Get(o.hist);
+            hM = (TH1 *)fMC->Get(o.hist.c_str());
         }
         else
         {
-            TH1 *hWp = (TH1 *)fWp->Get(o.hist);
-            TH1 *hWm = (TH1 *)fWm->Get(o.hist);
+            TH1 *hWp = (TH1 *)fWp->Get(o.hist.c_str());
+            TH1 *hWm = (TH1 *)fWm->Get(o.hist.c_str());
             if (hWp && hWm)
             {
                 // Clone before mutating (repo rule: never Scale/Add a
                 // file-owned histogram in place).
-                TH1 *sum = (TH1 *)hWp->Clone(Form("%s_Wsum", o.hist));
+                TH1 *sum = (TH1 *)hWp->Clone(Form("%s_Wsum", o.hist.c_str()));
                 sum->SetDirectory(nullptr);
                 sum->Scale(kWp);
                 sum->Add(hWm, kWm);

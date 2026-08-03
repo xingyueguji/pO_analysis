@@ -36,6 +36,18 @@
 // NOTE: abundance-weighted mean of the two ratios, NOT the exact
 // (F+ + F-)/(B+ + B-) identity (they coincide only when R+ = R-).
 // -----------------------------------------------------------------------------
+// Fetch a TGraphErrors by its discriminant-neutral name, falling back to the
+// legacy "_mt"/"_met"-suffixed alias. The suffix never meant m_T for these
+// objects: in the production path the yields come from the PF-MET-shape fit
+// (see analysis/charge_asym.C and analysis/FBratio.C, which now write both).
+static TGraphErrors *GetGraph(TFile *f, const char *name, const char *legacy)
+{
+    if (!f) return nullptr;
+    auto *g = (TGraphErrors *)f->Get(name);
+    if (!g) g = (TGraphErrors *)f->Get(legacy);
+    return g;
+}
+
 static std::vector<TGraphErrors *> buildSumTheorySet(
     std::function<double(const char *, int)> count,
     TGraphErrors *g_RFB_sum,
@@ -177,28 +189,32 @@ void observables(bool isElec = false,
 
     PlotStyle ps; ps.showStats = false; ps.logy = false;
 
-    // data graphs (names channel-independent: "_mt" = useMT flag, not flavour)
-    auto *g_charge = (TGraphErrors *)fCharge->Get("g_chargeAsym_mt");
-    auto *g_RFB_sum = (TGraphErrors *)fFB->Get("g_RFB_mt_sum");
-    auto *g_RFB_Wp = (TGraphErrors *)fFB->Get("g_RFB_mt_Wp");
-    auto *g_RFB_Wm = (TGraphErrors *)fFB->Get("g_RFB_mt_Wm");
+    // Data graphs. Primary names are discriminant-neutral (g_chargeAsym,
+    // g_RFB_*); the "_mt" aliases are legacy only -- they were NEVER an m_T
+    // quantity here (nor a mu-tau tag): the yields come from the PF-MET fit.
+    // Prefer the discriminant-neutral name; "_mt" is the legacy alias (the
+    // yields are from the PF-MET-shape fit, so "_mt" never meant m_T here).
+    auto *g_charge = GetGraph(fCharge, "g_chargeAsym", "g_chargeAsym_mt");
+    auto *g_RFB_sum = GetGraph(fFB, "g_RFB_sum", "g_RFB_mt_sum");
+    auto *g_RFB_Wp = GetGraph(fFB, "g_RFB_Wp", "g_RFB_mt_Wp");
+    auto *g_RFB_Wm = GetGraph(fFB, "g_RFB_Wm", "g_RFB_mt_Wm");
 
     // theory graphs (boson-level -> same for e and mu)
     TGraphErrors *thWp[4], *thWm[4];
     readTheoryCharge(fFB_theory, "WPlus", thWp);
     readTheoryCharge(fFB_theory, "WMinus", thWm);
 
-    if (!g_charge) std::cerr << "[ERROR] Missing g_chargeAsym_mt in " << sCharge << "\n";
-    if (!g_RFB_sum) std::cerr << "[ERROR] Missing g_RFB_mt_sum in " << sFB << "\n";
-    if (!g_RFB_Wp) std::cerr << "[ERROR] Missing g_RFB_mt_Wp in " << sFB << "\n";
-    if (!g_RFB_Wm) std::cerr << "[ERROR] Missing g_RFB_mt_Wm in " << sFB << "\n";
+    if (!g_charge) std::cerr << "[ERROR] Missing g_chargeAsym(_mt) in " << sCharge << "\n";
+    if (!g_RFB_sum) std::cerr << "[ERROR] Missing g_RFB_sum(_mt) in " << sFB << "\n";
+    if (!g_RFB_Wp) std::cerr << "[ERROR] Missing g_RFB_Wp(_mt) in " << sFB << "\n";
+    if (!g_RFB_Wm) std::cerr << "[ERROR] Missing g_RFB_Wm(_mt) in " << sFB << "\n";
 
     GraphTuner tuneCharge = makeTuneCharge();
     GraphTuner tuneRFB = makeTuneRFB();
 
     // ---- charge asymmetry (data only) ----
     if (g_charge)
-        SaveNiceGraph(g_charge, outChargeDir + "/chargeAsym_mt",
+        SaveNiceGraph(g_charge, outChargeDir + "/chargeAsym",
                       Form("#eta^{%s}_{CM}", lepSym), "A_{ch}", "",
                       Form("W #rightarrow %s #nu", lepSym), "post-fit signal yield",
                       {}, ps, tuneCharge);
@@ -231,11 +247,11 @@ void observables(bool isElec = false,
                                 "", subtitle, "post-fit signal yield", {}, ps, tuneRFB, t1, t2, t3, t4);
     };
 
-    plotRFB(g_RFB_sum, "RFB_mt_sum", Form("W #rightarrow %s #nu", lepSym),
+    plotRFB(g_RFB_sum, "RFB_sum", Form("W #rightarrow %s #nu", lepSym),
             sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
-    plotRFB(g_RFB_Wp, "RFB_mt_Wp", Form("W^{+} #rightarrow %s^{+} #nu", lepSym),
+    plotRFB(g_RFB_Wp, "RFB_Wp", Form("W^{+} #rightarrow %s^{+} #nu", lepSym),
             thWp[0], thWp[1], thWp[2], thWp[3]);
-    plotRFB(g_RFB_Wm, "RFB_mt_Wm", Form("W^{-} #rightarrow %s^{-} #bar{#nu}", lepSym),
+    plotRFB(g_RFB_Wm, "RFB_Wm", Form("W^{-} #rightarrow %s^{-} #bar{#nu}", lepSym),
             thWm[0], thWm[1], thWm[2], thWm[3]);
 
     fCharge->Close(); fFB->Close(); delete fCharge; delete fFB;
@@ -293,14 +309,14 @@ void observables_overlay(const char *muYields = nullptr,
     GraphTuner tuneRFB = makeTuneRFB();
 
     // data graphs, both channels
-    auto *gC_mu = (TGraphErrors *)fCmu->Get("g_chargeAsym_mt");
-    auto *gC_el = (TGraphErrors *)fCel->Get("g_chargeAsym_mt");
-    auto *gS_mu = (TGraphErrors *)fFmu->Get("g_RFB_mt_sum");
-    auto *gS_el = (TGraphErrors *)fFel->Get("g_RFB_mt_sum");
-    auto *gP_mu = (TGraphErrors *)fFmu->Get("g_RFB_mt_Wp");
-    auto *gP_el = (TGraphErrors *)fFel->Get("g_RFB_mt_Wp");
-    auto *gM_mu = (TGraphErrors *)fFmu->Get("g_RFB_mt_Wm");
-    auto *gM_el = (TGraphErrors *)fFel->Get("g_RFB_mt_Wm");
+    auto *gC_mu = GetGraph(fCmu, "g_chargeAsym", "g_chargeAsym_mt");
+    auto *gC_el = GetGraph(fCel, "g_chargeAsym", "g_chargeAsym_mt");
+    auto *gS_mu = GetGraph(fFmu, "g_RFB_sum", "g_RFB_mt_sum");
+    auto *gS_el = GetGraph(fFel, "g_RFB_sum", "g_RFB_mt_sum");
+    auto *gP_mu = GetGraph(fFmu, "g_RFB_Wp", "g_RFB_mt_Wp");
+    auto *gP_el = GetGraph(fFel, "g_RFB_Wp", "g_RFB_mt_Wp");
+    auto *gM_mu = GetGraph(fFmu, "g_RFB_Wm", "g_RFB_mt_Wm");
+    auto *gM_el = GetGraph(fFel, "g_RFB_Wm", "g_RFB_mt_Wm");
 
     // theory (shared, boson-level)
     TGraphErrors *thWp[4], *thWm[4];

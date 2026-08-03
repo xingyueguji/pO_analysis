@@ -12,9 +12,14 @@
 // ----------------------------------------------------------------------------
 // METHOD (per charge, inclusive in rapidity for this first look)
 // ----------------------------------------------------------------------------
-// Two ~uncorrelated handles: lepton isolation (relIso) x PF MET.
+// Two ~uncorrelated handles: lepton isolation (relIso) x a recoil-side variable y.
+// NAMING: the SAME 2x2 machinery is run over more than one y (see `planes` in the
+// driver): y = PF MET (the plane whose T normalizes everything) and y = m_T. A
+// third relIso x lepton-pT plane supplies SHAPE ONLY and is never counted with the
+// 2x2. So read "y high/low" below as MET high/low on the met pass and m_T high/low
+// on the mt pass; the config field that splits it is ABCDConfig::yCut.
 //
-//          MET high (>= metCut)     MET low (< metCut)
+//            y high (>= yCut)       y low (< yCut)
 //   iso    +---------------------+---------------------+
 //   pass   |          A          |          B          |   relIso < isoCut
 //  (<isoCut)|   (signal region)   |   (QCD-enriched)    |
@@ -23,19 +28,19 @@
 //   fail   |    (QCD-enriched)   |   (QCD-dominated)   |             < isoFailHi
 //          +---------------------+---------------------+
 //
-// If relIso _|_ MET for QCD, the 2x2 table factorizes:  A = B * C / D.
+// If relIso _|_ y for QCD, the 2x2 table factorizes:  A = B * C / D.
 // Each region count is QCD-ONLY: N_QCD = N_data - N_EWK(MC), where the EWK
 // (W/DY/tau) prediction is the ABSOLUTELY normalized MC (k_s = A_O*sigma*L/N_gen
 // from skim/mc_norm.h). The anti-iso (fail) window is opened with a GAP above
 // isoCut to keep real-W leakage out of the sideband.
 //
 // Deliverables:
-//   - The transfer factor  T = N_QCD(B) / N_QCD(D)  (iso pass/fail at low MET,
+//   - The transfer factor  T = N_QCD(B) / N_QCD(D)  (iso pass/fail at low y,
 //     where QCD dominates and the EWK subtraction is small).
-//   - The QCD yield in the high-MET signal region  A_pred = B * C / D.
-//   - The QCD MET (and MT) TEMPLATE in the iso-pass region = the anti-iso-shape
-//     (data - EWK, all MET) scaled by T. By construction it reproduces B at low
-//     MET and predicts A at high MET -- a self-consistent ABCD template.
+//   - The QCD yield in the high-y signal region  A_pred = B * C / D.
+//   - The QCD TEMPLATE in the iso-pass region, one per plane (y = MET and y =
+//     m_T) = the anti-iso shape (data - EWK, all y) scaled by that plane's T. By
+//     construction it reproduces B at low y and predicts A at high y.
 //   - A closure/overlay: data(iso-pass) vs [EWK + ABCD-QCD] with a ratio pad.
 //
 // The 2D inputs come from the skim (h_iso_met_mu{Plus,Minus},
@@ -48,6 +53,11 @@
 // so relIso x pT is correlated for QCD -- the pT plane is NEVER counted with
 // the 2x2 factorization; it only contributes the shape, and an anti-iso
 // slice-stability plot (antiiso_shape_pt_*) checks that shape for bias.
+// 2026-07-30: the same is also produced WITH the lepton-pT-discriminant m_T >
+// 40 cut -> qcd_pt_mt40_<lep><chg> (from h_iso_pt_mt40_*), i.e. the QCD
+// template of the "pT discriminant, pT>25 && m_T>40" selection. Same MET-plane
+// T (QCD isolation efficiency assumed independent of the recoil variable), so
+// the template total IS the ABCD prediction for QCD surviving m_T > 40.
 //
 // Inputs : ../skim/rootfile/WToMuNu_pO_PFMet_hist.root        (data)
 //          ../skim/rootfile/WToMuNu_pO_PFMet_{Wp,Wm,DY,DYtau,Wptau,Wmtau}_hist.root
@@ -85,7 +95,9 @@ struct ABCDConfig
   double isoCut    = 0.15; // signal: relIso < isoCut          (regions A, B)
   double isoFailLo = 0.30; // anti-iso sideband, low edge      (regions C, D)
   double isoFailHi = 1.00; // anti-iso sideband, high edge
-  double metCut    = 30.0; // y-axis split: high (>=) vs low (<) [template units]
+  // y-axis split: high (>=) vs low (<). Named yCut, NOT metCut: the same value
+  // splits whichever y the plane carries (MET on the met pass, m_T on the mt pass).
+  double yCut      = 30.0;
 };
 
 struct Count
@@ -105,7 +117,8 @@ struct ABCDResult
 };
 
 // Integral + error of a TH2 over [xlo,xhi) x [ylo,yhi). A sentinel hi >= axis
-// max includes the overflow on that axis (so "MET high" reaches the tail).
+// max includes the overflow on that axis (so the "y high" region reaches the tail
+// of whichever y the plane carries: MET, m_T or lepton pT).
 Count count2D(TH2 *h, double xlo, double xhi, double ylo, double yhi)
 {
   Count c;
@@ -124,7 +137,8 @@ Count count2D(TH2 *h, double xlo, double xhi, double ylo, double yhi)
   return c;
 }
 
-// ProjectionY (the MET or MT distribution) over the x-window [xlo,xhi).
+// ProjectionY (the y distribution of the plane: MET, m_T or lepton pT) over the
+// x-window (relIso) [xlo,xhi).
 TH1D *projY(TH2 *h, double xlo, double xhi, const char *name)
 {
   if (!h) return nullptr;
@@ -168,8 +182,8 @@ TH2D *sumEWK2D(const std::vector<MCFile> &mc, const char *hname, const char *out
 }
 
 // Draw a QCD-only 2D (colz) with the ABCD region boundaries overlaid.
-// drawYSplit=false suppresses the horizontal metCut line (the lepton-pT plane
-// has no y-axis region split -- its normalization comes from the MET plane).
+// drawYSplit=false suppresses the horizontal yCut line (the lepton-pT plane has
+// no y-axis region split -- its normalization comes from the MET plane).
 void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
             const std::string &title, const char *ytit, bool drawYSplit = true)
 {
@@ -183,9 +197,10 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   h->GetXaxis()->SetTitle("relIso");
   h->GetYaxis()->SetTitle(ytit);
   h->GetXaxis()->SetRangeUser(0.0, cfg.isoFailHi);
-  // Clamp the z (color) range: a single over-subtracted W-peak bin (iso~0,
-  // MET~40, ~ -40) otherwise dominates the scale and washes out the actual QCD
-  // structure. Floor at -0.3*max so that outlier just saturates the low color.
+  // Clamp the z (color) range: a single over-subtracted W-peak bin (relIso~0,
+  // y~40 -- the W peak of whichever y this plane carries) otherwise dominates the
+  // scale and washes out the actual QCD structure. Floor at -0.3*max so that
+  // outlier just saturates the low color.
   const double zmax = h->GetMaximum();
   if (zmax > 0) { h->SetMaximum(zmax); h->SetMinimum(-0.3 * zmax); }
   h->Draw("COLZ");
@@ -200,7 +215,7 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   };
   vline(cfg.isoCut);
   vline(cfg.isoFailLo);
-  if (drawYSplit) hline(cfg.metCut, 0.0, cfg.isoFailHi);
+  if (drawYSplit) hline(cfg.yCut, 0.0, cfg.isoFailHi);
 
   TLatex t; t.SetNDC(); t.SetTextFont(42); t.SetTextSize(0.03);
   t.DrawLatex(0.14, 0.92, title.c_str());
@@ -238,14 +253,14 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mc,
   if (ewk2D) qcd2D->Add(ewk2D, -1.0);
 
   // --- region counts (QCD-only) ---
-  res.A = count2D(qcd2D, 0.0, cfg.isoCut,            cfg.metCut, 1e9);
-  res.B = count2D(qcd2D, 0.0, cfg.isoCut,            0.0,        cfg.metCut);
-  res.C = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, cfg.metCut, 1e9);
-  res.D = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, 0.0,        cfg.metCut);
+  res.A = count2D(qcd2D, 0.0, cfg.isoCut,            cfg.yCut, 1e9);
+  res.B = count2D(qcd2D, 0.0, cfg.isoCut,            0.0,        cfg.yCut);
+  res.C = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, cfg.yCut, 1e9);
+  res.D = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, 0.0,        cfg.yCut);
 
   // context: raw data and EWK in the signal region A
-  res.dataA = count2D(data2D, 0.0, cfg.isoCut, cfg.metCut, 1e9);
-  res.ewkA  = ewk2D ? count2D(ewk2D, 0.0, cfg.isoCut, cfg.metCut, 1e9) : Count{};
+  res.dataA = count2D(data2D, 0.0, cfg.isoCut, cfg.yCut, 1e9);
+  res.ewkA  = ewk2D ? count2D(ewk2D, 0.0, cfg.isoCut, cfg.yCut, 1e9) : Count{};
 
   // transfer factor and prediction
   res.T = (res.D.n != 0.0) ? res.B.n / res.D.n : 0.0;
@@ -268,7 +283,7 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mc,
   {
     const double v = tmpl->GetBinContent(i);
     const double ev = tmpl->GetBinError(i);
-    // Clamp tiny negative high-MET tail bins (data-EWK fluctuations) to 0 so the
+    // Clamp tiny negative high-y tail bins (data-EWK fluctuations) to 0 so the
     // QCD template is a physical, non-negative background (also keeps THStack /
     // Combine happy). The clamped yield is negligible (~0.03% of the integral).
     tmpl->SetBinContent(i, std::max(0.0, v * res.T));
@@ -305,7 +320,7 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mc,
 
   if (passEWK)
   {
-    // model WITHOUT QCD (shows the low-MET excess the QCD fills)
+    // model WITHOUT QCD (shows the low-y excess the QCD fills)
     SaveDataMCRatio(passData, passEWK,
                     outDir + Form("/closure_noQCD_%s_%s%s", plane.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events", Form("iso-pass, %s", chgLatex.c_str()),
@@ -343,12 +358,20 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mc,
 // window midpoint), shape-normalized -- if the two disagree, the anti-iso pT
 // shape is biased by the iso-pT correlation and the window needs retuning.
 // ----------------------------------------------------------------------------
+// `tag` selects the phase space: "" = the nominal iso-pass selection,
+// "mt40" = the same WITH the lepton-pT-discriminant m_T > 40 cut (reads
+// h_iso_pt_mt40_*, writes qcd_pt_mt40_*). The transfer factor is the SAME
+// MET-plane T in both cases -- the ABCD factorization assumes QCD isolation
+// efficiency is independent of the recoil-side variable, so the m_T>40
+// template total is the ABCD prediction for QCD in that region.
 TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
                   const std::string &chg, const ABCDConfig &cfg,
                   const std::string &outDir, const std::string &chgLatex,
-                  const std::string &lep, const ABCDResult &metRes)
+                  const std::string &lep, const ABCDResult &metRes,
+                  const std::string &tag = "")
 {
-  const std::string hname = Form("h_iso_pt_%s%s", lep.c_str(), chg.c_str());
+  const std::string sfx   = tag.empty() ? "" : ("_" + tag);
+  const std::string hname = Form("h_iso_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str());
   TH2D *data2D = (TH2D *)fData->Get(hname.c_str());
   if (!data2D)
   {
@@ -369,7 +392,7 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
 
   // --- QCD template in the iso-pass region = (anti-iso pT shape) x T_MET ---
   TH1D *tmpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
-                     Form("qcd_pt_%s%s", lep.c_str(), chg.c_str()));
+                     Form("qcd_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
   for (int i = 1; i <= tmpl->GetNbinsX(); ++i)
   {
     const double v = tmpl->GetBinContent(i);
@@ -380,15 +403,15 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   }
 
   // --- diagnostics: 2D colz (no y-split line -- normalization is MET-plane) ---
-  draw2D(qcd2D, cfg, outDir + Form("/qcd2D_pt_%s%s", lep.c_str(), chg.c_str()),
+  draw2D(qcd2D, cfg, outDir + Form("/qcd2D_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
          Form("QCD-only (data-EWK), %s", chgLatex.c_str()), ytit.c_str(),
          /*drawYSplit=*/false);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
   TH1D *passData = projY(data2D, 0.0, cfg.isoCut,
-                         Form("pass_data_pt_%s%s", lep.c_str(), chg.c_str()));
+                         Form("pass_data_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
   TH1D *passEWK = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut,
-                                Form("pass_ewk_pt_%s%s", lep.c_str(), chg.c_str()))
+                                Form("pass_ewk_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()))
                         : nullptr;
 
   PlotStyle ps;
@@ -401,15 +424,15 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   if (passEWK)
   {
     SaveDataMCRatio(passData, passEWK,
-                    outDir + Form("/closure_noQCD_pt_%s%s", lep.c_str(), chg.c_str()),
+                    outDir + Form("/closure_noQCD_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events", Form("iso-pass, %s", chgLatex.c_str()),
                     "no QCD", "", ps, false, "Data", "EWK MC");
 
-    TH1D *model = (TH1D *)passEWK->Clone(Form("model_pt_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *model = (TH1D *)passEWK->Clone(Form("model_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
     model->SetDirectory(nullptr);
     model->Add(tmpl);
     SaveDataMCRatio(passData, model,
-                    outDir + Form("/closure_withQCD_pt_%s%s", lep.c_str(), chg.c_str()),
+                    outDir + Form("/closure_withQCD_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events", Form("iso-pass, %s", chgLatex.c_str()),
                     "EWK + ABCD QCD", "", ps, false, "Data", "EWK+QCD");
     delete model;
@@ -418,9 +441,9 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   // --- anti-iso slice stability: low vs high half of the sideband, shape-only ---
   const double mid = 0.5 * (cfg.isoFailLo + cfg.isoFailHi);
   TH1D *sLo = projY(qcd2D, cfg.isoFailLo, mid,
-                    Form("antiiso_lo_pt_%s%s", lep.c_str(), chg.c_str()));
+                    Form("antiiso_lo_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
   TH1D *sHi = projY(qcd2D, mid, cfg.isoFailHi,
-                    Form("antiiso_hi_pt_%s%s", lep.c_str(), chg.c_str()));
+                    Form("antiiso_hi_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
   if (sLo && sHi)
   {
     PlotStyle ps2;
@@ -433,7 +456,7 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
     // "data" point style / "MC" fill style are just the helper's cosmetics, so
     // relabel the ratio pad accordingly (low slice / high slice).
     SaveDataMCRatio(sLo, sHi,
-                    outDir + Form("/antiiso_shape_pt_%s%s", lep.c_str(), chg.c_str()),
+                    outDir + Form("/antiiso_shape_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events (a.u.)",
                     Form("anti-iso pT shape, %s", chgLatex.c_str()),
                     "slice stability check", "shape-normalized", ps2,
@@ -458,15 +481,26 @@ void printRow(const char *tag, const Count &c)
   std::cout << "    " << tag << " = " << Form("%10.1f +/- %7.1f", c.n, c.e) << "\n";
 }
 
+// Human-readable name of a plane's y variable, so the region labels below say
+// what was ACTUALLY split (they used to hardcode "MET" even on the m_T pass).
+std::string YName(const std::string &plane)
+{
+  if (plane == "met") return "MET";
+  if (plane == "mt")  return "m_T";
+  if (plane == "pt")  return "pT";
+  return plane;
+}
+
 void printResult(const std::string &plane, const std::string &lep,
                  const std::string &chg, const ABCDResult &r)
 {
+  const std::string y = YName(plane);
   std::cout << "\n=== ABCD QCD estimate  [iso x " << plane << "]  " << lep << " " << chg << " ===\n";
-  std::cout << "  QCD-only region counts (data - EWK):\n";
-  printRow("A  iso-pass, MET-high (SIGNAL)", r.A);
-  printRow("B  iso-pass, MET-low         ", r.B);
-  printRow("C  iso-fail, MET-high        ", r.C);
-  printRow("D  iso-fail, MET-low         ", r.D);
+  std::cout << "  QCD-only region counts (data - EWK), y = " << y << ":\n";
+  printRow(Form("A  iso-pass, %s-high (SIGNAL)", y.c_str()), r.A);
+  printRow(Form("B  iso-pass, %s-low         ", y.c_str()), r.B);
+  printRow(Form("C  iso-fail, %s-high        ", y.c_str()), r.C);
+  printRow(Form("D  iso-fail, %s-low         ", y.c_str()), r.D);
   std::cout << "  Transfer factor T = B/D            = "
             << Form("%.4f +/- %.4f", r.T, r.Terr) << "\n";
   std::cout << "  Predicted QCD in signal A = B*C/D  = "
@@ -494,13 +528,13 @@ void qcd_abcd(bool isElec = false)
   const std::string lepP     = isElec ? "e^{+}" : "#mu^{+}";
   const std::string lepM     = isElec ? "e^{-}" : "#mu^{-}";
 
-  ABCDConfig cfg; // muon defaults (isoCut 0.15, isoFail [0.30,1.0), metCut 30)
+  ABCDConfig cfg; // muon defaults (isoCut 0.15, isoFail [0.30,1.0), yCut 30)
   if (isElec)
   {
     cfg.isoCut    = 0.095; // electron signal isolation cut (skim_Wel isoMax)
     cfg.isoFailLo = 0.20;  // anti-iso sideband low edge (gap 0.095-0.20)
     cfg.isoFailHi = 1.00;
-    // cfg.metCut stays 30 GeV
+    // cfg.yCut stays 30 GeV
   }
 
   const std::string dir = "../skim/rootfile/";
@@ -545,7 +579,8 @@ void qcd_abcd(bool isElec = false)
 
   std::cout << "\n[CONFIG] channel=" << lep << "  isoCut=" << cfg.isoCut
             << "  isoFail=[" << cfg.isoFailLo << "," << cfg.isoFailHi << ")"
-            << "  metCut=" << cfg.metCut << " GeV\n";
+            << "  yCut=" << cfg.yCut << " GeV"
+            << "  (the y split applies to EACH counted plane: MET and m_T)\n";
 
   TFile *fout = TFile::Open(outFile.c_str(), "RECREATE");
 
@@ -588,17 +623,25 @@ void qcd_abcd(bool isElec = false)
                 << "; skipping the lepton-pT QCD template\n";
       continue;
     }
-    TH1D *tmpl = runPtCharge(fData, mc, cq.first, cfg, outDir, cq.second, lep, mres);
-    if (tmpl)
+    // "" = nominal iso-pass; "mt40" = + the lepton-pT-discriminant m_T > 40 cut
+    for (const std::string &tag : {std::string(""), std::string("mt40")})
     {
+      TH1D *tmpl = runPtCharge(fData, mc, cq.first, cfg, outDir, cq.second, lep, mres, tag);
+      if (!tmpl) continue;
       double te = 0.0;
       const double tt = tmpl->IntegralAndError(1, tmpl->GetNbinsX(), te);
       std::cout << "\n=== ABCD QCD lepton-pT template  " << lep << " " << cq.first
-                << " ===\n  (anti-iso pT shape x MET-plane T = "
+                << (tag.empty() ? "  [no m_T cut]" : "  [m_T > 40]") << " ===\n"
+                << "  (anti-iso pT shape x MET-plane T = "
                 << Form("%.4f +/- %.4f", mres.T, mres.Terr) << ")\n"
                 << "  Total iso-pass QCD (template norm) = "
-                << Form("%.1f +/- %.1f", tt, te)
-                << "  [MET-plane value: " << Form("%.1f", mres.qcdTotPass) << "]\n";
+                << Form("%.1f +/- %.1f", tt, te);
+      if (tag.empty())
+        std::cout << "  [MET-plane value: " << Form("%.1f", mres.qcdTotPass) << "]\n";
+      else
+        std::cout << "  -> m_{T}>40 keeps "
+                  << Form("%.1f%%", mres.qcdTotPass > 0 ? 100.0 * tt / mres.qcdTotPass : 0.0)
+                  << " of the QCD\n";
       fout->cd();
       tmpl->Write(tmpl->GetName(), TObject::kOverwrite);
       delete tmpl;

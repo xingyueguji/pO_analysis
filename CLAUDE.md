@@ -96,15 +96,34 @@ the QCD/low-MET background: per-charge 2D histos `h_iso_met_{mu,ele}{Plus,Minus}
 (relIso × PF MET) and `h_iso_mt_{mu,ele}{Plus,Minus}` (relIso × m_T), filled for
 every event passing the full W selection **except** the isolation cut, so the
 relIso axis spans iso-pass (signal) and the anti-iso sideband. Binning: relIso
-0–1.0 in 0.01 steps; MET 0–120/2 GeV; m_T 0–200/2.5 GeV. Regions are chosen
-downstream by projecting these (no re-skim) in `correction/qcd_abcd.C`.
+0–1.0 in **0.005** steps (`kNIsoAB = 200`); MET 0–120/2 GeV; m_T 0–200/2.5 GeV.
+Regions are chosen downstream by projecting these (no re-skim) in
+`correction/qcd_abcd.C`. **The 0.005 width is load-bearing** (fixed 2026-07-30):
+every boundary in use must be a bin EDGE — the electron cut 0.095 (= 19×0.005),
+the muon 0.15, the anti-iso edges 0.20/0.30/0.60/0.65. With the previous 0.01
+bins, 0.095 fell mid-bin and `qcd_abcd.C`'s `FindBin(isoCut−eps)` silently
+integrated relIso < 0.10, leaking 170 events that fail `skim_Wel`'s own iso cut
+into the ABCD iso-pass region and inflating T + every electron QCD template by
+~4% (muon was always exact). Any new cut value applied by projection must land
+on an edge.
 **2026-07-29 additions (both W channels):** a third ABCD plane
 `h_iso_pt_{mu,ele}{Plus,Minus}` (relIso × leading-lepton pT, 0–100/2 GeV) —
 supplies the anti-iso lepton-pT *shape* for the QCD pT template (NOT used for
 the 2×2 counting; relIso is pT-correlated) — and the rapidity-binned
 per-charge lepton-pT histos `h_leppt_W{p,m}_y{0..11}` (+`_FB`), 2 GeV bins,
 the pT twins of `h_met_*`/`h_mt_*` feeding the display-only lepton-pT stacks
-in `mtandmet.C`. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
+in `mtandmet.C`. **2026-07-30:** joint per-charge (pT × m_T) 2Ds for the
+cut-pair scan (`correction/ptmt_scan.C`): `h_pt_mt_*` (iso-pass) and
+`h_pt_mt_antiiso_*` (the anti-iso sideband, relIso in the qcd_abcd windows,
+with its actual MET/m_T — the scan's QCD model); pT 1 GeV bins, m_T 2.5 GeV.
+**The `_mt40` set (2026-07-30) = the LEPTON-pT-DISCRIMINANT selection**
+`pT > 25 && m_T > 40` (local `mtCutForPtDisc` in both W functions; the m_T cut does
+the QCD suppression that the MET *shape* does in the MET fit). Twins of the
+existing histos with that cut applied: `h_leppt_mt40_W{p,m}_y{0..11}`(+`_FB`),
+`h_lepPt_mt40`/`h_lepEta_mt40`/`h_lepPhi_mt40`, and the ABCD plane
+`h_iso_pt_mt40_{mu,ele}{Plus,Minus}`. The nominal (no-m_T-cut) histograms, the
+MET/m_T histos and the cutflow are untouched — the W skim still applies no
+MET/m_T cut. Z files contain dilepton mass (`hMass`, `hMass_extended`, `hMass_vipul`)
 plus kinematics of the dilepton system and its leptons (`h_Zpt/h_Zeta/h_Zy/h_Zphi`,
 `h_lepPt/h_lepEta/h_lepPhi` — both legs; `h_Zy` is lab-frame rapidity), filled for
 iso-selected OS pairs in the Z peak [60,120] GeV (consumed by
@@ -124,7 +143,7 @@ Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
 Data/MC overlay, background estimation, plots.
 
-- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). **Also writes the structured Combine input `plots[/Elec]/combine_input_W.root`** — one TDirectory per fit region (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …) each with the 6 absolute templates `data_obs/signal/z/ztau/wtau/qcd` (consumed by the fork's `run_pO_fits.sh` — see "Downstream fit"). Channel auto-selected by `isElec`. **Lepton-pT stacks (2026-07-29, DISPLAY ONLY):** the same absolute data-vs-stack comparisons in leading-lepton pT (`plots[/Elec]/leppt/`, per-y `leppt_W{p,m}_y*` + `_FB` + `h_leppt_inclusive`), using `h_leppt_*` from the skim and the `qcd_pt_*` ABCD template (per-y QCD split by the same low-MET-excess weights); **deliberately NOT written into `combine_input_W.root`** — the fit discriminant stays PF MET. (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
+- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). **Also writes the structured Combine input `plots[/Elec]/combine_input_W.root`** — one TDirectory per fit region (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …) each with the 6 absolute templates `data_obs/signal/z/ztau/wtau/qcd` (consumed by the fork's `run_pO_fits.sh` — see "Downstream fit"). Channel auto-selected by `isElec`. **Lepton-pT stacks (2026-07-29, DISPLAY ONLY):** the same absolute data-vs-stack comparisons in leading-lepton pT, in **two variants** driven by one 2-entry `varStem[]`/`varTag[]` table (`kVarNom`/`kVarMt40`): `plots[/Elec]/leppt/` = plain W selection (`h_leppt_*` + `qcd_pt_*`), and **`plots[/Elec]/leppt_mt40/` = the pT-DISCRIMINANT selection pT>25 && m_T>40** (`h_leppt_mt40_*` + `qcd_pt_mt40_*`, 2026-07-30). Both: per-y `leppt[_mt40]_W{p,m}_y*` + `_FB` + inclusive, per-y QCD split by the same low-MET-excess weights (the m_T cut doesn't move QCD in y). **`combine_input_W.root` itself stays PF-MET-only**, but since 2026-07-30 the same writer also emits the two lepton-pT variants as **separate files** — `combine_input_W_leppt.root` (plain selection) and `combine_input_W_leppt_mt40.root` (pT>25 && m_T>40) — same 51 regions × 6 templates each, pT binning 50/0–100, consumed by the fork's `run_pO_fits.sh --disc leppt|leppt_mt40` (out-trees `pO_fit_out_leppt[_mt40]/`; `sync_lxplus.sh` uploads the variants when present and downloads all out-trees). qcd_norm stays FREE for all three (2026-07-30 decision). **Composition after m_T>40** (data / W sig / DY+τ / QCD): μ 4382 / 3704 (84.5%) / 272 (6.2%) / 226 (5.2%), closure 96%; e 4465 / 3080 (69.0%) / 151 (3.4%) / 1202 (26.9%), closure 99.3%. (Before the cut: W purity 73.5% μ / 45.0% e.) (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
@@ -153,14 +172,21 @@ fit reads the *main* W skim output at `../skim/rootfile/`.
 **Lepton-pT template (2026-07-29):** also writes `qcd_pt_{mu,ele}{Plus,Minus}` =
 (anti-iso pT shape from `h_iso_pt_*`) × (the **MET-plane** T) — relIso×pT is
 correlated for QCD, so the pT plane is never counted with the 2×2; template
-total = the MET-plane iso-pass QCD by construction. Ships an anti-iso
+total = the MET-plane iso-pass QCD by construction. **`qcd_pt_mt40_*`
+(2026-07-30)** is the same built from `h_iso_pt_mt40_*`, i.e. the QCD template
+of the pT-discriminant selection (pT>25 && m_T>40), same MET-plane T (QCD
+isolation efficiency assumed independent of the recoil variable) ⇒ its total
+IS the ABCD prediction for QCD surviving the m_T cut. **m_T>40 keeps only
+≈26%/25% of the μ⁺/μ⁻ QCD and ≈33%/34% of the e⁺/e⁻ QCD** (μ 413+454→111+116,
+e 1881+1687→623+579). Ships an anti-iso
 slice-stability shape check (`antiiso_shape_pt_*`): μ stable; e shows a mild
-tilt (sideband pT slightly soft vs iso-pass) — the known systematic knob. **Result:** muon QCD is small (T≈0.17; ≈3% of the high-MET signal region). Electron QCD was originally huge with the loose `eleCutIdWP95` (T≈0.30; ≈24–26%), which **motivated the ID switch to `eleMVAIdWP95`** (see the isolation/ID study + FIXMEs); after the switch the electron QCD dropped to **T≈0.33–0.38, ≈10–11%** of the high-MET signal region (iso-pass QCD ≈10037→3634, W signal only −6.5%, S/B 0.34→0.87). Closure is good in both channels.
+tilt (sideband pT slightly soft vs iso-pass) — the known systematic knob. **Result:** muon QCD is small (T≈0.17; ≈3% of the high-MET signal region). Electron QCD was originally huge with the loose `eleCutIdWP95` (T≈0.30; ≈24–26%), which **motivated the ID switch to `eleMVAIdWP95`** (see the isolation/ID study + FIXMEs); after the switch the electron QCD dropped to **T≈0.32–0.38, ≈10–11%** of the high-MET signal region (iso-pass QCD ≈10037→3634, W signal only −6.5%, S/B 0.34→0.87). Closure is good in both channels. (Electron T/QCD came down a further ~4% on 2026-07-30 with the relIso bin-edge fix — see the `kNIsoAB = 200` note above. **MET-plane** values, μ⁺/μ⁻ and e⁺/e⁻: μ T = 0.2001/0.1832 **unchanged** by construction, e T = 0.3967/0.3368 → **0.3802/0.3243**; iso-pass QCD μ 413.7+453.8, e 1969.5+1758.9 → **1887.2+1693.9**. NB the m_T-plane has its own T (μ 0.178/0.163, e 0.343/0.323) — don't quote those as the MET-plane numbers.)
+- [correction/ptmt_scan.C](correction/ptmt_scan.C) — **(pT × m_T) cut-pair scan** (2026-07-30, iso NOT scanned — stays at nominal): which (lepton-pT, m_T) cut combination optimizes the W selection. Signal = absolute W MC; background = the **anti-iso sideband** (full selection except iso, relIso in the qcd_abcd windows [0.30,1.0) μ / [0.20,1.0) e, ACTUAL MET/m_T) EWK-subtracted and shape-normalized to the measured iso-pass QCD total, + non-W EWK counted directly. (An earlier MET<5 "low-MET proxy" convention was **removed same day**: conditioning on MET caps the proxy's m_T at ~2√(pT·MET)≈30 GeV — a scan of m_T must not use a MET-conditioned background. Residual anti-iso caveat: mild iso–pT shape correlation, bounded by the `antiiso_shape_pt_*` slice checks.) Reads the joint `h_pt_mt_{mu,ele}{Plus,Minus}` (iso-pass) / `h_pt_mt_antiiso_*` (sideband) 2Ds from the skim. Outputs S/√(S+B) & S/B maps (optimum ★, tentative (25,40) ✚), sweep ROCs + AUC, m_T profiles → `plots/ptmt_scan_{mu,ele}/` + `rootfile/ptmt_scan_{mu,ele}.root`. **Result (anti-iso, final):** pT>25 always best (raising it only cuts the Jacobian peak; pT-sweep AUC ~0.71 vs m_T-sweep ~0.94); μ plateau flat over m_T 40–45 (S/√(S+B) 56.90–56.96, ε_S 95–97%; optimum (25,42.5)); e peaks at (25,52.5): 37.8→48.5, S/B 0.82→4.7, ε_S 89.7% (at (25,45): 47.7, ε_S 95.2%). **Channel-uniform compromise (25, 45)** sits within 0.1% (μ) / 1.7% (e) of the per-channel optima. Sideband stats: 4579 μ / 10239 e events. `root -l -q 'ptmt_scan.C+'` / `+(true)`. NB an m_T precut suits the lepton-pT-fit path; it is NOT compatible with the current MET-shape fit (it would remove the QCD-constraining low-MET region).
 - [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — **superseded** by `qcd_abcd.C`. QCD shape from anti-iso sideband, Rayleigh-like fit + linear shape-parameter extrapolation to signal iso; did not behave at pO statistics. Kept for reference.
 - [correction/isolation_mu_tight.C](correction/isolation_mu_tight.C) (muon, **current**), [correction/isolation_ele.C](correction/isolation_ele.C) (electron) — isolation ROC study, both on the **Δβ-corrected** relIso since 2026-07-06. Signal = OS Z-window pairs; backgrounds = SS pairs (≈empty for μ) and single-lepton MET<5 (QCD-like). `isolation_mu_tight.C` is the fresh, pure muon study (2026-07-06): ONE ID (`muIDTight`, pT>15, |η|<2.4), ONE variable (branch-based Δβ relIso = the skim's `RelIsoPF`), continuous 200-point scan, dbeta + nodbeta(reference) tags → `rootfile/IsoStudyOutputs_muon_tight.root`; run `root -l -q 'isolation_mu_tight.C+("/Users/zhenghuang/pO_2026_May_26/Data_May_26.root")'`. **Electron `isolation_ele.C`** scans the 8 ID WPs × 4 MVA-Iso WPs AND a continuous-relIso scan per ID (pass the current data file — default path is stale EOS). The older multi-cone/multi-def muon scan [correction/isolation.C](correction/isolation.C) is kept untouched for reference (uncorrected iso). **Conclusions (re-derived under Δβ, 2026-07-06 on May-26 data):** μ TightID AUC_MET=0.943, J(QCD) optimum 0.156 ⇒ relIso<0.15 stands (ε_sig=0.934, ε_QCD=0.130; Δβ vs uncorrected nearly identical — pO pileup tiny, PU-iso nonzero for only ~20% of leptons); e `MVAIdWP95` AUC_MET=0.909, J optimum exactly 0.095 ⇒ cut stands (`CutWP95` remains the worst ID, AUC 0.868).
 - [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C) (`PlotsIsoROC.C+(false)` for the tight set), [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C) — isolation ROC curves → `correction/plotsROC[_ele]/`; plus `plotsROC_ele/roc_MET_continuous_allID.png` (one-off overlay of the 8 IDs' continuous-relIso QCD-ROC).
 - [correction/plot_iso_summary.C](correction/plot_iso_summary.C) — **per-fixed-ID summary in one consistent cosmetic**: a 2-pad canvas (LEFT = continuous efficiency vs Δβ-relIso cut for signal/QCD/SS with the operating cut marked + ε_sig/ε_QCD; RIGHT = the corresponding ROC + AUC with the operating-point star). Electron → one per ID (`plotsROC_ele/summary_<ID>.png`, reads the continuous scan from `isolation_ele.C`); muon → single tight-ID summary (`plotsROC/summary_muon.png`, reads `IsoStudyOutputs_muon_tight.root` from `isolation_mu_tight.C` — since 2026-07-06; before that the old `ggbranch` scan). `root -l -q 'plot_iso_summary.C+'`.
-- [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC overlay + ratio pad, shape-normalized. **Z channels** (`"Zmm"`/`"Zee"`): DY MC vs data for the Z kinematics (`h_Zpt/h_Zeta/h_Zy/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`) — the Data/MC boson-pT check. **W channels** (`"Wmu"`/`"Wel"`, added 2026-07-29): leading-lepton `h_lepPt/h_lepEta/h_lepPhi` after the full W selection, data vs W⁺+W⁻ MC combined with the relative `k_s` from `mc_norm.h` (shape-norm cancels the absolute scale; backgrounds NOT subtracted — and since the W selection has NO MET cut, QCD here is ≈19% μ / ≈50% e of the plotted sample (data−EWK, 2026-07-29; the familiar 3%/10% are high-MET-region figures), so expect a low-pT data excess — it's a shape check). Probes whether lepton pT is well-enough modeled to serve as an alternative fit discriminant (Jacobian peak, MET-free). `root -l -q 'dataMC_kinematics.C+("Wmu")'` etc.; W data file has no sample suffix (`<base>_hist.root`).
+- [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC overlay + ratio pad, shape-normalized. **Z channels** (`"Zmm"`/`"Zee"`): DY MC vs data for the Z kinematics (`h_Zpt/h_Zeta/h_Zy/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`) — the Data/MC boson-pT check. **W channels** (`"Wmu"`/`"Wel"`, added 2026-07-29): leading-lepton `h_lepPt/h_lepEta/h_lepPhi` after the full W selection, data vs W⁺+W⁻ MC combined with the relative `k_s` from `mc_norm.h` (shape-norm cancels the absolute scale; backgrounds NOT subtracted — and since the W selection has NO MET cut, QCD here is ≈19% μ / ≈50% e of the plotted sample (data−EWK, 2026-07-29; the familiar 3%/10% are high-MET-region figures), so expect a low-pT data excess — it's a shape check). Probes whether lepton pT is well-enough modeled to serve as an alternative fit discriminant (Jacobian peak, MET-free). **`"Wmu_mt40"`/`"Wel_mt40"` (2026-07-30)** run the same check on the pT-discriminant selection (pT>25 && m_T>40) via the `_mt40` histos → `plots/dataMC_W{mu,el}_mt40/`; with QCD down to ~5% (μ) / ~28% (e) there, the shape comparison is far less background-dominated. `root -l -q 'dataMC_kinematics.C+("Wmu")'` etc.; W data file has no sample suffix (`<base>_hist.root`).
 - [correction/recoil_raw.C](correction/recoil_raw.C) — raw look at the Z→μμ hadronic recoil (`u_par`/`u_perp`) for the MET recoil correction: data vs DY MC, inclusive and in q_T slices (projected from the 2D histos), **plus a printed entry-count table per q_T slice** to judge statistics/binning before fitting. Slice edges = editable `kQtEdges` array (projections → no re-skim to change). **Checked 2026-07-02: recoil looks stable for now** — no correction applied, the planned `recoil_fit.C` (double-Gaussian per q_T bin → μ(q_T)/σ(q_T), AN Sec 6) is deferred; the MET data/MC discrepancy is attributed to the unembedded MC samples (no pO underlying event), not recoil. `root -l -q 'recoil_raw.C+'`.
 - [correction/recoil_raw_ele.C](correction/recoil_raw_ele.C) — electron-channel twin of `recoil_raw.C`: same raw-recoil look for Z→ee (reads `ZToEE_pO2025_*`, writes `plots/recoil_Zee/`). `root -l -q 'recoil_raw_ele.C+'`.
 
@@ -177,21 +203,26 @@ earlier it was a single consolidated `pO_2025.root`):
 
 ## Input data
 
-**Per-sample** ROOT files (the May-26 production), not a single consolidated file.
-Single source of truth: `kDefaultDataFile` (data) and `ResolveMCSample` (MC) in
-`skim/skim_common.h` (`run_all.sh` greps the data path; override per-run via the
-`DATA_FILE` env var).
+**Per-sample** ROOT files (the **July-29 production** since 2026-07-30; May-26
+before that), not a single consolidated file. Single source of truth:
+`kDefaultDataFile` (data) and `ResolveMCSample` (MC) in `skim/skim_common.h`
+(`run_all.sh` greps the data path; override per-run via the `DATA_FILE` env var).
 
-Currently pointing at the **local** copy under `~/pO_2026_May_26/` — written as
-absolute paths (`/Users/zhenghuang/pO_2026_May_26/…`) because ROOT's
-`TFile::Open` doesn't reliably expand `~` — switched from EOS 2026-06-23. To read
-off EOS/lxplus again, repoint `kDefaultDataFile` + `inputBase` (in
-`ResolveMCSample`) to
-`root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/`.
-Files: `Data_May_26.root` + 9 MC (`MC_DY{mu,ee}_May26.root`,
-`MC_W{p,m}_{mu,ele}_May26.root`, `MC_DYtau_May26.root`, `MC_W{p,m}_tau_May26.root`).
-Three low-mass DY files (`MC_DY{mu,ee,tau}_low_May26.root`) are present but
-**unwired** (skipped — see "MC normalization").
+Currently pointing at the **local** copy under `~/pO_2026_July_29/` — written as
+absolute paths (`/Users/zhenghuang/pO_2026_July_29/…`) because ROOT's
+`TFile::Open` doesn't reliably expand `~`. To read off EOS/lxplus again, repoint
+`kDefaultDataFile` + `inputBase` (in `ResolveMCSample`) to
+`root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_July_29/`.
+Files: `July_29_DATA.root` + 9 MC (`July_29_MC_DY_{mu,ele,tau}_Z.root`,
+`July_29_MC_W{p,m}_{mu,ele,tau}.root`). No low-mass DY files in this production.
+The new ntuples carry extra branches vs May-26 — harmless: the fast skim
+enables only the branches it uses. **N_gen labels stay canonical** (`Wp_mu`,
+`DYee`, `Wp_tau`, …): `count_ngen.C::LabelFromFname` maps the new filenames to
+the legacy labels (`July_29_MC_DY_ele_Z.root` → `DYee`), so every
+`pONorm::MCScale(label)` call site is production-independent. Merged from EOS
+filelists by `merge_rootfile/run_all_hadd_July_29.sh` (glob-autodetects
+`July_29_*.txt`, skips already-merged outputs; `FORCE=1` to redo). The May-26
+local copy remains at `~/pO_2026_May_26/`.
 
 Trees per file: `ggHiNtuplizer/EventTree` (main physics tree),
 `hiEvtAnalyzer/HiTree` (gen `weight`), `hltanalysis/HltTree`, and PF candidate /
@@ -215,7 +246,11 @@ One driver does everything per channel (muon/electron). Run under `cmsenv`:
 ./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit] [--draw-only]
 ```
 (`--draw-only` redraws postfit plots from an existing run — needs only `root` +
-the `fits/` tree, e.g. after cosmetic `draw_postfit_pO.C` changes.)
+the `fits/` tree, e.g. after cosmetic `draw_postfit_pO.C` changes. **`--disc
+met|leppt|leppt_mt40`** (2026-07-30, default met) selects the W discriminant:
+reads `combine_input_W[_leppt[_mt40]].root`, writes to
+`pO_fit_out[_leppt[_mt40]]/`, sets the postfit x-title; datacards/fit model
+identical, qcd_norm free for all three.)
 It (1) locates this repo's **structured** Combine inputs, (2) generates all
 datacards, (3) runs `text2workspace`+`combine -M FitDiagnostics` per fit region
 into a clean output tree, (4) extracts fitted signal yields, (5) draws postfit
@@ -364,9 +399,23 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   When in doubt, diff against `skim/legacy/` — that's the pre-refactor
   reference.
 - Histogram naming is load-bearing — `analysis/charge_asym.C` and
-  `analysis/FBratio.C` read by name (`h_mt_Wp_y{0..11}`, `h_mt_Wm_y{0..11}`),
-  and so do the Combine input scripts. Rename in skim → must rename in
-  analysis AND in the Combine fork.
+  `analysis/FBratio.C` read by name, and so do the Combine input scripts.
+  Rename in skim → must rename in analysis AND in the Combine fork.
+  **Naming audit (2026-07-30):** names must state the quantity they hold.
+  Fixed then: the ABCD region printout said "MET-high/low" even on the m_T
+  plane (`ABCDConfig::metCut` → `yCut`, labels now derived from the plane);
+  the fitted-yield containers were called `h_mt_*` although the fit
+  discriminant is PF MET → the fork now writes **`h_yield_W{p,m}_y*(_FB)`**
+  as primary with `h_mt_*` kept as a deprecated alias, and
+  `charge_asym.C`/`FBratio.C` prefer `h_yield_*` and fall back (so old and new
+  files both work in both directions). Same dual-name scheme for the output
+  graphs: **`g_chargeAsym`, `g_RFB_{sum,Wp,Wm}`** primary + `_mt` alias;
+  `observables.C` resolves via a `GetGraph(file, name, legacy)` helper and its
+  plots are now `chargeAsym.png` / `RFB_{sum,Wp,Wm}.png`. `useMT` still
+  genuinely selects m_T vs MET **for raw skim files only** — it is ignored when
+  `h_yield_*` is present. Also fixed: a real crossed assignment in
+  `correction/PlotsIsoROC.C` (the SS and MET efficiency graphs were drawn under
+  each other's legend entry).
 - Output paths in the skim functions are referenced again in plotting and in
   the Combine input scripts (`make_combine_input*.C`). Moving files mid-pipeline
   silently breaks downstream stages.
@@ -380,6 +429,15 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   `skim/skim.C` (creates `rootfile/`), `skim/run_all.sh` (`rootfile output
   logs`), and every `correction/` macro (their `plots/` / `rootfile/`). When
   adding a new writer, do the same — and zombie-check input files you open.
+- **Never run two `run_all.sh` invocations in parallel from `skim/`.** They share
+  the ACLiC build artifacts (`skim_C.so`, `skim_C_ACLiC_dict.*`) in that one
+  directory, so two simultaneous first-jobs race to rebuild them and one dies
+  with `Error in <ACLiC>: Executing 'rootcling ...' failed!`. The driver reports
+  it only as `failures=1` in its summary line, and because the compile (not the
+  physics) failed, the previous output file is silently left in place — easy to
+  mistake for success. Either run the channels sequentially, or pre-build once
+  (`root -l -b -q -e '.L skim.C+'`) before launching parallel jobs. Hit
+  2026-07-30 with `run_all.sh Wmu` + `run_all.sh Wel` started together.
 - **Shell scripts must be bash-3.2 compatible.** The user runs locally on macOS,
   whose stock `/bin/bash` is **3.2** — no `declare -A` associative arrays (they
   crash with a cryptic `unbound variable` under `set -u`). `skim/run_all.sh` uses

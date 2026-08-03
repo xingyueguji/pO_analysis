@@ -258,6 +258,15 @@ int skim_Wmu(const char *fname, SampleType sample)
   const double muPt25      = 25.0;
   const double dyMuPtMin   = 15.0;
   const double isoMax      = 0.15;
+  // m_T cut of the lepton-pT-DISCRIMINANT selection (pT > 25 && m_T > 40).
+  // Applies ONLY to the `_mt40` histogram set below -- the nominal MET/m_T
+  // histograms and the cutflow are untouched (no MET/m_T cut in the W skim).
+  // NAMING CONTRACT: the literal "40" in the persisted `_mt40` histogram names
+  // asserts this value. If you change it, RENAME those histograms too (and the
+  // readers: correction/qcd_abcd.C runPtCharge tag, plotting/mtandmet.C
+  // varStem[kVarMt40], correction/dataMC_kinematics.C's _mt40 channels) --
+  // otherwise the stored names silently claim a cut that was not applied.
+  const double mtCutForPtDisc     = 40.0;
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double muEtaMax    = 2.4;
@@ -528,12 +537,21 @@ int skim_Wmu(const char *fname, SampleType sample)
   // anti-iso sideband (iso fail). The ABCD regions are defined DOWNSTREAM by
   // projecting these in correction/qcd_abcd.C, so the iso/MET boundaries can be
   // retuned without re-skimming (same philosophy as the recoil 2D histos).
-  //   x = relIso : 0..1.0 in 0.01-wide bins (boundaries 0.15/0.30/... all align)
+  //   x = relIso : see the kNIsoAB note below (0.005-wide bins; every boundary
+  //               used downstream must be a bin EDGE)
   //   y = MET    : 0..120 GeV / 2.0  (matches h_met_* binning)
   //   y = m_T    : 0..200 GeV / 2.5  (matches h_mt_*  binning)
   // MC is filled with the per-event gen weight w (data: w=1); the absolute
   // per-sample k_s is applied later in the ABCD macro (EWK subtraction).
-  const int    kNIsoAB  = 100;
+  // 200 bins over [0,1] => 0.005 wide, so EVERY relIso boundary used
+  // downstream lands on a bin EDGE: the electron cut 0.095 (= 19*0.005),
+  // the muon 0.15, and the anti-iso window edges 0.20/0.30/0.60/0.65.
+  // With the old 0.01 bins, 0.095 fell mid-bin and qcd_abcd.C's
+  // FindBin(isoCut-eps) projection silently integrated relIso < 0.10 --
+  // 170 electron events that FAIL the analysis cut leaked into the
+  // ABCD iso-pass region, inflating T and every electron QCD template by
+  // ~4% (found 2026-07-30; the muon was exact all along).
+  const int    kNIsoAB  = 200;
   const double kIsoLoAB = 0.0, kIsoHiAB = 1.0;
   TH2D *h_iso_met_muPlus  = new TH2D("h_iso_met_muPlus",
       "#mu^{+} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
@@ -552,17 +570,59 @@ int skim_Wmu(const char *fname, SampleType sample)
       "#mu^{+} ABCD;relIso;p_{T}^{#mu} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   TH2D *h_iso_pt_muMinus  = new TH2D("h_iso_pt_muMinus",
       "#mu^{-} ABCD;relIso;p_{T}^{#mu} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  // Same plane WITH the discriminant selection's m_T cut: supplies the
+  // anti-iso lepton-pT shape for the QCD template of the pT+m_T>40 stacks.
+  TH2D *h_iso_pt_mt40_muPlus  = new TH2D("h_iso_pt_mt40_muPlus",
+      Form("#mu^{+} ABCD, m_{T}>%.0f;relIso;p_{T}^{#mu} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  TH2D *h_iso_pt_mt40_muMinus = new TH2D("h_iso_pt_mt40_muMinus",
+      Form("#mu^{-} ABCD, m_{T}>%.0f;relIso;p_{T}^{#mu} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  h_iso_pt_mt40_muPlus->Sumw2(); h_iso_pt_mt40_muMinus->Sumw2();
   h_iso_met_muPlus->Sumw2();  h_iso_met_muMinus->Sumw2();
   h_iso_mt_muPlus->Sumw2();   h_iso_mt_muMinus->Sumw2();
   h_iso_pt_muPlus->Sumw2();   h_iso_pt_muMinus->Sumw2();
+
+  // -------- (lepton pT, m_T) joint 2Ds for the pT x mT cut scan --------
+  // For correction/ptmt_scan.C (2026-07-30): scanning a (pT, mT) cut PAIR
+  // needs the JOINT distribution, which the 1D h_leppt_*/h_mt_* cannot give.
+  // Isolation stays at the nominal cut (this is NOT an iso scan):
+  //   h_pt_mt_*         -- iso-pass events, no MET condition. W MC -> the
+  //                        signal model S(pTcut, mTcut); data -> full sample.
+  //   h_pt_mt_antiiso_* -- events in the ANTI-ISO sideband (relIso in
+  //                        [0.30, 1.0), the qcd_abcd.C window), with their
+  //                        ACTUAL MET/mT: the QCD background model of the
+  //                        scan. Isolation is ~independent of (pT, mT), so
+  //                        unlike a MET-conditioned proxy this does NOT
+  //                        sculpt the mT axis (a MET<5 proxy caps mT at
+  //                        ~2*sqrt(pT*MET) ~ 30 GeV by construction --
+  //                        that earlier convention was removed 2026-07-30).
+  // pT 1 GeV bins (integer-GeV cuts land on edges), mT 2.5 GeV (matches h_mt_*).
+  const double antiIsoLo = 0.30, antiIsoHi = 1.00; // = qcd_abcd.C isoFail window (mu)
+  TH2D *h_pt_mt_muPlus  = new TH2D("h_pt_mt_muPlus",
+      "#mu^{+}, iso-pass;p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_muMinus = new TH2D("h_pt_mt_muMinus",
+      "#mu^{-}, iso-pass;p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_antiiso_muPlus  = new TH2D("h_pt_mt_antiiso_muPlus",
+      "#mu^{+}, anti-iso [0.30,1.0);p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_antiiso_muMinus = new TH2D("h_pt_mt_antiiso_muMinus",
+      "#mu^{-}, anti-iso [0.30,1.0);p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  h_pt_mt_muPlus->Sumw2();         h_pt_mt_muMinus->Sumw2();
+  h_pt_mt_antiiso_muPlus->Sumw2(); h_pt_mt_antiiso_muMinus->Sumw2();
 
   // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
   // pT twins of the h_met_*/h_mt_* rapidity-binned histos, for the lepton-pT
   // data/MC stacks in plotting/mtandmet.C (plots only -- NOT written into the
   // Combine input) and a possible future pT-discriminant fit. 2 GeV bins,
   // matching h_lepPt.
-  TH1D *h_leppt_Wp[kNY], *h_leppt_Wm[kNY];
+  //
+  // The `_mt40` twins carry the SAME distributions with the m_T > kMtCutPt cut
+  // applied (2026-07-30): the lepton-pT-DISCRIMINANT selection is pT > 25 AND
+  // m_T > 40, the m_T cut replacing the QCD-suppression role that the MET
+  // shape plays in the MET-discriminant fit. The cut cannot be applied
+  // downstream (the pT histos have no m_T axis), hence the separate set.
+  TH1D *h_leppt_Wp[kNY],    *h_leppt_Wm[kNY];
   TH1D *h_leppt_Wp_FB[kNY], *h_leppt_Wm_FB[kNY];
+  TH1D *h_leppt_mt40_Wp[kNY],    *h_leppt_mt40_Wm[kNY];
+  TH1D *h_leppt_mt40_Wp_FB[kNY], *h_leppt_mt40_Wm_FB[kNY];
   for (int b = 0; b < kNY; ++b)
   {
     const double y1 = kYEdges[b],     y2 = kYEdges[b + 1];
@@ -577,8 +637,19 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_leppt_Wm_FB[b] = new TH1D(Form("h_leppt_Wm_y%d_FB", b),
         Form("W- lepton p_{T};p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
 
-    h_leppt_Wp[b]->Sumw2();    h_leppt_Wm[b]->Sumw2();
-    h_leppt_Wp_FB[b]->Sumw2(); h_leppt_Wm_FB[b]->Sumw2();
+    h_leppt_mt40_Wp[b] = new TH1D(Form("h_leppt_mt40_Wp_y%d", b),
+        Form("W+ lepton p_{T}, m_{T}>%.0f;p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 50, 0, 100);
+    h_leppt_mt40_Wm[b] = new TH1D(Form("h_leppt_mt40_Wm_y%d", b),
+        Form("W- lepton p_{T}, m_{T}>%.0f;p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 50, 0, 100);
+    h_leppt_mt40_Wp_FB[b] = new TH1D(Form("h_leppt_mt40_Wp_y%d_FB", b),
+        Form("W+ lepton p_{T}, m_{T}>%.0f;p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 50, 0, 100);
+    h_leppt_mt40_Wm_FB[b] = new TH1D(Form("h_leppt_mt40_Wm_y%d_FB", b),
+        Form("W- lepton p_{T}, m_{T}>%.0f;p_{T}^{#mu} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 50, 0, 100);
+
+    h_leppt_Wp[b]->Sumw2();         h_leppt_Wm[b]->Sumw2();
+    h_leppt_Wp_FB[b]->Sumw2();      h_leppt_Wm_FB[b]->Sumw2();
+    h_leppt_mt40_Wp[b]->Sumw2();    h_leppt_mt40_Wm[b]->Sumw2();
+    h_leppt_mt40_Wp_FB[b]->Sumw2(); h_leppt_mt40_Wm_FB[b]->Sumw2();
   }
 
   // -------- Leading-lepton kinematics (full W selection) --------
@@ -586,10 +657,17 @@ int skim_Wmu(const char *fname, SampleType sample)
   // mirroring the Z-channel h_lep* histos (same names, so the macro reads both
   // W and Z files uniformly). Filled once per event with the LEADING muon after
   // the full selection (isolation + trigger match included), charges combined.
+  // The `_mt40` twins additionally require m_T > kMtCutPt (the lepton-pT
+  // discriminant selection) -- with QCD suppressed there, the data/MC shape
+  // check becomes quantitative rather than QCD-dominated.
   TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{#mu} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{#mu}; Events",        outPrefix.c_str()), 50, -2.5, 2.5);
   TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{#mu}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  TH1D *h_lepPt_mt40  = new TH1D("h_lepPt_mt40",  Form("%s, m_{T}>%.0f; p_{T}^{#mu} [GeV]; Events", outPrefix.c_str(), mtCutForPtDisc), 50,  0,  100);
+  TH1D *h_lepEta_mt40 = new TH1D("h_lepEta_mt40", Form("%s, m_{T}>%.0f; #eta_{#mu}; Events", outPrefix.c_str(), mtCutForPtDisc), 50, -2.5, 2.5);
+  TH1D *h_lepPhi_mt40 = new TH1D("h_lepPhi_mt40", Form("%s, m_{T}>%.0f; #phi_{#mu}; Events", outPrefix.c_str(), mtCutForPtDisc), 32, -TMath::Pi(), TMath::Pi());
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
+  h_lepPt_mt40->Sumw2(); h_lepEta_mt40->Sumw2(); h_lepPhi_mt40->Sumw2();
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
@@ -695,24 +773,41 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
     // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
     if (muCharge->at(iLead) > 0)
     {
       h_iso_met_muPlus->Fill(isoLead, met, w);
       h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
       h_iso_pt_muPlus ->Fill(isoLead, muPt->at(iLead), w);
+      if (passMtCut) h_iso_pt_mt40_muPlus->Fill(isoLead, muPt->at(iLead), w);
+      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+        h_pt_mt_antiiso_muPlus->Fill(muPt->at(iLead), mt, w);
     }
     else if (muCharge->at(iLead) < 0)
     {
       h_iso_met_muMinus->Fill(isoLead, met, w);
       h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
       h_iso_pt_muMinus ->Fill(isoLead, muPt->at(iLead), w);
+      if (passMtCut) h_iso_pt_mt40_muMinus->Fill(isoLead, muPt->at(iLead), w);
+      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+        h_pt_mt_antiiso_muMinus->Fill(muPt->at(iLead), mt, w);
     }
 
     if (!passIsoNominal) continue;
 
+    // pT x mT scan signal plane (iso-pass)
+    if      (muCharge->at(iLead) > 0) h_pt_mt_muPlus ->Fill(muPt->at(iLead), mt, w);
+    else if (muCharge->at(iLead) < 0) h_pt_mt_muMinus->Fill(muPt->at(iLead), mt, w);
+
     h_lepPt ->Fill(muPt->at(iLead),  w);
     h_lepEta->Fill(muEta->at(iLead), w);
     h_lepPhi->Fill(muPhi->at(iLead), w);
+    if (passMtCut)
+    {
+      h_lepPt_mt40 ->Fill(muPt->at(iLead),  w);
+      h_lepEta_mt40->Fill(muEta->at(iLead), w);
+      h_lepPhi_mt40->Fill(muPhi->at(iLead), w);
+    }
 
     const int q = muCharge->at(iLead);
     const bool isWp = (q > 0), isWm = (q < 0);
@@ -726,11 +821,21 @@ int skim_Wmu(const char *fname, SampleType sample)
     {
       if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(muPt->at(iLead), w); }
       else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(muPt->at(iLead), w); }
+      if (passMtCut)
+      {
+        if      (isWp) h_leppt_mt40_Wp[ybin]->Fill(muPt->at(iLead), w);
+        else if (isWm) h_leppt_mt40_Wm[ybin]->Fill(muPt->at(iLead), w);
+      }
     }
     if (ybin_FB >= 0)
     {
       if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
       else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
+      if (passMtCut)
+      {
+        if      (isWp) h_leppt_mt40_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w);
+        else if (isWm) h_leppt_mt40_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w);
+      }
     }
   }
 
@@ -754,6 +859,10 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_leppt_Wm[i]->Write("", 2);
     h_leppt_Wp_FB[i]->Write("", 2);
     h_leppt_Wm_FB[i]->Write("", 2);
+    h_leppt_mt40_Wp[i]->Write("", 2);
+    h_leppt_mt40_Wm[i]->Write("", 2);
+    h_leppt_mt40_Wp_FB[i]->Write("", 2);
+    h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
   for (int b = 0; b < NISO; ++b)
   {
@@ -767,10 +876,20 @@ int skim_Wmu(const char *fname, SampleType sample)
   h_iso_mt_muMinus ->Write("", TObject::kOverwrite);
   h_iso_pt_muPlus  ->Write("", TObject::kOverwrite);
   h_iso_pt_muMinus ->Write("", TObject::kOverwrite);
-  // Leading-lepton kinematics (full selection)
+  h_iso_pt_mt40_muPlus ->Write("", TObject::kOverwrite);
+  h_iso_pt_mt40_muMinus->Write("", TObject::kOverwrite);
+  // pT x mT scan inputs (correction/ptmt_scan.C)
+  h_pt_mt_muPlus         ->Write("", TObject::kOverwrite);
+  h_pt_mt_muMinus        ->Write("", TObject::kOverwrite);
+  h_pt_mt_antiiso_muPlus ->Write("", TObject::kOverwrite);
+  h_pt_mt_antiiso_muMinus->Write("", TObject::kOverwrite);
+  // Leading-lepton kinematics (full selection; _mt40 = + the m_T>40 cut)
   h_lepPt ->Write("", TObject::kOverwrite);
   h_lepEta->Write("", TObject::kOverwrite);
   h_lepPhi->Write("", TObject::kOverwrite);
+  h_lepPt_mt40 ->Write("", TObject::kOverwrite);
+  h_lepEta_mt40->Write("", TObject::kOverwrite);
+  h_lepPhi_mt40->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";
@@ -791,6 +910,14 @@ int skim_Wel(const char *fname, SampleType sample)
   const double elePt25     = 25.0;
   const double dyElePtMin  = 10.0;
   const double isoMax      = 0.095;
+  // m_T cut of the lepton-pT-DISCRIMINANT selection (pT > 25 && m_T > 40);
+  // applies ONLY to the `_mt40` histogram set (see skim_Wmu for the rationale).
+  // NAMING CONTRACT: the literal "40" in the persisted `_mt40` histogram names
+  // asserts this value. If you change it, RENAME those histograms too (and the
+  // readers: correction/qcd_abcd.C runPtCharge tag, plotting/mtandmet.C
+  // varStem[kVarMt40], correction/dataMC_kinematics.C's _mt40 channels) --
+  // otherwise the stored names silently claim a cut that was not applied.
+  const double mtCutForPtDisc     = 40.0;
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double eleEtaMax   = 2.4;
@@ -1074,10 +1201,19 @@ int skim_Wel(const char *fname, SampleType sample)
   // with isElec=true). Filled for every event passing the full W selection
   // EXCEPT the isolation cut, so the relIso axis spans iso-pass (signal) and the
   // anti-iso sideband. Regions are chosen downstream by projecting (no re-skim).
-  //   x = relIso : 0..1.0 in 0.01-wide bins (electron signal cut is 0.095)
+  //   x = relIso : see the kNIsoAB note below (0.005-wide bins so the electron
+  //               signal cut 0.095 is exactly a bin edge)
   //   y = MET    : 0..120 GeV / 2.0  (matches h_met_* binning)
   //   y = m_T    : 0..200 GeV / 2.5  (matches h_mt_*  binning)
-  const int    kNIsoAB  = 100;
+  // 200 bins over [0,1] => 0.005 wide, so EVERY relIso boundary used
+  // downstream lands on a bin EDGE: the electron cut 0.095 (= 19*0.005),
+  // the muon 0.15, and the anti-iso window edges 0.20/0.30/0.60/0.65.
+  // With the old 0.01 bins, 0.095 fell mid-bin and qcd_abcd.C's
+  // FindBin(isoCut-eps) projection silently integrated relIso < 0.10 --
+  // 170 electron events that FAIL the analysis cut leaked into the
+  // ABCD iso-pass region, inflating T and every electron QCD template by
+  // ~4% (found 2026-07-30; the muon was exact all along).
+  const int    kNIsoAB  = 200;
   const double kIsoLoAB = 0.0, kIsoHiAB = 1.0;
   TH2D *h_iso_met_elePlus  = new TH2D("h_iso_met_elePlus",
       "e^{+} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
@@ -1095,16 +1231,42 @@ int skim_Wel(const char *fname, SampleType sample)
       "e^{+} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   TH2D *h_iso_pt_eleMinus  = new TH2D("h_iso_pt_eleMinus",
       "e^{-} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  // Same plane WITH the discriminant selection's m_T cut: supplies the
+  // anti-iso lepton-pT shape for the QCD template of the pT+m_T>40 stacks.
+  TH2D *h_iso_pt_mt40_elePlus  = new TH2D("h_iso_pt_mt40_elePlus",
+      Form("e^{+} ABCD, m_{T}>%.0f;relIso;p_{T}^{e} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  TH2D *h_iso_pt_mt40_eleMinus = new TH2D("h_iso_pt_mt40_eleMinus",
+      Form("e^{-} ABCD, m_{T}>%.0f;relIso;p_{T}^{e} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+  h_iso_pt_mt40_elePlus->Sumw2(); h_iso_pt_mt40_eleMinus->Sumw2();
   h_iso_met_elePlus->Sumw2();  h_iso_met_eleMinus->Sumw2();
   h_iso_mt_elePlus->Sumw2();   h_iso_mt_eleMinus->Sumw2();
   h_iso_pt_elePlus->Sumw2();   h_iso_pt_eleMinus->Sumw2();
+
+  // -------- (lepton pT, m_T) joint 2Ds for the pT x mT cut scan --------
+  // Electron twins of the skim_Wmu pT x mT scan inputs (see the comment there;
+  // consumed by correction/ptmt_scan.C+(true)). Iso stays at the nominal cut;
+  // the QCD model is the ANTI-ISO sideband (relIso in [0.20, 1.0), the
+  // qcd_abcd.C electron window) with its actual MET/mT -- no MET conditioning.
+  const double antiIsoLo = 0.20, antiIsoHi = 1.00; // = qcd_abcd.C isoFail window (ele)
+  TH2D *h_pt_mt_elePlus  = new TH2D("h_pt_mt_elePlus",
+      "e^{+}, iso-pass;p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_eleMinus = new TH2D("h_pt_mt_eleMinus",
+      "e^{-}, iso-pass;p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_antiiso_elePlus  = new TH2D("h_pt_mt_antiiso_elePlus",
+      "e^{+}, anti-iso [0.20,1.0);p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  TH2D *h_pt_mt_antiiso_eleMinus = new TH2D("h_pt_mt_antiiso_eleMinus",
+      "e^{-}, anti-iso [0.20,1.0);p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+  h_pt_mt_elePlus->Sumw2();         h_pt_mt_eleMinus->Sumw2();
+  h_pt_mt_antiiso_elePlus->Sumw2(); h_pt_mt_antiiso_eleMinus->Sumw2();
 
   // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
   // Electron twins of the skim_Wmu h_leppt_* histos: pT versions of the
   // rapidity-binned h_met_*/h_mt_*, for the lepton-pT data/MC stacks in
   // plotting/mtandmet.C (plots only -- NOT in the Combine input). 2 GeV bins.
-  TH1D *h_leppt_Wp[kNY], *h_leppt_Wm[kNY];
+  TH1D *h_leppt_Wp[kNY],    *h_leppt_Wm[kNY];
   TH1D *h_leppt_Wp_FB[kNY], *h_leppt_Wm_FB[kNY];
+  TH1D *h_leppt_mt40_Wp[kNY],    *h_leppt_mt40_Wm[kNY];
+  TH1D *h_leppt_mt40_Wp_FB[kNY], *h_leppt_mt40_Wm_FB[kNY];
   for (int b = 0; b < kNY; ++b)
   {
     const double y1 = kYEdges[b],     y2 = kYEdges[b + 1];
@@ -1119,8 +1281,19 @@ int skim_Wel(const char *fname, SampleType sample)
     h_leppt_Wm_FB[b] = new TH1D(Form("h_leppt_Wm_y%d_FB", b),
         Form("W- lepton p_{T};p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 50, 0, 100);
 
-    h_leppt_Wp[b]->Sumw2();    h_leppt_Wm[b]->Sumw2();
-    h_leppt_Wp_FB[b]->Sumw2(); h_leppt_Wm_FB[b]->Sumw2();
+    h_leppt_mt40_Wp[b] = new TH1D(Form("h_leppt_mt40_Wp_y%d", b),
+        Form("W+ lepton p_{T}, m_{T}>%.0f;p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 50, 0, 100);
+    h_leppt_mt40_Wm[b] = new TH1D(Form("h_leppt_mt40_Wm_y%d", b),
+        Form("W- lepton p_{T}, m_{T}>%.0f;p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 50, 0, 100);
+    h_leppt_mt40_Wp_FB[b] = new TH1D(Form("h_leppt_mt40_Wp_y%d_FB", b),
+        Form("W+ lepton p_{T}, m_{T}>%.0f;p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 50, 0, 100);
+    h_leppt_mt40_Wm_FB[b] = new TH1D(Form("h_leppt_mt40_Wm_y%d_FB", b),
+        Form("W- lepton p_{T}, m_{T}>%.0f;p_{T}^{e} [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 50, 0, 100);
+
+    h_leppt_Wp[b]->Sumw2();         h_leppt_Wm[b]->Sumw2();
+    h_leppt_Wp_FB[b]->Sumw2();      h_leppt_Wm_FB[b]->Sumw2();
+    h_leppt_mt40_Wp[b]->Sumw2();    h_leppt_mt40_Wm[b]->Sumw2();
+    h_leppt_mt40_Wp_FB[b]->Sumw2(); h_leppt_mt40_Wm_FB[b]->Sumw2();
   }
 
   // -------- Leading-lepton kinematics (full W selection) --------
@@ -1130,7 +1303,11 @@ int skim_Wel(const char *fname, SampleType sample)
   TH1D *h_lepPt  = new TH1D("h_lepPt",  Form("%s; p_{T}^{e} [GeV]; Events", outPrefix.c_str()), 50,  0,  100);
   TH1D *h_lepEta = new TH1D("h_lepEta", Form("%s; #eta_{e}; Events",        outPrefix.c_str()), 50, -2.5, 2.5);
   TH1D *h_lepPhi = new TH1D("h_lepPhi", Form("%s; #phi_{e}; Events",        outPrefix.c_str()), 32, -TMath::Pi(), TMath::Pi());
+  TH1D *h_lepPt_mt40  = new TH1D("h_lepPt_mt40",  Form("%s, m_{T}>%.0f; p_{T}^{e} [GeV]; Events", outPrefix.c_str(), mtCutForPtDisc), 50,  0,  100);
+  TH1D *h_lepEta_mt40 = new TH1D("h_lepEta_mt40", Form("%s, m_{T}>%.0f; #eta_{e}; Events", outPrefix.c_str(), mtCutForPtDisc), 50, -2.5, 2.5);
+  TH1D *h_lepPhi_mt40 = new TH1D("h_lepPhi_mt40", Form("%s, m_{T}>%.0f; #phi_{e}; Events", outPrefix.c_str(), mtCutForPtDisc), 32, -TMath::Pi(), TMath::Pi());
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
+  h_lepPt_mt40->Sumw2(); h_lepEta_mt40->Sumw2(); h_lepPhi_mt40->Sumw2();
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
@@ -1243,24 +1420,41 @@ int skim_Wel(const char *fname, SampleType sample)
 
     // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
     // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
     if (eleCharge->at(iLead) > 0)
     {
       h_iso_met_elePlus->Fill(isoLead, met, w);
       h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
       h_iso_pt_elePlus ->Fill(isoLead, elePt->at(iLead), w);
+      if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoLead, elePt->at(iLead), w);
+      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+        h_pt_mt_antiiso_elePlus->Fill(elePt->at(iLead), mt, w);
     }
     else if (eleCharge->at(iLead) < 0)
     {
       h_iso_met_eleMinus->Fill(isoLead, met, w);
       h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
       h_iso_pt_eleMinus ->Fill(isoLead, elePt->at(iLead), w);
+      if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoLead, elePt->at(iLead), w);
+      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+        h_pt_mt_antiiso_eleMinus->Fill(elePt->at(iLead), mt, w);
     }
 
     if (!passIsoNominal) continue;
 
+    // pT x mT scan signal plane (iso-pass)
+    if      (eleCharge->at(iLead) > 0) h_pt_mt_elePlus ->Fill(elePt->at(iLead), mt, w);
+    else if (eleCharge->at(iLead) < 0) h_pt_mt_eleMinus->Fill(elePt->at(iLead), mt, w);
+
     h_lepPt ->Fill(elePt->at(iLead),  w);
     h_lepEta->Fill(eleEta->at(iLead), w);
     h_lepPhi->Fill(elePhi->at(iLead), w);
+    if (passMtCut)
+    {
+      h_lepPt_mt40 ->Fill(elePt->at(iLead),  w);
+      h_lepEta_mt40->Fill(eleEta->at(iLead), w);
+      h_lepPhi_mt40->Fill(elePhi->at(iLead), w);
+    }
 
     const int q = eleCharge->at(iLead);
     const bool isWp = (q > 0), isWm = (q < 0);
@@ -1274,11 +1468,21 @@ int skim_Wel(const char *fname, SampleType sample)
     {
       if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(elePt->at(iLead), w); }
       else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(elePt->at(iLead), w); }
+      if (passMtCut)
+      {
+        if      (isWp) h_leppt_mt40_Wp[ybin]->Fill(elePt->at(iLead), w);
+        else if (isWm) h_leppt_mt40_Wm[ybin]->Fill(elePt->at(iLead), w);
+      }
     }
     if (ybin_FB >= 0)
     {
       if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
       else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
+      if (passMtCut)
+      {
+        if      (isWp) h_leppt_mt40_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w);
+        else if (isWm) h_leppt_mt40_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w);
+      }
     }
   }
 
@@ -1302,6 +1506,10 @@ int skim_Wel(const char *fname, SampleType sample)
     h_leppt_Wm[i]->Write("", 2);
     h_leppt_Wp_FB[i]->Write("", 2);
     h_leppt_Wm_FB[i]->Write("", 2);
+    h_leppt_mt40_Wp[i]->Write("", 2);
+    h_leppt_mt40_Wm[i]->Write("", 2);
+    h_leppt_mt40_Wp_FB[i]->Write("", 2);
+    h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
   for (int b = 0; b < NISO; ++b)
   {
@@ -1315,10 +1523,20 @@ int skim_Wel(const char *fname, SampleType sample)
   h_iso_mt_eleMinus ->Write("", TObject::kOverwrite);
   h_iso_pt_elePlus  ->Write("", TObject::kOverwrite);
   h_iso_pt_eleMinus ->Write("", TObject::kOverwrite);
-  // Leading-lepton kinematics (full selection)
+  h_iso_pt_mt40_elePlus ->Write("", TObject::kOverwrite);
+  h_iso_pt_mt40_eleMinus->Write("", TObject::kOverwrite);
+  // pT x mT scan inputs (correction/ptmt_scan.C)
+  h_pt_mt_elePlus         ->Write("", TObject::kOverwrite);
+  h_pt_mt_eleMinus        ->Write("", TObject::kOverwrite);
+  h_pt_mt_antiiso_elePlus ->Write("", TObject::kOverwrite);
+  h_pt_mt_antiiso_eleMinus->Write("", TObject::kOverwrite);
+  // Leading-lepton kinematics (full selection; _mt40 = + the m_T>40 cut)
   h_lepPt ->Write("", TObject::kOverwrite);
   h_lepEta->Write("", TObject::kOverwrite);
   h_lepPhi->Write("", TObject::kOverwrite);
+  h_lepPt_mt40 ->Write("", TObject::kOverwrite);
+  h_lepEta_mt40->Write("", TObject::kOverwrite);
+  h_lepPhi_mt40->Write("", TObject::kOverwrite);
   fout->Close();
 
   std::cout << "[INFO] Wrote outputs with prefix: " << outPrefix << "\n";

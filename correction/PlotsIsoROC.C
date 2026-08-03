@@ -103,8 +103,12 @@ void PlotsIsoROC(bool isSoft = true)
     g_eff_met_pT = (TGraph *)h_graph_pT->Get("effMETpT_case0_R0.2");
     g_eff_ss_pT = (TGraph *)h_graph_pT->Get("effSSpT_case0_R0.2");
     ge_eff_pT = GraphToGraphErrors(g_eff_pT);
-    ge_eff_ss_pT = GraphToGraphErrors(g_eff_met_pT);
-    ge_eff_met_pT = GraphToGraphErrors(g_eff_ss_pT);
+    // FIXED 2026-07-30: these two were CROSSED -- ge_eff_ss_pT was being filled
+    // from the MET (QCD-like) graph and ge_eff_met_pT from the same-sign graph,
+    // so the two background curves in plotsROC/pT/eff.* were drawn under each
+    // other's legend entry.
+    ge_eff_ss_pT  = GraphToGraphErrors(g_eff_ss_pT);
+    ge_eff_met_pT = GraphToGraphErrors(g_eff_met_pT);
 
     roc_met_pT = (TGraph *)h_graph_pT->Get("rocMETpT_case0_R0.4");
     roc_ss_pT = (TGraph *)h_graph_pT->Get("rocSSpT_case0_R0.4");

@@ -12,7 +12,7 @@
 void FBratio(
     const char *inFile = "../skim/rootfile/WToMuNu_pO_PFMet_hist.root",
     const char *outFile = "../skim/rootfile/FBratio.root", // update same
-    bool useMT = true,                                     // true: h_mt_*, false: h_met_*
+    bool useMT = true,                // raw skim files only (ignored if h_yield_* exists)
     bool integrateFull = true,                             // integrate full range or [xMin,xMax]
     double xMin = 30.0,
     double xMax = 200.0,
@@ -40,7 +40,7 @@ void FBratio(
 
     // yEdges: rapidity bin edges in the *lab frame*, used only to label the
     // x-axis of the output TGraph. The histogram integration itself uses the
-    // bin contents already produced by the skim macros (h_mt_W{p,m}_y0..y11).
+    // bin contents: raw skim histos, or the fork's h_yield_* fitted yields.
     //
     // These 13 edges are chosen symmetric around deltaY = 0.3466 (the pO
     // rapidity shift), so that after the lab->CM shift below they become
@@ -98,9 +98,13 @@ void FBratio(
 
     auto get_yield = [&](int iy, bool wantWp) -> Yield
     {
-        TString name = useMT
-                           ? Form("h_mt_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy)
-                           : Form("h_met_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy);
+        // Prefer the fork's discriminant-neutral fitted-yield name; fall back
+        // to the raw-skim h_mt_/h_met_ pair (see charge_asym.C for the why).
+        TString name = Form("h_yield_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy);
+        if (!f->Get(name))
+            name = useMT
+                       ? Form("h_mt_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy)
+                       : Form("h_met_%s_y%d_FB", wantWp ? "Wp" : "Wm", iy);
 
         TH1D *h = (TH1D *)f->Get(name);
         if (!h)
@@ -172,7 +176,7 @@ void FBratio(
 
     if (combineCharges)
     {
-        TString gname = useMT ? "g_RFB_mt_sum" : "g_RFB_met_sum";
+        TString gname = "g_RFB_sum";   // legacy alias: g_RFB_mt_sum / g_RFB_met_sum (written too)
         TString gtitle = useMT
                              ? "R_{FB} (sum charges) from m_{T} yields; |y| bin; R_{FB}"
                              : "R_{FB} (sum charges) from MET yields; |y| bin; R_{FB}";
@@ -181,14 +185,14 @@ void FBratio(
 
         if (alsoWriteChargeSeparated)
         {
-            TString gnameP = useMT ? "g_RFB_mt_Wp" : "g_RFB_met_Wp";
+            TString gnameP = "g_RFB_Wp";   // legacy alias: g_RFB_mt_Wp / g_RFB_met_Wp (written too)
             TString gtitleP = useMT
                                   ? "R_{FB} (W^{+}) from m_{T} yields; |y| bin; R_{FB}"
                                   : "R_{FB} (W^{+}) from MET yields; |y| bin; R_{FB}";
             cout << "[INFO] " << " Now producing + " << endl;
             graphs.push_back(build_graph(gnameP, gtitleP, true, false, false));
 
-            TString gnameM = useMT ? "g_RFB_mt_Wm" : "g_RFB_met_Wm";
+            TString gnameM = "g_RFB_Wm";   // legacy alias: g_RFB_mt_Wm / g_RFB_met_Wm (written too)
             TString gtitleM = useMT
                                   ? "R_{FB} (W^{-}) from m_{T} yields; |y| bin; R_{FB}"
                                   : "R_{FB} (W^{-}) from MET yields; |y| bin; R_{FB}";
@@ -199,13 +203,13 @@ void FBratio(
     else
     {
         // Only charge-separated
-        TString gnameP = useMT ? "g_RFB_mt_Wp" : "g_RFB_met_Wp";
+        TString gnameP = "g_RFB_Wp";   // legacy alias: g_RFB_mt_Wp / g_RFB_met_Wp (written too)
         TString gtitleP = useMT
                               ? "R_{FB} (W^{+}) from m_{T} yields; |y| bin; R_{FB}"
                               : "R_{FB} (W^{+}) from MET yields; |y| bin; R_{FB}";
         graphs.push_back(build_graph(gnameP, gtitleP, true, false, false));
 
-        TString gnameM = useMT ? "g_RFB_mt_Wm" : "g_RFB_met_Wm";
+        TString gnameM = "g_RFB_Wm";   // legacy alias: g_RFB_mt_Wm / g_RFB_met_Wm (written too)
         TString gtitleM = useMT
                               ? "R_{FB} (W^{-}) from m_{T} yields; |y| bin; R_{FB}"
                               : "R_{FB} (W^{-}) from MET yields; |y| bin; R_{FB}";
@@ -226,7 +230,16 @@ void FBratio(
 
     fout->cd();
     for (auto *g : graphs)
+    {
         g->Write("", TObject::kOverwrite);
+        // Deprecated alias under the old discriminant-flavoured name, so any
+        // existing reader of g_RFB_{mt,met}_* keeps working. The primary name
+        // (g_RFB_*) is discriminant-neutral because in the production path the
+        // yields come from the PF-MET-shape fit, NOT from m_T.
+        TString legacy = TString(g->GetName());
+        legacy.ReplaceAll("g_RFB_", useMT ? "g_RFB_mt_" : "g_RFB_met_");
+        g->Write(legacy, TObject::kOverwrite);
+    }
 
     fout->Close();
     delete fout;

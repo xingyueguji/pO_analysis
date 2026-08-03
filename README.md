@@ -151,7 +151,7 @@ One driver does everything per channel. Full details:
 ```bash
 cd HiggsAnalysis-CombinedLimit/test
 cmsenv
-./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--dry-run] [--no-postfit] [--draw-only]
+./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|all] [--disc met|leppt|leppt_mt40] [--dry-run] [--no-postfit] [--draw-only]
 ```
 
 It (1) finds this repo's structured inputs (env `PO_PLOTS` / `--plots-dir`, else
@@ -162,6 +162,48 @@ per-charge incl, `W_incl`, `Z_incl`, simultaneous `WZ`), (3) runs
 `pO_fit_out/<chan>/{datacards,fits/<region>,postfit,summary}`, (4) extracts
 fitted yields (`extract_pO_yields.C`), (5) draws postfit plots (`draw_postfit_pO.C`,
 same cosmetics as `mtandmet.C`).
+
+### W discriminant variants (`--disc`, 2026-07-30)
+
+The W fit can run on three discriminants; `--disc` selects which (default
+`met`, so all existing usage is unchanged):
+
+| `--disc` | discriminant | selection | input file (per channel) | output tree |
+|---|---|---|---|---|
+| `met` | PF MET shape | plain W selection | `combine_input_W.root` | `pO_fit_out/` |
+| `leppt` | lepton pT | plain W selection | `combine_input_W_leppt.root` | `pO_fit_out_leppt/` |
+| `leppt_mt40` | lepton pT | pT>25 && m_T>40 | `combine_input_W_leppt_mt40.root` | `pO_fit_out_leppt_mt40/` |
+
+Datacards and the fit model are IDENTICAL for all three (same region names,
+same two-parameter scheme, `qcd_norm` FREE for all — 2026-07-30 decision);
+only the input file, the output tree and the postfit x-title change.
+
+> **WARNING — carry the SAME `--disc` through the ENTIRE workflow of a variant
+> run.** The out-trees carry no marker of which discriminant produced them —
+> the coupling is only the directory suffix — so mixing steps corrupts or
+> mislabels silently:
+> - **fit**: `./run_pO_fits.sh both all --disc leppt_mt40`
+> - **redraw**: `--draw-only` MUST repeat the same `--disc` (it selects the
+>   out-tree AND the axis title; without it, lepton-pT plots get relabeled
+>   "PF MET (GeV)" with no error). Same rule if you ever use `--out`.
+> - **download**: `sync_lxplus.sh download` needs NO flag — it sweeps all
+>   three out-trees automatically, skipping absent ones.
+> - **observables (Module 5)**: point `charge_asym.C`/`FBratio.C` at the
+>   MATCHING tree's `summary/<chan>_fitted_yields.root`
+>   (`pO_fit_out_leppt[_mt40]/...`, not `pO_fit_out/...`). The histogram
+>   names inside are identical across variants (`h_yield_*`), so the ONLY
+>   thing distinguishing a MET result from a pT result is which tree the
+>   file came from.
+> - **inputs**: `mtandmet.C` writes all three files in one run; a variant
+>   whose skim histograms are missing is skipped AND its stale file deleted,
+>   so a missing `combine_input_W_leppt*.root` means "re-run Module 3", never
+>   "use the old one".
+>
+> Physics note for the pT variants: with no low-MET region in the
+> discriminant, the fit constrains `qcd_norm` only weakly — check the fitted
+> `QCD norm` on the postfit plots / in `<chan>_summary.csv` before trusting
+> the composition (if it wanders far from 1, consider constraining it to the
+> ABCD prediction instead of leaving it free).
 
 **Fit model (two-parameter, 2026-07-01):** two MC scales per fit — the POI
 **`r` = all W-related MC** (W `signal` + `wtau`; plus the `w`/`wtau` backgrounds
@@ -203,10 +245,14 @@ helper `test/sync_lxplus.sh` wraps every transfer over ONE SSH connection
 
 ```bash
 cd HiggsAnalysis-CombinedLimit/test
-./sync_lxplus.sh upload                  # 4 inputs + scripts -> lxplus
+./sync_lxplus.sh upload                  # inputs (4 required + pT variants if built) + scripts
 ssh zheng@lxplus.cern.ch                 # then: cmsenv; cd $FORK_LX/test
 #   PO_PLOTS=/afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots ./run_pO_fits.sh both all
-./sync_lxplus.sh download                # summary/ (fitted yields + CSVs) <- lxplus
+#   # discriminant variants (SEE THE --disc WARNING above -- keep the flag
+#   # consistent for every later step of that variant's workflow):
+#   PO_PLOTS=... ./run_pO_fits.sh both all --disc leppt
+#   PO_PLOTS=... ./run_pO_fits.sh both all --disc leppt_mt40
+./sync_lxplus.sh download                # summary/ <- lxplus, ALL out-trees (met + variants)
 ./sync_lxplus.sh download --postfit      # also the postfit plots
 ```
 lxplus paths (override via env): `ANA_LX=/afs/cern.ch/user/z/zheng/pO_analysis`,
@@ -220,6 +266,10 @@ rebuild it without re-running the fit:
 
 Run `charge_asym.C` / `FBratio.C` on the **fitted-yields** file (they take the
 input as their first arg — fitted yields replace raw, no edits), then plot.
+For a `--disc` variant fit, swap `pO_fit_out` for `pO_fit_out_leppt[_mt40]`
+in the paths below — the file contents look identical (`h_yield_*`), so the
+tree name is the only thing telling MET results from lepton-pT results (see
+the `--disc` WARNING in Module 4).
 
 ```bash
 cd analysis/

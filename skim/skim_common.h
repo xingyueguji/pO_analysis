@@ -71,13 +71,15 @@ inline constexpr double Y_SHIFT_pO_CM = 0.3466;
 // single run by exporting DATA_FILE). Change the data file here, and the MC
 // files in ResolveMCSample below -- both live in this header.
 //
-// Currently the LOCAL copy under ~/pO_2026_May_26/ (written as an absolute path
-// so ROOT's TFile::Open and run_all.sh resolve it without needing ~ expansion).
+// Currently the LOCAL copy of the July-29 production under ~/pO_2026_July_29/
+// (absolute path so ROOT's TFile::Open and run_all.sh resolve it without ~
+// expansion; switched from the May-26 production 2026-07-30 -- new ntuples
+// carry extra branches, harmless to the skim which enables only what it uses).
 // To read from EOS/lxplus again, point this and `inputBase` in ResolveMCSample
-// back at the prefix
-//   root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_May_26/
+// at the prefix
+//   root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_July_29/
 inline const char *kDefaultDataFile =
-    "/Users/zhenghuang/pO_2026_May_26/Data_May_26.root";
+    "/Users/zhenghuang/pO_2026_July_29/July_29_DATA.root";
 
 // ============================================================
 // Branch / tree introspection helpers
@@ -354,8 +356,8 @@ inline bool PassGenRecoMatchingWithAncestor(
 // ============================================================
 
 // The W skims overwrite the input file path per MC sample. The DY MC file
-// name is flavour-dependent: muon channels read pO_MC_DY_mu_Z.root,
-// electron channels read pO_MC_DY_ele_Z.root.
+// name is flavour-dependent: muon channels read July_29_MC_DY_mu_Z.root,
+// electron channels read July_29_MC_DY_ele_Z.root.
 //
 // `flavour` should be "mu" or "ele".
 //
@@ -370,43 +372,44 @@ struct SampleFileInfo
 inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
 {
   SampleFileInfo info;
-  // Local copy under ~/pO_2026_May_26/ (absolute path; see the kDefaultDataFile
-  // note above for how to switch back to EOS).
+  // Local copy of the July-29 production under ~/pO_2026_July_29/ (absolute
+  // path; see the kDefaultDataFile note above for how to switch back to EOS).
   const std::string inputBase =
-      "/Users/zhenghuang/pO_2026_May_26/";
+      "/Users/zhenghuang/pO_2026_July_29/";
 
   const std::string flav = flavour;
 
-  // DY uses ee/mu/tau; W uses ele/mu/tau. Translate the electron token.
-  const std::string dyFlav = (flav == "ele" || flav == "e") ? "ee"  : flav;
-  const std::string wFlav  = (flav == "ee"  || flav == "e") ? "ele" : flav;
+  // July-29 naming uses the SAME flavour token for DY and W ("mu"/"ele"/"tau");
+  // normalize the legacy "ee"/"e" spellings to "ele". (The May-26 production
+  // used "ee" for DY -- that translation is gone with the new filenames.)
+  const std::string tok = (flav == "ee" || flav == "e") ? "ele" : flav;
 
   switch (sample)
   {
     case kData:
       return info;
     case kDY:
-      info.fname     = inputBase + "MC_DY" + dyFlav + "_May26.root";  // MC_DYee_May26.root
+      info.fname     = inputBase + "July_29_MC_DY_" + tok + "_Z.root";  // July_29_MC_DY_ele_Z.root
       info.outSuffix = "_DY";
       return info;
     case kWp:
-      info.fname     = inputBase + "MC_Wp_" + wFlav + "_May26.root";
+      info.fname     = inputBase + "July_29_MC_Wp_" + tok + ".root";
       info.outSuffix = "_Wp";
       return info;
     case kWm:
-      info.fname     = inputBase + "MC_Wm_" + wFlav + "_May26.root";
+      info.fname     = inputBase + "July_29_MC_Wm_" + tok + ".root";
       info.outSuffix = "_Wm";
       return info;
     case kDYtau:
-      info.fname     = inputBase + "MC_DYtau_May26.root";
+      info.fname     = inputBase + "July_29_MC_DY_tau_Z.root";
       info.outSuffix = "_DYtau";
       return info;
     case kWptau:
-      info.fname     = inputBase + "MC_Wp_tau_May26.root";
+      info.fname     = inputBase + "July_29_MC_Wp_tau.root";
       info.outSuffix = "_Wptau";
       return info;
     case kWmtau:
-      info.fname     = inputBase + "MC_Wm_tau_May26.root";
+      info.fname     = inputBase + "July_29_MC_Wm_tau.root";
       info.outSuffix = "_Wmtau";
       return info;
   }

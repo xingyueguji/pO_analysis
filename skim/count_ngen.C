@@ -77,23 +77,42 @@ struct NgenResult
   Long64_t    nNeg;    // # events with w < 0
 };
 
-// Derive a short label from the resolved filename basename, by stripping the
-// "MC_" prefix and the "_May26.root" / ".root" suffix. Ties N_gen directly to
-// the physical file:  MC_Wp_mu_May26.root -> "Wp_mu", MC_DYtau_May26.root -> "DYtau".
+// Derive the CANONICAL sample label from the resolved filename basename. The
+// labels ("Wp_mu", "Wm_ele", "DYmu", "DYee", "DYtau", "Wp_tau", "Wm_tau") are
+// load-bearing: mc_norm.h consumers request ngen_<label> by these exact
+// strings (MCScale("DYee") etc.), so they must stay STABLE across productions
+// even though the filenames change.
+//   May-26:  MC_Wp_mu_May26.root      -> "Wp_mu",  MC_DYee_May26.root  -> "DYee"
+//   July-29: July_29_MC_Wp_mu.root    -> "Wp_mu",  July_29_MC_DY_ele_Z.root -> "DYee"
 std::string LabelFromFname(const std::string &fname)
 {
   std::string base = fname;
   const size_t slash = base.find_last_of('/');
   if (slash != std::string::npos)
     base = base.substr(slash + 1);
-  const std::string pre = "MC_";
-  if (base.rfind(pre, 0) == 0)
-    base = base.substr(pre.size());
-  const std::string suf = "_May26.root";
-  if (base.size() >= suf.size() && base.compare(base.size() - suf.size(), suf.size(), suf) == 0)
-    base = base.substr(0, base.size() - suf.size());
-  else if (base.size() >= 5 && base.compare(base.size() - 5, 5, ".root") == 0)
-    base = base.substr(0, base.size() - 5);
+
+  // strip known prefixes (July-29 first: it contains the May-era "MC_" too)
+  for (const std::string &pre : {std::string("July_29_MC_"), std::string("MC_")})
+    if (base.rfind(pre, 0) == 0)
+    {
+      base = base.substr(pre.size());
+      break;
+    }
+
+  // strip known suffixes, longest first
+  for (const std::string &suf : {std::string("_May26.root"), std::string("_Z.root"),
+                                 std::string(".root")})
+    if (base.size() >= suf.size() &&
+        base.compare(base.size() - suf.size(), suf.size(), suf) == 0)
+    {
+      base = base.substr(0, base.size() - suf.size());
+      break;
+    }
+
+  // canonicalize the July-29 DY spellings to the legacy labels
+  if (base == "DY_mu")  return "DYmu";
+  if (base == "DY_ele") return "DYee";
+  if (base == "DY_tau") return "DYtau";
   return base;
 }
 
