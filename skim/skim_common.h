@@ -419,6 +419,17 @@ inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
 inline bool IsMC(SampleType sample) { return sample != kData; }
 
 // ============================================================
+// (pT, mT) cut-scan floor (W macros, 2026-08-04)
+// ============================================================
+// The W skims fill the joint scan planes h_pt_mt_* / h_pt_mt_antiiso_* for
+// leading-lepton pT > kPtScanFloor instead of the nominal 25 GeV, so
+// correction/ptmt_scan.C can probe LOWERING the pT cut. Every other W
+// histogram and the printed cutflow keep the nominal pT > 25 selection.
+// Keep equal to ptmt_scan.C's kPtLo; must land on a h_pt_mt_* bin edge
+// (1 GeV bins -- projection cuts must be bin edges).
+inline constexpr double kPtScanFloor = 20.0;
+
+// ============================================================
 // Rapidity binning (W macros)
 // ============================================================
 

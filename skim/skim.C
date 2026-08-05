@@ -596,6 +596,10 @@ int skim_Wmu(const char *fname, SampleType sample)
   //                        ~2*sqrt(pT*MET) ~ 30 GeV by construction --
   //                        that earlier convention was removed 2026-07-30).
   // pT 1 GeV bins (integer-GeV cuts land on edges), mT 2.5 GeV (matches h_mt_*).
+  // 2026-08-04: these four planes are filled down to leading-lepton
+  // pT > kPtScanFloor (20 GeV, skim_common.h) instead of the nominal 25, so
+  // ptmt_scan.C can probe LOWERING the pT cut. They are the ONLY histograms
+  // with the relaxed floor -- everything else keeps pT > 25 (passPtNominal).
   const double antiIsoLo = 0.30, antiIsoHi = 1.00; // = qcd_abcd.C isoFail window (mu)
   TH2D *h_pt_mt_muPlus  = new TH2D("h_pt_mt_muPlus",
       "#mu^{+}, iso-pass;p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
@@ -695,18 +699,22 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     if (!muPt || !muEta || !muPhi || !muCharge) continue;
 
-    if (!ExistsPFMuonPt25_W(muPt25, nMu, muPt, has_muIsPF, muIsPF)) continue;
-    N[1]++;
+    // Precut relaxed to the (pT, mT)-scan floor (pT > 20) so the scan planes
+    // h_pt_mt[_antiiso]_* reach below the nominal cut. The cutflow keeps its
+    // nominal meaning: N[1..5] count only events the pT > 25 precut passes.
+    const bool hasPF25 = ExistsPFMuonPt25_W(muPt25, nMu, muPt, has_muIsPF, muIsPF);
+    if (!ExistsPFMuonPt25_W(kPtScanFloor, nMu, muPt, has_muIsPF, muIsPF)) continue;
+    if (hasPF25) N[1]++;
 
     if (!PassEventSelection_pO(warnedEventFiltersOnce,
                                has_pprimaryVertexFilter,        pprimaryVertexFilter,
                                has_pclusterCompatibilityFilter, pclusterCompatibilityFilter))
       continue;
     if (applyVz && TMath::Abs(vz) > vzMax) continue;
-    N[2]++;
+    if (hasPF25) N[2]++;
 
     if (has_hlt && !TriggerFired(HLT_OxyL1SingleMuOpen_v1)) continue;
-    N[3]++;
+    if (hasPF25) N[3]++;
 
     if (!PassDYVeto_Wmu(dyMuPtMin, isoMax, dyMassMin, dyMassMax,
                         nMu, muPt, muEta, muPhi, muCharge,
@@ -714,10 +722,10 @@ int skim_Wmu(const char *fname, SampleType sample)
                         has_muIsPF, muIsPF,
                         muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso))
       continue;
-    N[4]++;
+    if (hasPF25) N[4]++;
 
     if (!ExistsTightMuon_W(nMu, has_muIDTight, muIDTight)) continue;
-    N[5]++;
+    if (hasPF25) N[5]++;
 
     const int iLead = FindLeadingMuon_TightPF(nMu, muPt, muEta, muPhi,
                                               has_muIDTight, muIDTight,
@@ -741,16 +749,17 @@ int skim_Wmu(const char *fname, SampleType sample)
       }
     }
 
-    if (muPt->at(iLead) <= muPt25) continue;
+    if (muPt->at(iLead) <= kPtScanFloor) continue; // scan floor; nominal pT cut via passPtNominal
     if (std::abs(muEta->at(iLead)) > muEtaMax) continue;
-    N[6]++;
+    const bool passPtNominal = (muPt->at(iLead) > muPt25);
+    if (passPtNominal) N[6]++;
 
     const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
     const int    isoBin  = FindIsoBin(isoLead);
     const bool   isQCDSideband   = (isoBin >= 0);
     const bool   passIsoNominal  = (isoLead < isoMax);
 
-    if (passIsoNominal) N[7]++;
+    if (passIsoNominal && passPtNominal) N[7]++;
 
     const bool passMatch = PassLeadingLeptonTrigMatch(
         trigMatchDR, iLead, muEta, muPhi,
@@ -758,14 +767,14 @@ int skim_Wmu(const char *fname, SampleType sample)
         has_trgObjPhi, trgObjPhi,
         warnedNoTrigMatchInfo, "muon");
     if (!passMatch) continue;
-    if (passIsoNominal) N[8]++;
+    if (passIsoNominal && passPtNominal) N[8]++;
 
     // -------- Fill final distributions (after step 8) --------
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
     const double met = metv.Mod();
     const double mt  = TransverseMass(muPt->at(iLead), muPhi->at(iLead), metv);
 
-    if (isQCDSideband)
+    if (isQCDSideband && passPtNominal)
     {
       if      (muCharge->at(iLead) > 0) h_met_iso_muPlus [isoBin]->Fill(met, w);
       else if (muCharge->at(iLead) < 0) h_met_iso_muMinus[isoBin]->Fill(met, w);
@@ -773,31 +782,41 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
     // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    // The h_iso_* ABCD planes keep the NOMINAL pT > 25 selection; only the
+    // (pT, mT) scan planes h_pt_mt[_antiiso]_* go down to kPtScanFloor.
     const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
     if (muCharge->at(iLead) > 0)
     {
-      h_iso_met_muPlus->Fill(isoLead, met, w);
-      h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
-      h_iso_pt_muPlus ->Fill(isoLead, muPt->at(iLead), w);
-      if (passMtCut) h_iso_pt_mt40_muPlus->Fill(isoLead, muPt->at(iLead), w);
+      if (passPtNominal)
+      {
+        h_iso_met_muPlus->Fill(isoLead, met, w);
+        h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
+        h_iso_pt_muPlus ->Fill(isoLead, muPt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_muPlus->Fill(isoLead, muPt->at(iLead), w);
+      }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_muPlus->Fill(muPt->at(iLead), mt, w);
     }
     else if (muCharge->at(iLead) < 0)
     {
-      h_iso_met_muMinus->Fill(isoLead, met, w);
-      h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
-      h_iso_pt_muMinus ->Fill(isoLead, muPt->at(iLead), w);
-      if (passMtCut) h_iso_pt_mt40_muMinus->Fill(isoLead, muPt->at(iLead), w);
+      if (passPtNominal)
+      {
+        h_iso_met_muMinus->Fill(isoLead, met, w);
+        h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
+        h_iso_pt_muMinus ->Fill(isoLead, muPt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_muMinus->Fill(isoLead, muPt->at(iLead), w);
+      }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_muMinus->Fill(muPt->at(iLead), mt, w);
     }
 
     if (!passIsoNominal) continue;
 
-    // pT x mT scan signal plane (iso-pass)
+    // pT x mT scan signal plane (iso-pass; filled down to the pT > 20 scan floor)
     if      (muCharge->at(iLead) > 0) h_pt_mt_muPlus ->Fill(muPt->at(iLead), mt, w);
     else if (muCharge->at(iLead) < 0) h_pt_mt_muMinus->Fill(muPt->at(iLead), mt, w);
+
+    if (!passPtNominal) continue; // everything below keeps the nominal pT > 25 cut
 
     h_lepPt ->Fill(muPt->at(iLead),  w);
     h_lepEta->Fill(muEta->at(iLead), w);
@@ -1335,18 +1354,22 @@ int skim_Wel(const char *fname, SampleType sample)
 
     if (!elePt || !eleEta || !elePhi || !eleCharge) continue;
 
-    if (!ExistsPFElectronPt25_W(elePt25, nEle, elePt)) continue;
-    N[1]++;
+    // Precut relaxed to the (pT, mT)-scan floor (pT > 20) so the scan planes
+    // h_pt_mt[_antiiso]_* reach below the nominal cut. The cutflow keeps its
+    // nominal meaning: N[1..5] count only events the pT > 25 precut passes.
+    const bool hasPF25 = ExistsPFElectronPt25_W(elePt25, nEle, elePt);
+    if (!ExistsPFElectronPt25_W(kPtScanFloor, nEle, elePt)) continue;
+    if (hasPF25) N[1]++;
 
     if (!PassEventSelection_pO(warnedEventFiltersOnce,
                                has_pprimaryVertexFilter,        pprimaryVertexFilter,
                                has_pclusterCompatibilityFilter, pclusterCompatibilityFilter))
       continue;
     if (applyVz && TMath::Abs(vz) > vzMax) continue;
-    N[2]++;
+    if (hasPF25) N[2]++;
 
     if (has_hlt && !TriggerFired(HLT_OxyL1SingleEG10_v1)) continue;
-    N[3]++;
+    if (hasPF25) N[3]++;
 
     // Electron ID: eleMVAIdWP95 (switched from eleCutIdWP95 on 2026-06-24 after the
     // isolation/ID study in correction/isolation_ele.C — the MVA WP is the best QCD
@@ -1359,10 +1382,10 @@ int skim_Wel(const char *fname, SampleType sample)
                         nEle, elePt, eleEta, elePhi, eleCharge,
                         eleMVAIdWP95, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso))
       continue;
-    N[4]++;
+    if (hasPF25) N[4]++;
 
     if (!ExistsTightElectron_W(nEle, eleMVAIdWP95)) continue;
-    N[5]++;
+    if (hasPF25) N[5]++;
 
     const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleMVAIdWP95);
     if (iLead < 0) continue;
@@ -1382,9 +1405,10 @@ int skim_Wel(const char *fname, SampleType sample)
       }
     }
 
-    if (elePt->at(iLead) <= elePt25) continue;
+    if (elePt->at(iLead) <= kPtScanFloor) continue; // scan floor; nominal pT cut via passPtNominal
     if (std::abs(eleEta->at(iLead)) > eleEtaMax) continue;
-    N[6]++;
+    const bool passPtNominal = (elePt->at(iLead) > elePt25);
+    if (passPtNominal) N[6]++;
 
     // (7) Leading electron Iso (continuous PF rel-iso; legacy WP path kept commented):
     // if (eleMVAIsoWP95->at(iLead) != 1) continue;
@@ -1397,7 +1421,7 @@ int skim_Wel(const char *fname, SampleType sample)
     // cut value stands. (2026-07-06: relIso now carries the Delta-beta PU correction,
     // consistent with the MuonPOG definition used in the muon channel.)
 
-    if (passIsoNominal) N[7]++;
+    if (passIsoNominal && passPtNominal) N[7]++;
 
     const bool passMatch = PassLeadingLeptonTrigMatch(
         trigMatchDR, iLead, eleEta, elePhi,
@@ -1405,14 +1429,14 @@ int skim_Wel(const char *fname, SampleType sample)
         has_trgObjPhi, trgObjPhi,
         warnedNoTrigMatchInfo, "electron");
     if (!passMatch) continue;
-    if (passIsoNominal) N[8]++;
+    if (passIsoNominal && passPtNominal) N[8]++;
 
     // -------- Fill final distributions (after step 8) --------
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
     const double met = metv.Mod();
     const double mt  = TransverseMass(elePt->at(iLead), elePhi->at(iLead), metv);
 
-    if (isQCDSideband)
+    if (isQCDSideband && passPtNominal)
     {
       if      (eleCharge->at(iLead) > 0) h_met_iso_elePlus [isoBin]->Fill(met, w);
       else if (eleCharge->at(iLead) < 0) h_met_iso_eleMinus[isoBin]->Fill(met, w);
@@ -1420,31 +1444,41 @@ int skim_Wel(const char *fname, SampleType sample)
 
     // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
     // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    // The h_iso_* ABCD planes keep the NOMINAL pT > 25 selection; only the
+    // (pT, mT) scan planes h_pt_mt[_antiiso]_* go down to kPtScanFloor.
     const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
     if (eleCharge->at(iLead) > 0)
     {
-      h_iso_met_elePlus->Fill(isoLead, met, w);
-      h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
-      h_iso_pt_elePlus ->Fill(isoLead, elePt->at(iLead), w);
-      if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoLead, elePt->at(iLead), w);
+      if (passPtNominal)
+      {
+        h_iso_met_elePlus->Fill(isoLead, met, w);
+        h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
+        h_iso_pt_elePlus ->Fill(isoLead, elePt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoLead, elePt->at(iLead), w);
+      }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_elePlus->Fill(elePt->at(iLead), mt, w);
     }
     else if (eleCharge->at(iLead) < 0)
     {
-      h_iso_met_eleMinus->Fill(isoLead, met, w);
-      h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
-      h_iso_pt_eleMinus ->Fill(isoLead, elePt->at(iLead), w);
-      if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoLead, elePt->at(iLead), w);
+      if (passPtNominal)
+      {
+        h_iso_met_eleMinus->Fill(isoLead, met, w);
+        h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
+        h_iso_pt_eleMinus ->Fill(isoLead, elePt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoLead, elePt->at(iLead), w);
+      }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_eleMinus->Fill(elePt->at(iLead), mt, w);
     }
 
     if (!passIsoNominal) continue;
 
-    // pT x mT scan signal plane (iso-pass)
+    // pT x mT scan signal plane (iso-pass; filled down to the pT > 20 scan floor)
     if      (eleCharge->at(iLead) > 0) h_pt_mt_elePlus ->Fill(elePt->at(iLead), mt, w);
     else if (eleCharge->at(iLead) < 0) h_pt_mt_eleMinus->Fill(elePt->at(iLead), mt, w);
+
+    if (!passPtNominal) continue; // everything below keeps the nominal pT > 25 cut
 
     h_lepPt ->Fill(elePt->at(iLead),  w);
     h_lepEta->Fill(eleEta->at(iLead), w);

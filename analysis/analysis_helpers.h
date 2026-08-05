@@ -72,38 +72,51 @@ inline Yield YieldInRange(const TH1 *h, double xmin, double xmax, bool fullRange
 }
 
 /// Uncertainty on the charge asymmetry A = (Np - Nm) / (Np + Nm),
-/// by linear error propagation from independent Np, Nm and their errors:
+/// by linear error propagation from Np, Nm, their errors, and (optionally)
+/// their covariance:
 ///
 ///     dA/dNp =  2*Nm / S^2 ,  dA/dNm = -2*Np / S^2 ,  S = Np + Nm
-///     sigma_A^2 = 4 / S^4 * ( Nm^2 * sigma_Np^2 + Np^2 * sigma_Nm^2 )
+///     sigma_A^2 = 4 / S^4 * ( Nm^2 sigma_Np^2 + Np^2 sigma_Nm^2
+///                             - 2 Np Nm cov(Np, Nm) )
 ///
-/// For unweighted yields (sigma_Np^2 = Np, sigma_Nm^2 = Nm) this reduces to the
-/// old Poisson form 4*Np*Nm/S^3. Returns 0 if Np + Nm <= 0.
-inline double AsymErr(const Yield &Np, const Yield &Nm)
+/// `cov` defaults to 0 (independent yields -- the pre-2026-08 behavior, exact
+/// for raw-skim and legacy per-bin-fit inputs). The simfit grand fit supplies
+/// a real cov(Np, Nm) (the shared r_Z and QCD correlate the per-charge fitted
+/// yields) via the h_cov_yield matrix in comb_fitted_yields.root.
+/// For unweighted independent yields this reduces to the old Poisson form
+/// 4*Np*Nm/S^3. Returns 0 if Np + Nm <= 0 (or if rounding drives s2 < 0).
+inline double AsymErr(const Yield &Np, const Yield &Nm, double cov = 0.0)
 {
     const double S = Np.value + Nm.value;
     if (S <= 0.0)
         return 0.0;
     const double s2 = 4.0 / (S * S * S * S) *
                       (Nm.value * Nm.value * Np.error * Np.error +
-                       Np.value * Np.value * Nm.error * Nm.error);
-    return std::sqrt(s2);
+                       Np.value * Np.value * Nm.error * Nm.error -
+                       2.0 * Np.value * Nm.value * cov);
+    return s2 > 0.0 ? std::sqrt(s2) : 0.0;
 }
 
 /// Uncertainty on the forward/backward ratio R = F / B,
-/// by linear error propagation from independent F, B and their errors:
+/// by linear error propagation from F, B, their errors, and (optionally) their
+/// covariance:
 ///
-///     sigma_R = R * sqrt( (sigma_F/F)^2 + (sigma_B/B)^2 )
+///     sigma_R^2 = R^2 * ( (sigma_F/F)^2 + (sigma_B/B)^2 - 2 cov(F,B)/(F*B) )
 ///
-/// For unweighted yields (sigma_F^2 = F, sigma_B^2 = B) this reduces to the old
-/// Poisson form R*sqrt(1/F + 1/B). Returns 0 if F or B is non-positive.
-inline double RatioErr(const Yield &F, const Yield &B)
+/// `cov` defaults to 0 (independent F, B -- the pre-2026-08 behavior); the
+/// simfit grand fit supplies cov(F, B) via h_cov_yield_FB (see AsymErr).
+/// For unweighted independent yields this reduces to the old Poisson form
+/// R*sqrt(1/F + 1/B). Returns 0 if F or B is non-positive (or if rounding
+/// drives s2 < 0).
+inline double RatioErr(const Yield &F, const Yield &B, double cov = 0.0)
 {
     if (F.value <= 0.0 || B.value <= 0.0)
         return 0.0;
     const double R = F.value / B.value;
-    return R * std::sqrt((F.error * F.error) / (F.value * F.value) +
-                         (B.error * B.error) / (B.value * B.value));
+    const double s2 = (F.error * F.error) / (F.value * F.value) +
+                      (B.error * B.error) / (B.value * B.value) -
+                      2.0 * cov / (F.value * B.value);
+    return s2 > 0.0 ? R * std::sqrt(s2) : 0.0;
 }
 
 /// pO rapidity shift (lab -> nucleon-nucleon CM frame).

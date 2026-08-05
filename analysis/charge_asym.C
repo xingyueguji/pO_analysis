@@ -1,5 +1,6 @@
 #include "TFile.h"
 #include "TH1D.h"
+#include "TH2D.h"
 #include "TGraphErrors.h"
 #include "TString.h"
 #include <iostream>
@@ -54,6 +55,22 @@ void charge_asym(
         yEdgesCM.push_back(y - deltaY);
     }
 
+    // Fitted-yield covariance from the simfit grand fit (2026-08-04): the
+    // 24x24 matrix h_cov_yield, fixed order [Wp_y0..11, Wm_y0..11], written by
+    // the fork's extract_pO_simfit.C into comb_fitted_yields.root. Absent in
+    // raw-skim and legacy per-flavour-fit files -> cov = 0 reproduces the old
+    // independent-yield errors exactly.
+    TH2D *hcov = (TH2D *)f->Get("h_cov_yield");
+    if (hcov && hcov->GetNbinsX() != 2 * NY)
+    {
+        std::cerr << "[WARN] h_cov_yield has " << hcov->GetNbinsX()
+                  << " rows, expected " << 2 * NY << " -> covariance ignored\n";
+        hcov = nullptr;
+    }
+    if (hcov)
+        std::cout << "[INFO] simfit covariance found -> A errors include the "
+                     "cov(N+, N-) cross term\n";
+
     std::vector<double> x(NY), ex(NY), y(NY), ey(NY);
 
     for (int iy = 0; iy < NY; ++iy)
@@ -96,7 +113,9 @@ void charge_asym(
         if (S > 0.0)
         {
             A = (Np.value - Nm.value) / S;
-            sA = AsymErr(Np, Nm);
+            // cov(Wp_yi, Wm_yi): matrix order is [Wp_y0..11, Wm_y0..11]
+            const double cov = hcov ? hcov->GetBinContent(iy + 1, NY + iy + 1) : 0.0;
+            sA = AsymErr(Np, Nm, cov);
         }
 
         // x-axis: y-bin center

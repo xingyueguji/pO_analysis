@@ -1,5 +1,6 @@
 #include "TFile.h"
 #include "TH1D.h"
+#include "TH2D.h"
 #include "TGraphErrors.h"
 #include "TString.h"
 #include <iostream>
@@ -96,6 +97,27 @@ void FBratio(
         }
     }
 
+    // Fitted-yield covariance from the simfit grand fit (2026-08-04): the
+    // 24x24 matrix h_cov_yield_FB, fixed order [Wp_y0..11, Wm_y0..11], written
+    // by the fork's extract_pO_simfit.C into comb_fitted_yields.root. Absent in
+    // raw-skim and legacy per-flavour-fit files -> all covariances 0, which
+    // reproduces the old independent-yield errors exactly.
+    TH2D *hcov = (TH2D *)f->Get("h_cov_yield_FB");
+    if (hcov && hcov->GetNbinsX() != 2 * NY)
+    {
+        std::cerr << "[WARN] h_cov_yield_FB has " << hcov->GetNbinsX()
+                  << " rows, expected " << 2 * NY << " -> covariance ignored\n";
+        hcov = nullptr;
+    }
+    if (hcov)
+        std::cout << "[INFO] simfit covariance found -> R_FB errors include all "
+                     "cross terms (within F, within B, and cov(F, B))\n";
+    // covariance-matrix index of one yield: Wp_yi -> iy, Wm_yi -> NY + iy
+    auto covIdx = [&](int iy, bool wantWp) { return (wantWp ? 0 : NY) + iy; };
+    auto covEl = [&](int a, int b) -> double {
+        return hcov ? hcov->GetBinContent(a + 1, b + 1) : 0.0;
+    };
+
     auto get_yield = [&](int iy, bool wantWp) -> Yield
     {
         // Prefer the fork's discriminant-neutral fitted-yield name; fall back
@@ -127,12 +149,15 @@ void FBratio(
             int iyF = NY - 1 - iabs;
 
             Yield FB, BB; // Forward yield, Backward yield (value + error)
+            std::vector<int> idxF, idxB; // covariance-matrix indices of F / B parts
 
             if (sumCharges)
             {
                 // F = W+ + W-, B = W+ + W-
                 FB = get_yield(iyF, true) + get_yield(iyF, false);
                 BB = get_yield(iyB, true) + get_yield(iyB, false);
+                idxF = {covIdx(iyF, true), covIdx(iyF, false)};
+                idxB = {covIdx(iyB, true), covIdx(iyB, false)};
             }
             else
             {
@@ -141,18 +166,44 @@ void FBratio(
                 {
                     FB = get_yield(iyF, true);
                     BB = get_yield(iyB, true);
+                    idxF = {covIdx(iyF, true)};
+                    idxB = {covIdx(iyB, true)};
                 }
                 if (useWm)
                 {
                     FB = get_yield(iyF, false);
                     BB = get_yield(iyB, false);
+                    idxF = {covIdx(iyF, false)};
+                    idxB = {covIdx(iyB, false)};
                 }
+            }
+
+            // With the simfit covariance: replace the independent-quadrature
+            // errors with the full Var(F) = sum_ab C_ab over the F parts (this
+            // adds the 2*cov(Wp,Wm) term the Yield operator+ cannot know), and
+            // build cov(F, B) for the ratio. Without hcov everything is 0/kept.
+            double covFB = 0.0;
+            if (hcov)
+            {
+                auto setVar = [&](Yield &Y, const std::vector<int> &idx) {
+                    double var = 0.0;
+                    for (int a : idx)
+                        for (int b : idx)
+                            var += covEl(a, b);
+                    if (var > 0.0)
+                        Y.error = std::sqrt(var);
+                };
+                setVar(FB, idxF);
+                setVar(BB, idxB);
+                for (int a : idxF)
+                    for (int b : idxB)
+                        covFB += covEl(a, b);
             }
 
             if (FB.value > 0.0 && BB.value > 0.0)
             {
                 yv[iabs] = FB.value / BB.value;
-                ey[iabs] = RatioErr(FB, BB);
+                ey[iabs] = RatioErr(FB, BB, covFB);
             }
             else
             {

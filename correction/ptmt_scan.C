@@ -32,6 +32,13 @@
 // Isolation is NOT scanned here -- it stays at the nominal cut baked into the
 // skim histograms (mu 0.15 / e 0.095).
 //
+// 2026-08-04: the pT grid starts at 20 GeV (below the nominal 25) to probe
+// LOWERING the pT cut. The skim fills the h_pt_mt[_antiiso]_* planes down to
+// the pT > 20 scan floor (skim_common.h kPtScanFloor) for exactly this
+// purpose; all other skim histograms keep the nominal pT > 25 selection.
+// effS stays quoted relative to the CURRENT selection (pT>25, no mT cut), so
+// effS > 100% at pT cuts below 25 is the signal gained by lowering the cut.
+//
 // Inputs : ../skim/rootfile/<base>[_<sample>]_hist.root with the joint 2Ds
 //          h_pt_mt_{mu,ele}{Plus,Minus}           (iso-pass, all events)
 //          h_pt_mt_antiiso_{mu,ele}{Plus,Minus}   (anti-iso sideband)
@@ -63,10 +70,17 @@
 namespace
 {
 // ---- scan grid: cut values land on histogram bin edges (pT 1 GeV, mT 2.5) --
-const double kPtLo = 25.0, kPtHi = 45.0, kPtStep = 1.0;
+// 2026-08-04: pT lower edge extended 25 -> 20 to probe LOWERING the nominal
+// cut. Requires skim h_pt_mt[_antiiso]_* filled down to the pT > 20 scan
+// floor (skim_common.h kPtScanFloor -- keep equal to kPtLo here); histograms
+// from an older skim are empty below 25 and the new columns read as S=B=0.
+const double kPtLo = 20.0, kPtHi = 45.0, kPtStep = 1.0;
 const double kMtLo = 0.0,  kMtHi = 80.0, kMtStep = 2.5;
-const int kNPt = (int)((kPtHi - kPtLo) / kPtStep) + 1; // 21
+const int kNPt = (int)((kPtHi - kPtLo) / kPtStep) + 1; // 26
 const int kNMt = (int)((kMtHi - kMtLo) / kMtStep) + 1; // 33
+// The NOMINAL selection's pT cut: reference for effS and the printed baseline
+// (effS > 100% below 25 = the signal gained by lowering the cut).
+const double kPtRef = 25.0;
 
 // Integral of h over pT >= ptc AND mT >= mtc, overflow included on both axes.
 double CumAbove(TH2 *h, double ptc, double mtc)
@@ -224,7 +238,7 @@ void ptmt_scan(bool isElec = false)
   TH2D *mEffS = (TH2D *)mSton->Clone("m_effS"); mEffS->SetDirectory(nullptr); mEffS->SetTitle(";p_{T} cut [GeV];m_{T} cut [GeV];#varepsilon_{S}");
   mSton->SetDirectory(nullptr);
 
-  const double S0 = CumAbove(hS, kPtLo, 0.0); // baseline: current selection pT>25, no mT cut
+  const double S0 = CumAbove(hS, kPtRef, 0.0); // baseline: current selection pT>25, no mT cut
 
   double bestSton = -1, bestPt = kPtLo, bestMt = 0;
   auto evalPoint = [&](double ptc, double mtc, double &S, double &B, double &ston, double &sob)
@@ -252,13 +266,17 @@ void ptmt_scan(bool isElec = false)
 
   // ---- ROC curves + AUC (normalization-free view) --------------------------
   // sweep the mT cut at fixed pT cuts, and the pT cut at mT=0; efficiencies
-  // relative to the (25, 0) baseline. Background eff uses QCD only (the anti-iso
+  // relative to the LOOSEST scan point (pT>20, no mT cut) so the curves live
+  // in [0,1]. (Until 2026-08-04 the reference was (25,0) -- AUC values are NOT
+  // comparable across that change.) Background eff uses QCD only (the anti-iso
   // sideband), excluding the non-W EWK that the FOM's B does include.
   // (named qcdBase, not "B0": B0 is a termios.h baud-rate macro on macOS)
+  const double S0roc   = CumAbove(hS, kPtLo, 0.0);
   const double qcdBase = qcdTot * (sideTot > 0 ? CumAbove(hSide, kPtLo, 0.0) / sideTot : 0.0);
   const std::vector<RocDef> rocs = {
-      {"m_{T} sweep, p_{T}>25", true, 25.0, 600 + 1}, // kBlue+1
-      {"m_{T} sweep, p_{T}>28", true, 28.0, 632 + 1}, // kRed+1
+      {"m_{T} sweep, p_{T}>20", true, 20.0, 600 + 1}, // kBlue+1
+      {"m_{T} sweep, p_{T}>22", true, 22.0, 432 + 2}, // kCyan+2
+      {"m_{T} sweep, p_{T}>25", true, 25.0, 632 + 1}, // kRed+1
       {"m_{T} sweep, p_{T}>30", true, 30.0, 416 + 2}, // kGreen+2
       {"p_{T} sweep, no m_{T} cut", false, 0.0, 880 + 1}, // kViolet+1
   };
@@ -273,7 +291,7 @@ void ptmt_scan(bool isElec = false)
     {
       const double ptc = rd.sweepMt ? rd.fixed : (kPtLo + i * kPtStep);
       const double mtc = rd.sweepMt ? (kMtLo + i * kMtStep) : rd.fixed;
-      const double eS = S0 > 0 ? CumAbove(hS, ptc, mtc) / S0 : 0.0;
+      const double eS = S0roc > 0 ? CumAbove(hS, ptc, mtc) / S0roc : 0.0;
       const double eB = qcdBase > 0 ? qcdTot * (sideTot > 0 ? CumAbove(hSide, ptc, mtc) / sideTot : 0.0) / qcdBase : 0.0;
       g->SetPoint(g->GetN(), eB, eS);
       pts.push_back({eB, eS});
@@ -297,11 +315,27 @@ void ptmt_scan(bool isElec = false)
                       tag, ptc, mtc, S, B, sob, ston, S0 > 0 ? 100.0 * S / S0 : 0.0);
   };
   std::cout << "\n=== pT x mT scan  [" << lep << "]  (B = anti-iso-sideband QCD + non-W EWK) ===\n";
-  printPoint("baseline (current)", kPtLo, 0.0);
+  printPoint("baseline (current)", kPtRef, 0.0);
+  printPoint("scan floor", kPtLo, 0.0);
   printPoint("tentative", kPtTent, kMtTent);
+  printPoint("pT>20 + tentative mT", kPtLo, kMtTent);
   printPoint("OPTIMUM (max S/sqrt(S+B))", bestPt, bestMt);
+  // per-pT-cut optima: the direct answer to "can the pT cut be lowered?"
+  // (effS still relative to the CURRENT selection (25, no mT) -- >100% = gain)
+  std::cout << "  -- per-pT-cut optimum over the m_T axis (pT 20..30) --\n";
+  for (int ip = 0; ip < kNPt; ++ip)
+  {
+    const double ptc = kPtLo + ip * kPtStep;
+    if (ptc > 30.0 + 1e-9) break;
+    int    imBest = 0;
+    double vBest  = -1;
+    for (int im = 0; im < kNMt; ++im)
+      if (mSton->GetBinContent(ip + 1, im + 1) > vBest)
+      { vBest = mSton->GetBinContent(ip + 1, im + 1); imBest = im; }
+    printPoint(Form("pT>%.0f best-mT", ptc), ptc, kMtLo + imBest * kMtStep);
+  }
   for (size_t i = 0; i < rocs.size(); ++i)
-    std::cout << Form("  AUC  %-24s = %.4f\n", rocs[i].name, aucs[i]);
+    std::cout << Form("  AUC  %-24s = %.4f   (rel. to the pT>20 floor)\n", rocs[i].name, aucs[i]);
 
   // ---- draw ----------------------------------------------------------------
   const std::string outDir = "./plots/ptmt_scan_" + lep;
@@ -351,24 +385,31 @@ void ptmt_scan(bool isElec = false)
   }
 
   {
-    // 1D profile: S/sqrt(S+B) vs mT cut at pT>25 and pT>30
+    // 1D profile: S/sqrt(S+B) vs mT cut at pT>20, 25, 30 (colors match the ROC)
     TCanvas *c = new TCanvas("c_prof", "", 800, 650);
     c->SetLeftMargin(0.12);
-    TGraph *g25 = new TGraph(), *g30 = new TGraph();
+    TGraph *g20 = new TGraph(), *g25 = new TGraph(), *g30 = new TGraph();
+    double profMax = 0;
     for (int im = 0; im < kNMt; ++im)
     {
       const double mtc = kMtLo + im * kMtStep;
       double S, B, ston, sob;
-      evalPoint(25.0, mtc, S, B, ston, sob); g25->SetPoint(im, mtc, ston);
-      evalPoint(30.0, mtc, S, B, ston, sob); g30->SetPoint(im, mtc, ston);
+      evalPoint(20.0, mtc, S, B, ston, sob); g20->SetPoint(im, mtc, ston); profMax = std::max(profMax, ston);
+      evalPoint(25.0, mtc, S, B, ston, sob); g25->SetPoint(im, mtc, ston); profMax = std::max(profMax, ston);
+      evalPoint(30.0, mtc, S, B, ston, sob); g30->SetPoint(im, mtc, ston); profMax = std::max(profMax, ston);
     }
-    g25->SetLineColor(600 + 1); g25->SetLineWidth(3);
-    g30->SetLineColor(632 + 1); g30->SetLineWidth(3); g30->SetLineStyle(2);
-    g25->SetTitle(";m_{T} cut [GeV];S/#sqrt{S+B}");
-    g25->Draw("AL");
+    g20->SetLineColor(600 + 1); g20->SetLineWidth(3);
+    g25->SetLineColor(632 + 1); g25->SetLineWidth(3);
+    g30->SetLineColor(416 + 2); g30->SetLineWidth(3); g30->SetLineStyle(2);
+    g20->SetTitle(";m_{T} cut [GeV];S/#sqrt{S+B}");
+    g20->Draw("AL");
+    g20->GetHistogram()->SetMinimum(0.0);
+    g20->GetHistogram()->SetMaximum(1.15 * profMax);
+    g25->Draw("L same");
     g30->Draw("L same");
-    TLegend *leg = new TLegend(0.15, 0.18, 0.5, 0.34);
+    TLegend *leg = new TLegend(0.15, 0.18, 0.5, 0.38);
     leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextSize(0.032);
+    leg->AddEntry(g20, "p_{T} > 20 GeV", "l");
     leg->AddEntry(g25, "p_{T} > 25 GeV", "l");
     leg->AddEntry(g30, "p_{T} > 30 GeV", "l");
     leg->Draw();
