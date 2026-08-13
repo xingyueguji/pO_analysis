@@ -105,9 +105,11 @@ run_one() {
     require_file "$HERE/$FB" "FBratio.C failed -- see its [ERROR] above"
     (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"observables.C+\"); observables_comb(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/comb/charge_asym/$disc/chargeAsym.png" "observables_comb produced no plot"
-    # comb fiducial sigma (mu+e summed, covariance-propagated, + prefit-MC overlay)
-    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_comb(\"$disc\");") || exit 1
+    # comb fiducial sigma = r x sigma_gen-fid (per flavour, covariance-propagated)
+    # + the per-flavour extraction diagnostic (gen / reco / r x gen / r x reco)
+    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_comb(\"$disc\"); xsec_fiducial_diag(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_fiducial.png" "xsec_fiducial_comb produced no plot"
+    require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_xsec_diag_mu.png" "xsec_fiducial_diag produced no plot"
     # rapidity-INCLUSIVE postfit stacks (per flavour, Wp/Wm/W; exact because the
     # simfit parameters are pure normalizations -- see postfit_incl.C header)
     (cd "$HERE/../plotting" && root -l -b -q "postfit_incl.C+(\"$disc\")") || exit 1

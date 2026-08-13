@@ -70,6 +70,11 @@ struct PlotStyle
     std::string drawOptGraph = "AP";
     bool logy = false;
 
+    // Top-pad y-axis headroom in SaveDataMCRatio: maximum = yHeadroom *
+    // max(data, MC). <= 0 keeps the legacy 1.4. On log-y pads use a
+    // multiplicative decade-scale value (e.g. 20) -- 1.4 is invisible there.
+    double yHeadroom = -1.0;
+
     // stat box
     bool showStats = false;
 
@@ -1029,7 +1034,7 @@ static void SaveDataMCRatio(TH1 *hData, TH1 *hMC,
     hd->SetMarkerColor(kBlack);
 
     const double ymax = std::max(hd->GetMaximum(), hm->GetMaximum());
-    hm->SetMaximum(1.4 * ymax);
+    hm->SetMaximum((ps.yHeadroom > 0 ? ps.yHeadroom : 1.4) * ymax);
     if (!ps.logy)
         hm->SetMinimum(0.0);
 

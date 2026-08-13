@@ -270,7 +270,17 @@ int skim_Wmu(const char *fname, SampleType sample)
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double muEtaMax    = 2.4;
-  const double trigMatchDR = 0.1;
+  // 0.1 -> 0.4 (2026-08-12): the saved trigger objects are L1-granularity
+  // candidates whose phi is the muon's azimuth AT THE MUON STATION, while
+  // {mu,ele}Phi is the vertex direction. The two differ by the solenoid
+  // bending, Dphi = c + q*k/pT with k = 2.55 rad*GeV and a charge-blind
+  // c = +0.006 rad (half of the 2pi/576 muGMT phi cell). At pT 25-30 in the
+  // barrel that is ~0.10 rad, i.e. ON the old window -- and because c adds to
+  // the mu+ bending and cancels part of the mu- one, the old cut kept only
+  // 48% of barrel mu+ vs 91% of mu- there (a ~10% CHARGE-DEPENDENT loss riding
+  // straight on the charge-asymmetry observable). 0.4 is comfortably beyond
+  // the largest |Dphi| (~0.10) and restores 100%/100% for both charges.
+  const double trigMatchDR = 0.4;
   const bool   applyVz     = true;
   const double vzMax       = 15.0;
 
@@ -940,7 +950,17 @@ int skim_Wel(const char *fname, SampleType sample)
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double eleEtaMax   = 2.4;
-  const double trigMatchDR = 0.1;
+  // 0.1 -> 0.4 (2026-08-12): the saved trigger objects are L1-granularity
+  // candidates whose phi is the muon's azimuth AT THE MUON STATION, while
+  // {mu,ele}Phi is the vertex direction. The two differ by the solenoid
+  // bending, Dphi = c + q*k/pT with k = 2.55 rad*GeV and a charge-blind
+  // c = +0.006 rad (half of the 2pi/576 muGMT phi cell). At pT 25-30 in the
+  // barrel that is ~0.10 rad, i.e. ON the old window -- and because c adds to
+  // the mu+ bending and cancels part of the mu- one, the old cut kept only
+  // 48% of barrel mu+ vs 91% of mu- there (a ~10% CHARGE-DEPENDENT loss riding
+  // straight on the charge-asymmetry observable). 0.4 is comfortably beyond
+  // the largest |Dphi| (~0.10) and restores 100%/100% for both charges.
+  const double trigMatchDR = 0.4;
   const bool   applyVz     = true;
   const double vzMax       = 15.0;
 
