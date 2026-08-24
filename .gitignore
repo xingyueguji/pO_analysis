@@ -2,6 +2,7 @@
 *.root
 *.pdf
 *.png
+*.tex
 
 # ROOT ACLiC build artifacts (compiled-macro cache)
 *.so

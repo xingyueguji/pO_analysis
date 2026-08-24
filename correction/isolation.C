@@ -1,8 +1,11 @@
-// IsoStudy_pO.C
+// correction/isolation.C
 // ROOT macro to reproduce isolation efficiency + ROC/AUC
 // using muonAnalyzer muonTree + particleFlowAnalyser pftree.
 //
-// Run: root -l -q 'IsoStudy_pO.C("HiForestMiniAOD.root")'
+// Run from correction/:
+//   root -l -q 'isolation.C+'                    (current production; the input
+//                                       path comes from skim_common.h)
+//   root -l -q 'isolation.C+("/other/file.root")'  (explicit override)
 
 #include <TFile.h>
 #include <TTree.h>
@@ -15,6 +18,9 @@
 #include <TMultiGraph.h>
 #include <TParameter.h>
 #include <TSystem.h>
+
+// Input path: SINGLE SOURCE OF TRUTH is skim/skim_common.h (see isolation_mu_tight.C).
+#include "../skim/skim_common.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -26,7 +32,10 @@ struct PairInfo
     double mass;
 };
 
-static TVector2 ComputePFMET(std::vector<int> *pfId,
+// Name kept unique across the ROOT session -- see the note in isolation_ele.C:
+// pOSkim::ComputePFMET (skim_common.h) + `using namespace pOSkim` in njet_WZ.C
+// would otherwise make that macro's call ambiguous.
+static TVector2 ComputePFMET_isoleg(std::vector<int> *pfId,
                              std::vector<float> *pfPt,
                              std::vector<float> *pfPhi)
 {
@@ -190,7 +199,7 @@ static double computeIsoPF(double mu_eta, double mu_phi, double mu_pt,
 }
 
 // Main driver
-void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root", bool isSoft = true)
+void isolation(const char *fname = pOSkim::kDefaultDataFile, bool isSoft = true)
 {
     TFile *f = TFile::Open(fname, "READ");
     if (!f || f->IsZombie())
@@ -355,7 +364,7 @@ void isolation(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/p
         if (!muPt || !muEta || !muPhi || !muCharge)
             continue;
 
-        TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+        TVector2 metv = ComputePFMET_isoleg(pfId, pfPt, pfPhi);
         double met = metv.Mod();
 
         bool isBkgMET = (met < 5);

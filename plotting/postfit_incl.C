@@ -19,6 +19,10 @@
 // columns and the appended lumi column; older CSVs without the lumi column
 // fall back to lumi = 1, and free-rateParam CSVs carry the per-channel
 // qcd_norm as before -- both layouts work).
+// QCD_MODE=abcd (2026-08-23): still pure normalizations -- qcdScale is then
+// the evaluated formula (sB*sC/sD x kappa^theta) and applies to the
+// A0-normalized `qcd_abcd` template instead of `qcd`; selected via the CSV's
+// 18th column qcd_model ("abcd"); column absent -> plain qcd, unchanged.
 // Summing those over i reproduces combine's postfit sum identically -- and
 // needs only the structured inputs (combine_input_W*.root) plus the fitted
 // parameters (simfit/summary/comb_W_yields.csv), i.e. no fitDiagnostics file.
@@ -58,6 +62,10 @@ struct SimfitPars
     double rZ = 1.0, rZe = 0.0;
     double lumi = 1.0;    // kLumi^theta multiplier on all MC (1 = column absent)
     bool qcdShared = false; // lnN mode: one QCD param per (flavour, charge)
+    // 18th CSV column (2026-08-23): "abcd" -> the multiplier applies to the
+    // qcd_abcd template (in-fit ABCD normalization), else the plain qcd.
+    // Column absent (pre-2026-08-23 CSVs) -> "" -> qcd, unchanged behavior.
+    std::string qcdModel;
     bool ok = false;
 };
 
@@ -85,6 +93,7 @@ SimfitPars ReadPars(const TString &csv)
         p.rZ  = std::atof(c[13].c_str());
         p.rZe = std::atof(c[14].c_str());
         if (c.size() >= 17) p.lumi = std::atof(c[15].c_str()); // 2026-08-17 column
+        if (c.size() >= 18) p.qcdModel = c[17];                // 2026-08-23 column
         ++found;
     }
     p.ok = (found == 24);
@@ -197,11 +206,14 @@ void postfit_incl(const char *disc = "met",
                     const double rB   = pars.r[ic][iy] * pars.lumi;
                     const double rZB  = pars.rZ * pars.lumi;
                     const double qcdB = (fl == 0) ? pars.qcdMu[ic][iy] : pars.qcdEle[ic][iy];
+                    // abcd mode: the multiplier (sB*sC/sD x kappa^theta) applies
+                    // to the A0-normalized qcd_abcd template, not the plain qcd
+                    const char *qcdProc = (pars.qcdModel == "abcd") ? "qcd_abcd" : "qcd";
                     addScaled("signal", hSig, rB,   Form("pfincl_sig_%s_%s", flavs[fl], tag[is]));
                     addScaled("wtau",   hWt,  rB,   Form("pfincl_wt_%s_%s",  flavs[fl], tag[is]));
                     addScaled("z",      hZ,   rZB,  Form("pfincl_z_%s_%s",   flavs[fl], tag[is]));
                     addScaled("ztau",   hZt,  rZB,  Form("pfincl_zt_%s_%s",  flavs[fl], tag[is]));
-                    addScaled("qcd",    hQ,   qcdB, Form("pfincl_q_%s_%s",   flavs[fl], tag[is]));
+                    addScaled(qcdProc,  hQ,   qcdB, Form("pfincl_q_%s_%s",   flavs[fl], tag[is]));
                 }
             }
             if (!hData || !hSig) { std::cerr << "[ERROR] no histograms accumulated for " << tag[is] << "\n"; continue; }
@@ -222,7 +234,10 @@ void postfit_incl(const char *disc = "met",
             int nUsed = 0;
             const double chi2 = BCChi2(hData, hTot, nUsed);
             // approx params shaping this sum: 12(24) r's + r_Z + the QCD params
-            // (lnN mode: 1 shared per flavour x charge; free mode: 12(24)) + lumi
+            // (lnN mode: 1 shared per flavour x charge; free mode: 12(24)) + lumi.
+            // abcd mode: the multiplier is y-identical so qcdShared fires ->
+            // 1 QCD param per (flavour, charge) -- the right count here, since
+            // the 3 CR scales are constrained by CR data outside this sum.
             const int ndfPars = pars.qcdShared ? ((is == 2) ? 28 : 15)
                                                : ((is == 2) ? 49 : 25);
             int ndf = nUsed - ndfPars;

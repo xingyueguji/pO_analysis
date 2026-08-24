@@ -1,8 +1,12 @@
 // File: PrintHiForestStructure.C
 // Usage:
-//   root -l -q 'PrintHiForestStructure.C("pO_2025.root")'
-//   root -l -q 'PrintHiForestStructure.C("pO_2025.root", false, "structure.txt")'
-//   root -l -q 'PrintHiForestStructure.C("pO_2025.root", true,  "structure_with_leaves.txt")'
+//   root -l -q 'PrintHiForestStructure.C'                       (current production)
+//   root -l -q 'PrintHiForestStructure.C("", false, "structure.txt")'
+//   root -l -q 'PrintHiForestStructure.C("", true,  "structure_with_leaves.txt")'
+//
+// The default input is pOSkim::kDefaultDataFile from skim_common.h -- the
+// SINGLE SOURCE OF TRUTH for the production in use.  Pass an explicit path
+// only to inspect some other file.
 
 #include <iostream>
 #include <cstdio>
@@ -16,6 +20,8 @@
 #include "TLeaf.h"
 #include "TObjArray.h"
 #include "TClass.h"
+
+#include "skim_common.h"
 
 static void indent(int n) {
   for (int i = 0; i < n; ++i) std::cout << "  ";
@@ -125,7 +131,7 @@ static void PrintDirRecursive(TDirectory *dir, int level, bool printLeaves, bool
   }
 }
 
-void PrintHiForestStructure(const char *filename = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_mc_version_2_2025.root",
+void PrintHiForestStructure(const char *filename = pOSkim::kDefaultDataFile,
                             bool printLeaves = false,
                             const char *outFile = "./mc_version_2.txt",
                             bool printBranchType = true)

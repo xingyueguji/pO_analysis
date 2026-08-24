@@ -1,8 +1,11 @@
-// IsoStudy_pO.C
+// correction/isolation_ele.C
 // ROOT macro to reproduce isolation efficiency + ROC/AUC
 // using muonAnalyzer muonTree + particleFlowAnalyser pftree.
 //
-// Run: root -l -q 'IsoStudy_pO.C("HiForestMiniAOD.root")'
+// Run from correction/:
+//   root -l -q 'isolation_ele.C+'                    (current production; the input
+//                                       path comes from skim_common.h)
+//   root -l -q 'isolation_ele.C+("/other/file.root")'  (explicit override)
 
 #include <TFile.h>
 #include <TTree.h>
@@ -15,6 +18,9 @@
 #include <TMultiGraph.h>
 #include <TParameter.h>
 #include <TSystem.h>
+
+// Input path: SINGLE SOURCE OF TRUTH is skim/skim_common.h (see the muon study).
+#include "../skim/skim_common.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -26,7 +32,11 @@ struct PairInfo
     double mass;
 };
 
-static TVector2 ComputePFMET(std::vector<int> *pfId,
+// NB the name must stay unique across the whole ROOT session: skim_common.h
+// (included above for the input path) declares pOSkim::ComputePFMET, and
+// njet_WZ.C does `using namespace pOSkim`, so a plain `ComputePFMET` here makes
+// that macro's call ambiguous when both dictionaries are loaded at once.
+static TVector2 ComputePFMET_ele(std::vector<int> *pfId,
                              std::vector<float> *pfPt,
                              std::vector<float> *pfPhi)
 {
@@ -203,7 +213,7 @@ static double computeIsoPF(double mu_eta, double mu_phi, double mu_pt,
 }
 
 // Main driver
-void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2025.root")
+void isolation_ele(const char *fname = pOSkim::kDefaultDataFile)
 {
     TFile *f = TFile::Open(fname, "READ");
     if (!f || f->IsZombie())
@@ -372,7 +382,7 @@ void isolation_ele(const char *fname = "root://eoscms.cern.ch//eos/cms/store/gro
         if (!elePt || !eleEta || !elePhi || !eleCharge)
             continue;
 
-        TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+        TVector2 metv = ComputePFMET_ele(pfId, pfPt, pfPhi);
         double met = metv.Mod();
 
         bool isBkgMET = (met < 5);

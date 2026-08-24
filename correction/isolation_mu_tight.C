@@ -27,7 +27,8 @@
 // -- the same object names/shapes plot_iso_summary.C consumes for the electron.
 //
 // Run from correction/:
-//   root -l -q 'isolation_mu_tight.C+("/Users/zhenghuang/pO_2026_May_26/Data_May_26.root")'
+//   root -l -q 'isolation_mu_tight.C+'                    (current production)
+//   root -l -q 'isolation_mu_tight.C+("/other/file.root")'  (explicit override)
 
 #include <TFile.h>
 #include <TTree.h>
@@ -41,6 +42,11 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+
+// Input path: SINGLE SOURCE OF TRUTH is skim/skim_common.h.  Passing no
+// argument reads pOSkim::kDefaultDataFile, so updating the production there
+// automatically updates this study too (do NOT hardcode a path here).
+#include "../skim/skim_common.h"
 
 namespace
 {
@@ -84,7 +90,7 @@ double rocAUC_mu(const std::vector<double> &x, const std::vector<double> &y)
 
 } // namespace
 
-void isolation_mu_tight(const char *fname = "/Users/zhenghuang/pO_2026_May_26/Data_May_26.root")
+void isolation_mu_tight(const char *fname = pOSkim::kDefaultDataFile)
 {
     TFile *f = TFile::Open(fname, "READ");
     if (!f || f->IsZombie())

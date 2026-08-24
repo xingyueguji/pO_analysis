@@ -77,7 +77,53 @@ unchanged (μ 0.15 / e 0.095 — both re-confirmed as Youden-J optima under Δβ
 
 **Selection (8-step cutflow in the W macros)**:
 1. ≥1 PF lepton with pT > 25 GeV
-2. pO event-quality filters (auto-detected from branches)
+2. pO event-quality filters (auto-detected from branches). **Since 2026-08-18
+   this is `pprimaryVertexFilter` ONLY** — `pclusterCompatibilityFilter` is
+   commented out in `PassEventSelection_pO` (`skim_common.h`; the filter is
+   problematic in pO and will not be used). Branch wiring in `skim.C` and
+   `correction/njet_WZ.C` is kept, so re-enabling is a one-line uncomment;
+   `njet_WZ.C` shares the helper and follows automatically. **Re-skim + local
+   downstream re-run DONE same day (2026-08-18)** — step 2 now retains ~99.8%
+   (data) / ~99.7% (MC). **The filter was cutting ~10% of DATA ONLY** (MC passed
+   it at ~100%: MC Z-peak totals moved 372.1→372.2 / 252.5→252.6, i.e. nothing),
+   so beyond statistics it was a ~10% data-only depletion the absolute MC
+   templates never modeled ⇒ **all pre-2026-08-18 fitted r's and σ's are biased
+   ~10% LOW**; expect σ up ~10% on the next fit. New counts (supersede the
+   2026-08-12 ones everywhere below): **data W candidates μ 6055 (was 5480,
+   +10.5%) / e 7948 (was 7186, +10.6%)**; m_T>40 μ 5050 / e 5001 (was
+   4382/4465); Z-window data μμ 388 / ee 284 (was 356/~248). ABCD re-run
+   (MET-plane, ⁺/⁻): μ T 0.2215/0.2100, iso-pass QCD 629.1+604.5 (+28%);
+   e T 0.3891/0.3409, iso-pass QCD 2224.2+1991.0 (+15%); m_T-plane T
+   μ 0.1767/0.1707, e 0.3442/0.3282. **The +28% is NOT "the sideband growing
+   faster than 10%"** (that earlier reading was wrong): region D is 99.8% pure
+   QCD and grew exactly with the data, but region B is 58%/53% EWK (μ, MET
+   plane), so a **data-only** +10.5% against a FIXED r=1 MC lands entirely in
+   the difference and inflates QCD_B by ~2×. Same arithmetic widened the μ
+   MET↔m_T-plane T transport ~10%→~20% — the m_T-plane B is only 21%/20% EWK
+   (m_T<30 excludes the Jacobian better than MET<30), so its T moved just +3%.
+   NB this is also why the trigger-ΔR fix did NOT do this: that cut moves data
+   AND MC together, the cluster-compat filter was data-only (MC passed ~100%).
+   **DIAGNOSIS 2026-08-19: the widened transport is dominated by the PREFIT
+   (r=1) EWK subtraction, NOT by iso–recoil correlation.** Scanning the EWK
+   scale, the two planes agree exactly at r≈1.18 (μ⁺) / 1.22 (μ⁻) — where the
+   post-filter-change fit is heading; for e the spread is nearly r-independent
+   (−11.6%→−7.5% over r=1.0–1.3, B only 24%/22% EWK) and is more likely
+   genuine. **So do NOT raise κ_μ on the 20% number — it double-counts the
+   signal strength the fit itself determines; κ_μ=1.15 stands pending a
+   decision.** Options: (a) keep it, state the r-sensitivity; (b) normalize the
+   mt40 pT template with T_mT instead of T_MET — nearly r-immune and the
+   natural transport for an m_T>40 template (μ QCD 164.0/155.8 → ~131/127, e
+   729.6/690.8 → ~645/665); (c) iterate the ABCD at the fitted r (two lxplus
+   round-trips). ~~Decide BEFORE the next fit~~ **RESOLVED 2026-08-23 by the
+   in-fit ABCD migration (`QCD_MODE=abcd`), which supersedes BOTH (b) and (c):
+   the m_T-plane counts become fit channels, so the normalization is T_mT-based
+   by construction and the EWK subtraction is continuously at the fitted r (no
+   iteration); the transport row never enters the κ. See the `qcd_abcd.C`
+   bullet and "Downstream fit".** All 6 `combine_input_W*.root` + both `combine_input_Z.root`
+   rewritten; njet_WZ re-run confirms the selections stay event-identical
+   (data counts exactly 6055/7948/388/284). Benign: mtandmet's MET-vs-m_T
+   integral echo fired on two e bins (1-event MET>120 overflows). Fits NOT yet
+   re-run (lxplus).
 3. Trigger: `HLT_OxyL1SingleMuOpen_v1` (muon) or `HLT_OxyL1SingleEG10_v1` (electron) — L1-seeded paths (skim.C:362, 1048; the older "HLT_PAL3Mu12/PAL3Ele12" in this doc was WRONG, corrected 2026-08-12)
 4. DY veto: reject events with an OS dilepton pair, both legs ID'd + isolated
    (μ: pT>15, Tight, relIso<0.15; e: pT>10, eleMVAIdWP95, relIso<0.095), mll in (80,110)
@@ -86,7 +132,7 @@ unchanged (μ 0.15 / e 0.095 — both re-confirmed as Youden-J optima under Δβ
 7. Leading lepton PF relIso < 0.15
 8. Trigger matching on leading lepton (ΔR < `trigMatchDR` = **0.4 since 2026-08-12**, was 0.1; skim.C:283/963, against the objects in `hltobject/HLT_Oxy*` = **L1-granularity candidates**). **Only the two W channels do this** — `skim_Zmm`/`skim_Zee` wire the trigger-object branches but never match on them.
 
-**FIXED 2026-08-12: `trigMatchDR` 0.1 → 0.4 in both W channels + `correction/njet_WZ.C:194` (which replicates the selection), W re-skim and full downstream re-run DONE.** Post-fix cutflow step 7→8: μ⁺/μ⁻ **99.99%/99.99%** (was 93.88%/98.82%), e⁺/e⁻ **99.89%/99.88%** (was 97.79%/98.89%) — charge-symmetric in both flavours. **Data W candidates: μ 5203 → 5480 (+5.3%), e 7065 → 7186 (+1.7%)**; `njet_WZ` data counts still equal the skim's N[8] exactly (5480 / 7186), so the two independent selection implementations remain event-identical. ABCD moved with it: iso-pass QCD μ⁺/μ⁻ 413.7/453.8 → **491.6/473.2** (the artificial μ⁺ deficit is gone from the sideband too — ratio 0.91 → 1.04), e⁺/e⁻ 1887.2/1693.9 → **1937.9/1723.1**; MET-plane T μ 0.1895/0.1795, e 0.3704/0.3204. `ptmt_scan` baseline S/√(S+B) μ 53.1 → **54.40**, e 39.6 → **39.85** (same conclusions: optimum still at the pT floor with m_T > 40; e best (20, 50) = 50.27). **The defect it removes:** The saved trigger object's φ is at the muon station, `muPhi` is the vertex-direction φ, and the difference decomposes **exactly** (measured in barrel pT slices) as
+**FIXED 2026-08-12: `trigMatchDR` 0.1 → 0.4 in both W channels + `correction/njet_WZ.C:194` (which replicates the selection), W re-skim and full downstream re-run DONE.** Post-fix cutflow step 7→8: μ⁺/μ⁻ **99.99%/99.99%** (was 93.88%/98.82%), e⁺/e⁻ **99.89%/99.88%** (was 97.79%/98.89%) — charge-symmetric in both flavours. **Data W candidates: μ 5203 → 5480 (+5.3%), e 7065 → 7186 (+1.7%)**; `njet_WZ` data counts still equal the skim's N[8] exactly (5480 / 7186), so the two independent selection implementations remain event-identical. ABCD moved with it: iso-pass QCD μ⁺/μ⁻ 413.7/453.8 → **491.6/473.2** (the artificial μ⁺ deficit is gone from the sideband too — ratio 0.91 → 1.04), e⁺/e⁻ 1887.2/1693.9 → **1937.9/1723.1**; MET-plane T μ 0.1895/0.1795, e 0.3704/0.3204. `ptmt_scan` baseline S/√(S+B) μ 53.1 → **54.40**, e 39.6 → **39.85** (same conclusions: optimum still at the pT floor with m_T > 40; e best (20, 50) = 50.27) — **both superseded 2026-08-20 by the post-filter-change re-run: 52.83 / 38.50, see the `ptmt_scan.C` bullet**. **The defect it removes:** The saved trigger object's φ is at the muon station, `muPhi` is the vertex-direction φ, and the difference decomposes **exactly** (measured in barrel pT slices) as
 
 &nbsp;&nbsp;&nbsp;&nbsp;`Δφ(q, pT) = c + q·k/pT`, with **k = 2.55 rad·GeV** (solenoid bending out to R ≈ 4.5 m = the muon station; the fitted k is constant to 3% over pT 25–200) and a **charge-independent offset c = +0.0060 rad** (constant to 5% over the same range).
 
@@ -159,13 +205,13 @@ Per-job logs in `skim/logs/`, cutflow text in `skim/output/`.
 
 Data/MC overlay, background estimation, plots.
 
-- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). **Also writes the structured Combine input `plots[/Elec]/combine_input_W.root`** — one TDirectory per fit region (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …) each with the 6 absolute templates `data_obs/signal/z/ztau/wtau/qcd` (consumed by the fork's `run_pO_fits.sh` — see "Downstream fit"). Channel auto-selected by `isElec`. **Lepton-pT stacks (2026-07-29, DISPLAY ONLY):** the same absolute data-vs-stack comparisons in leading-lepton pT, in **two variants** driven by one 2-entry `varStem[]`/`varTag[]` table (`kVarNom`/`kVarMt40`): `plots[/Elec]/leppt/` = plain W selection (`h_leppt_*` + `qcd_pt_*`), and **`plots[/Elec]/leppt_mt40/` = the pT-DISCRIMINANT selection pT>25 && m_T>40** (`h_leppt_mt40_*` + `qcd_pt_mt40_*`, 2026-07-30). Both: per-y `leppt[_mt40]_W{p,m}_y*` + `_FB` + inclusive, per-y QCD split by the same low-MET-excess weights (the m_T cut doesn't move QCD in y). **`combine_input_W.root` itself stays PF-MET-only**, but since 2026-07-30 the same writer also emits the two lepton-pT variants as **separate files** — `combine_input_W_leppt.root` (plain selection) and `combine_input_W_leppt_mt40.root` (pT>25 && m_T>40) — same 51 regions × 6 templates each, pT binning 50/0–100, consumed by the fork's `run_pO_fits.sh --disc leppt|leppt_mt40` (out-trees `pO_fit_out_leppt[_mt40]/`; `sync_lxplus.sh` uploads the variants when present and downloads all out-trees). (The 2026-07-30 "qcd_norm FREE for all three" decision was superseded 2026-08-17: QCD is now lnN-constrained at the ABCD prediction in the simfit — see "Downstream fit".) **Composition after m_T>40** (data / W sig / DY+τ / QCD): μ 4382 / 3704 (84.5%) / 272 (6.2%) / 226 (5.2%), closure 96%; e 4465 / 3080 (69.0%) / 151 (3.4%) / 1202 (26.9%), closure 99.3%. (Before the cut: W purity 73.5% μ / 45.0% e.) (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
+- [plotting/mtandmet.C](plotting/mtandmet.C) — MT and MET data/MC plots. **MET stacks (muon AND electron) include the data-driven ABCD QCD** from `correction/rootfile/qcd_abcd_{mu,ele}.root` (run `correction/qcd_abcd.C[+(true)]` first): added to the inclusive MET stack (rigorous) and split across the per-y bins by the per-bin low-MET excess (data−EWK at MET<30) proxy, keeping the inclusive template shape (per-y sums back to inclusive). **Also writes the structured Combine input `plots[/Elec]/combine_input_W.root`** — one TDirectory per fit region (`Wp_lab_y3/`, `Wm_fb_y7/`, `Wp_incl/`, `W_incl/`, …) each with the 6 absolute templates `data_obs/signal/z/ztau/wtau/qcd` (consumed by the fork's `run_pO_fits.sh` — see "Downstream fit"). Channel auto-selected by `isElec`. **Lepton-pT stacks (2026-07-29, DISPLAY ONLY):** the same absolute data-vs-stack comparisons in leading-lepton pT, in **two variants** driven by one 2-entry `varStem[]`/`varTag[]` table (`kVarNom`/`kVarMt40`): `plots[/Elec]/leppt/` = plain W selection (`h_leppt_*` + `qcd_pt_*`), and **`plots[/Elec]/leppt_mt40/` = the pT-DISCRIMINANT selection pT>25 && m_T>40** (`h_leppt_mt40_*` + `qcd_pt_mt40_*`, 2026-07-30). Both: per-y `leppt[_mt40]_W{p,m}_y*` + `_FB` + inclusive, per-y QCD split by the same low-MET-excess weights (the m_T cut doesn't move QCD in y). **`combine_input_W.root` itself stays PF-MET-only**, but since 2026-07-30 the same writer also emits the two lepton-pT variants as **separate files** — `combine_input_W_leppt.root` (plain selection) and `combine_input_W_leppt_mt40.root` (pT>25 && m_T>40) — same 51 regions × 6 templates each, pT binning 50/0–100, consumed by the fork's `run_pO_fits.sh --disc leppt|leppt_mt40` (out-trees `pO_fit_out_leppt[_mt40]/`; `sync_lxplus.sh` uploads the variants when present and downloads all out-trees). (The 2026-07-30 "qcd_norm FREE for all three" decision was superseded 2026-08-17: QCD is now lnN-constrained at the ABCD prediction in the simfit — see "Downstream fit".) **In-fit ABCD inputs (2026-08-23, the `_leppt_mt40` file ONLY):** every SR dir gains a **7th template `qcd_abcd`** — same anti-iso m_T>40 pT shape and per-y split, total renormalized to A0 = qcdB0·qcdC0/qcdD0 read from `abcd_counts_*` (Σ_y = A0 exactly for lab AND fb since the weights sum to 1; staleness guard prints template-total/T_met vs C40, warns >2%; labels read by looping `GetBinLabel` — `TAxis::FindBin(label)` would APPEND on a miss) — and the file gains **6 CR dirs** `{Wp,Wm}_CR{B,C,D}` of 1-bin templates: `data_obs` (raw count), `qcd` (prefit EWK-subtracted count = the free CR scale's ×1 anchor), CRB `z`/`ztau` (swept into r_Z by the fork's map) plus BOTH W variants — per-y `w_lab_y0..11`/`w_fb_y0..11` (wB split by the SR per-y signal+wtau fractions of the matching binning → mapped to the r POIs) AND the frozen `wfix` — the card generator picks via `QCD_WCR`; CRC/CRD one frozen `ewk` (≤2.5%). The `met`/`leppt` files and all six existing template names are UNTOUCHED (verified: old `qcd` totals byte-identical, so `QCD_MODE=lnN|free` regress cleanly). **Composition after m_T>40** (data / W sig / DY+τ / QCD): μ 4382 / 3704 (84.5%) / 272 (6.2%) / 226 (5.2%), closure 96%; e 4465 / 3080 (69.0%) / 151 (3.4%) / 1202 (26.9%), closure 99.3%. (Before the cut: W purity 73.5% μ / 45.0% e.) (For electrons QCD is the *dominant* low-MET component — see `qcd_abcd.C`.)
 - [plotting/mtandmet_overlay.C](plotting/mtandmet_overlay.C) — MC stack overlays
 - [plotting/dileptonpeak.C](plotting/dileptonpeak.C) — Z peak plots
 - (QCD sideband fit and isolation ROC curves moved to `correction/` — see below)
 - [plotting/observables.C](plotting/observables.C) — final charge-asym + F/B plots from the FITTED yields (Combine), with **all four** nPDF theory bands (EPPS21/nCTEQ15HQ/nNNPDF3.0/TUJU21nlo). **Simfit-aware since 2026-08-04:** `observables_comb(disc)` = the PRIMARY μ+e-combined plots of the grand fit (reads the disc-tagged `comb` graph files + `simfit/summary/comb_fitted_yields.root`, label "W → l ν / μ + e combined (simfit)") → `plots/comb/{charge_asym,FBratio}/<disc>/`; internals shared with the per-flavour path via `observables_run(chan, lepSym, outBase, …)`. **Discriminant-aware since 2026-08-03:** `observables(isElec, disc)` = per-channel (legacy fits), `observables_overlay(disc)` = merged μ+e overlay (legacy), with `disc` = `met`(default)|`leppt`|`leppt_mt40` driving BOTH the default inputs (the matching `pO_fit_out<suffix>/` fitted yields + the disc-tagged `{charge_asym,FBratio}_fit_<chan>_<disc>.root`) and the per-disc output folders `plots[/Elec]/{charge_asym,FBratio}/<disc>/`, `plots/merged/<disc>/`, so variants never overwrite each other; the tag is stamped on every plot as a 4th header line ("PF MET fit" etc.). Mapping single-sourced in [plotting/disc_variants.h](plotting/disc_variants.h) (`pODisc::Spec`, unknown tag ⇒ hard error; `pODisc::GraphFile` = tagged name with met-only legacy-untagged fallback). Reads `RpO_rootfile/RpO_FB_graphs.root` for theory (optional). Fitted yields read `h_yield_*` first (`h_mt_*` legacy fallback). Whole Module-5 chain in one command: [analysis/run_observables.sh](analysis/run_observables.sh). The old "Projection with Electrons" pseudo-band is gone (real e overlaid instead).
 - [plotting/xsec_fiducial.C](plotting/xsec_fiducial.C) — fiducial W cross sections from the fit-summary CSVs (σ_fid = N_fit/L, stat-only, NO eff/acc correction — μ vs e gap = channel efficiency). `xsec_fiducial(disc)` = W⁺/W⁻/W incl, μ+e overlaid (reads `<chan>_summary.csv`); `xsec_fiducial_diff(isElec, disc)` = dσ_fid/dη_CM per channel (reads `<chan>_W_yields.csv`; η bins from `g_chargeAsym` in the disc-tagged charge-asym file). Same `disc` scheme as `observables.C` → `plots/xsec/<disc>/`; run by `run_observables.sh`. **`xsec_fiducial_comb(disc)` — THE r×σ_gen MEASUREMENT since 2026-08-12** (2026-08-05..12 it was the N/L + prefit/gen-overlay view): **σ_meas,i = r_i × σ_gen-fid,i, PER LEPTON FLAVOUR** (μ/e-shared r's ⇒ σ(W→ℓν) under lepton universality; the old "×2 = μ+e summed" display convention is gone). Reads per-bin `r/rErr` from `comb_W_yields.csv` and σ_gen-fid from `gen_xsec.root`; inclusive W⁺/W⁻/W = Σᵢr_iσ_i with the full r-covariance recovered as cov_Y_ij/(S_i·S_j) from `h_cov_yield` × the `signal_prefit` column (diagonal-rErr fallback + WARN; gen MC-stat ~0.3%/bin neglected vs ~6% fit errors). Plots show measured points vs the gen-fiducial r=1 expectation (green diamonds / dashed lines — measured÷dashed per bin IS r_i; the prefit-open-marker overlay was dropped, that role is absorbed). Also writes the σ table `plots/comb/xsec/<disc>/xsec_comb.csv` (per-bin + inclusive rows; incl `r` col = gen-weighted mean r). **The COUNT record is untouched** — `comb_W_yields.csv`/`comb_summary.csv` keep the fitted yields (echoed as a console cross-check), and charge_asym/FBratio stay count-based by design. First numbers, per flavour (post η-convention fix): met σ(W⁺)=50.36±0.91 / σ(W⁻)=39.68±0.80 / W=90.03±1.21 nb (eff. r≈1.01); leppt_mt40 54.20±1.37 / 43.89±1.08 / 98.09±1.75 (eff. r 1.09/1.11) — **the ~9% met↔leppt_mt40 spread = the e pT-tail mismodeling absorbed differently, now THE visible inter-discriminant systematic**. → `plots/comb/xsec/<disc>/{W_fiducial,W_dsigma_deta_comb}`. **`xsec_fiducial_diag(disc)` — PER-FLAVOUR EXTRACTION DIAGNOSTIC (2026-08-12)**: two plots (μ, e), each with 4 series × {W⁺,W⁻,W} — σ_gen-fid, σ_reco=S_f/L, r×σ_gen (the measurement, identical in both since r is shared), r×σ_reco=N_fit,f/L (count-based) — so each gen/reco pair differs by exactly (A·ε)_MC,f, printed on the plot. Per-flavour S_f comes from THIS repo's `plots[/Elec]/combine_input_W<suffix>.root` (`W{p,m}_lab_y*/signal` integrals; μ+e reproduce the CSV `signal_prefit` exactly), r-errors via the same `sumWithCov`; Σ_flavour of r×σ_reco reproduces the fork's `*_sum_yield/L` exactly (printed cross-check) → `W_xsec_diag_{mu,ele}` + `xsec_diag.csv`. **(A·ε)_MC: μ 0.90/0.94/0.92 vs e 0.76/0.77/0.76 (W⁺/W⁻/W, met)** — the μ/e gap is the electron ID+ECAL-crack loss, i.e. the visual case for the ECAL-gap TODO; leppt_mt40 shifts them to μ 0.89 / e 0.74 (the m_T cut's efficiency). **The η-binned diagnostic (`W_dsigma_diag_<flav>_<charge>` + the `AxEps_vs_eta` summary) resolves the crack directly**: both electron curves dip to ≈0.62–0.64 in exactly the two |η_lab| ∈ [1.2,1.6] bins (containing 1.4442–1.566), with no such feature in muon — and, being detector response, the W⁺ and W⁻ curves now lie on top of each other (that charge-symmetry is what exposed the η-convention bug above; **use it as the standing sanity check on this plot**). Muon A·ε is ~0.96 at both η edges and dips to 0.81(W⁺)/0.92(W⁻) centrally — the edge rise is pT-threshold in-migration (the lepton pT spectrum is softer and falling at 25 GeV at large |η|, so smearing adds more than it removes), which is why it is charge-dependent while the crack is not. The bin-by-bin correction is not an unfolding, so per-bin σ carries this migration; the inclusive σ and the count-based observables do not. Both `xsec_fiducial_comb` and `_diag` share `loadCombIngredients` + `sumWithCov` (single-source of the G/S/R/cov ingredients). Run by `run_observables.sh` (comb chain). The μ-vs-e comparison plots remain legacy-only (meaningless under shared r's).
-- [plotting/postfit_incl.C](plotting/postfit_incl.C) — **rapidity-INCLUSIVE simfit postfit stacks (2026-08-05)**: `postfit_incl(disc)` sums the 12 LAB bins per flavour for W⁺/W⁻/W (6 plots) → `plots/comb/postfit_incl/<disc>/postfit_{mu,ele}_{Wp,Wm,W}`. Built WITHOUT fitDiagnostics: since every simfit parameter is a pure normalization (no shape nuisances — the 2026-08-17 lnN nuisances are rate-only too), postfit shape ≡ prefit template × fitted scale, so the stacks are reconstructed exactly from `combine_input_W*.root` × the fitted params in `comb_W_yields.csv` (r per bin, r_Z, the qcd multipliers, and since 2026-08-17 the lumi multiplier on all MC — column absent ⇒ 1, so old CSVs still work; ndf auto-adapts by detecting the shared-QCD layout). **This shortcut breaks if shape systematics are ever added** (then use shapes_fit_s). Same cosmetics as the per-bin postfit plots (pull pad); info box: data/total, Baker-Cousins χ², r_Z. First results (leppt_mt40): μ W-incl χ²/ndf 1.46 (p 0.03); **e W-incl 3.43 (p≈0) — systematic data excess over the model across the pT tail 45–95 GeV**, i.e. the electron pT-shape mismodeling aggregated (links: e-scale/calibration shift, unembedded MC, anti-iso shape tilt; the per-bin fits partially absorb it via r/qcd_norm). Run by `run_observables.sh` (comb chain).
+- [plotting/postfit_incl.C](plotting/postfit_incl.C) — **rapidity-INCLUSIVE simfit postfit stacks (2026-08-05)**: `postfit_incl(disc)` sums the 12 LAB bins per flavour for W⁺/W⁻/W (6 plots) → `plots/comb/postfit_incl/<disc>/postfit_{mu,ele}_{Wp,Wm,W}`. Built WITHOUT fitDiagnostics: since every simfit parameter is a pure normalization (no shape nuisances — the 2026-08-17 lnN nuisances are rate-only too), postfit shape ≡ prefit template × fitted scale, so the stacks are reconstructed exactly from `combine_input_W*.root` × the fitted params in `comb_W_yields.csv` (r per bin, r_Z, the qcd multipliers, and since 2026-08-17 the lumi multiplier on all MC — column absent ⇒ 1, so old CSVs still work; ndf auto-adapts by detecting the shared-QCD layout). **abcd-aware since 2026-08-23**: reads the CSV's 18th column `qcd_model` and, when `abcd`, multiplies the `qcd_abcd` template instead of `qcd` (the reconstruction stays exact — the CR scales are pure normalizations too; column absent = legacy behavior). **This shortcut breaks if shape systematics are ever added** (then use shapes_fit_s). Same cosmetics as the per-bin postfit plots (pull pad); info box: data/total, Baker-Cousins χ², r_Z. First results (leppt_mt40): μ W-incl χ²/ndf 1.46 (p 0.03); **e W-incl 3.43 (p≈0) — systematic data excess over the model across the pT tail 45–95 GeV**, i.e. the electron pT-shape mismodeling aggregated (links: e-scale/calibration shift, unembedded MC, anti-iso shape tilt; the per-bin fits partially absorb it via r/qcd_norm). Run by `run_observables.sh` (comb chain).
 - [plotting/plotZcurve.C](plotting/plotZcurve.C), [plotting/plotRpOtheory.C](plotting/plotRpOtheory.C) — `plotRpOtheory.C` PRODUCES the theory graphs (`filelist_theory.txt` → `RpO_rootfile/RpO_FB_graphs.root`, channel/yield-independent); plotZcurve = Z curve plot
 - [plotting/CMS_lumi.C](plotting/CMS_lumi.C), [plotting/plotting_helper.C](plotting/plotting_helper.C) — style / helpers. **Pull sub-pad (2026-07-19):** `SaveNicePlot1D_WithBkg` grew an opt-in bottom pull pad (`ps.pullPad`, default off): per-bin `(data − MC_total)/σ` with the Poisson-correct `σ² = MC_total + σ_MCstat²` (NOT the observed data error — that blows up empty-data bins against a small-error MC tail), drawn as zero-anchored bars (`"B"`), red dashed 0-line + dotted ±2σ guides, auto-symmetric y-range `max(3, 1.15·max|pull|)` (fix via `ps.pullYRange`). The canvas stays NEAR-SQUARE (height × `ps.pullCanvasScale`=1.125, so 800×900); the main pad compresses slightly — everything is pad-relative so the layout scales consistently. Enabled in `mtandmet.C` (all MT/MET stacks, both channels) and the fork's `draw_postfit_pO.C`; `dileptonpeak.C` left single-pad (flip `ps.pullPad` there to add it).
 
@@ -188,6 +234,80 @@ isolation study is self-contained (writes/reads `correction/rootfile/`); the QCD
 fit reads the *main* W skim output at `../skim/rootfile/`.
 
 - [correction/qcd_abcd.C](correction/qcd_abcd.C) — **current** data-driven QCD/low-MET background via the ABCD method, **both muon and electron** (`qcd_abcd.C+` = muon, `qcd_abcd.C+(true)` = electron). Plane = relIso × PF MET (also stores relIso × m_T). Regions: iso-pass (`relIso < isoCut`) / iso-fail (anti-iso window `[isoFailLo, isoFailHi)`) × MET high/low (`metCut`); all four counts are QCD-only (`data − Σ EWK·k_s`, absolute MC from `mc_norm.h`). Reports the transfer factor `T = B/D`, the signal-region QCD `A = B·C/D`, and writes the iso-pass QCD MET/m_T **template** (anti-iso shape × T) to `correction/rootfile/qcd_abcd_{mu,ele}.root` for Combine, plus closure overlays (data vs EWK ± ABCD QCD). Channel diffs: electron uses `isoCut=0.095`, anti-iso `[0.20,1.0)` (muon `0.15`, `[0.30,1.0)`) and the `Wp_ele/Wm_ele/DYee` MCScale labels. Boundaries are projections → retune `ABCDConfig` with no re-skim.
+**Template error treatment (FIXED 2026-08-19, `ScaleToIsoPass` — shared by the
+MET/m_T and the pT paths, which had duplicated the loop):** per-bin errors are
+the sideband SHAPE stat only (`T·σ_v`); the transfer-factor error δT is a single
+fully correlated NORMALIZATION uncertainty and is folded into the total alone,
+`σ_tot² = (T·σ_V)² + (V·δT)²` with `V = Σv_i`. Before, δT was written into every
+bin and `IntegralAndError` then summed it in quadrature — i.e. `Σv_i²` where the
+total needs `(Σv_i)²` — diluting it by the effective √N_bins (μ⁺ m_T>40 template:
+quoted 4.3% vs correct 7.8%, factor 1.8). Central values UNCHANGED (verified:
+0 bin-content diffs across all 306 templates in every `combine_input_W*.root`,
+errors only) so **no re-fit was needed**; the fit never read these errors anyway
+(no `autoMCStats` in the cards) — but the `mtandmet` pull pads did, and QCD-heavy
+bins previously got artificially small pulls. Keeping δT out of the bins also
+avoids double-counting the `qcd_rate_<flav>_<chg>` lnN if `autoMCStats` is ever
+enabled. Written up in [AN_qcd_background.tex](AN_qcd_background.tex) (the AN
+"QCD background" subsection: method, region/purity tables, both discriminants,
+validation, systematics).
+**Full diagnostics in the log (2026-08-19)** — every number the AN quotes is now
+printed by the macro, so nothing lives in throwaway scripts. Per plane+charge
+(buffered into `ABCDResult::diag` so it files under the right header, since
+`runPlaneCharge` runs before `printResult`): the region composition table
+(data | EWK | QCD | EWK/data), the closure ratio data/(EWK+A_pred) in A, `T` in
+thirds+halves of the low-y band (**factorisation test**), and the anti-iso window
+scan (both edges; note A_pred moves ~8–15% while the TEMPLATE TOTAL moves <1.5%,
+because the total is anchored by the measured N_B). Then one `CHANNEL REPORT` per
+flavour: T on both planes + transport, the **r-scan** (T_MET and T_mT vs the
+assumed W scale, with the crossing point auto-located — μ⁺ 1.18 / μ⁻ 1.22 /
+e⁻ 1.20, e⁺ none), the multijet fraction of all three selections, and the
+assembled systematic budget → **two κ's: with and without the transport row**
+(μ 1.24 / **1.14**, e 1.20 / 1.17). The without-transport μ value reproduces the
+shipped κ_μ=1.15, which is the quantitative argument for keeping it.
+ROOT prints all of this to stdout only, so use the wrapper
+[correction/run_qcd_abcd.sh](correction/run_qcd_abcd.sh) (`./run_qcd_abcd.sh
+[mu|ele|both]`, default both) — it pre-builds once (so the two jobs can't race
+on the ACLiC artifacts), tees each channel to `correction/logs/qcd_abcd_<chan>.log`
+(~290 lines, gitignored like every output dir; ~2 s to regenerate) and echoes the
+T's and both κ's to the terminal.
+**IN-FIT ABCD (2026-08-23 — the leppt_mt40 QCD normalization moved into the
+Combine likelihood, `QCD_MODE=abcd`; the Mattermost-agreed "option 2+3 mix":
+(m_T × iso) regions per Andre's proposal so the fitted variable pT is never an
+ABCD axis, executed with Combine's rateParam-formula ABCD so the subtraction
+floats with the POIs per Sitian's circularity objection. The SHAPE is
+unchanged — still the anti-iso m_T>40 pT distribution.)** The macro now also
+computes the m_T-plane regions with **C re-cut at m_T>40** (`kSRMtCut` = the
+SR's own cut; B/D stay at m_T<yCut=30, the 30–40 band a buffer):
+**A40 = B·C40/D = μ⁺ 131.9±10.5 / μ⁻ 126.6±10.2 / e⁺ 652.1±29.9 /
+e⁻ 670.7±30.8** (vs the T_MET-normalized `qcd_pt_mt40` totals
+164.0/155.8/729.6/690.8 — the option-(b) shift, now the abcd-mode prefit).
+Exports the machine-readable **`abcd_counts_<lep><chg>`** TH1D (15 labeled
+bins: `dataB,qcdB0,wB,zB,ztauB,dataC40,qcdC0,wC40,zC40,dataD,qcdD0,wD,zD,
+T_met,T_mt`; B-region DY split DY vs DYτ since CR-B carries them as separate
+processes; self-check dataB−wB−zB−ztauB ≡ qcdB0) into `qcd_abcd_{mu,ele}.root`,
+consumed by `mtandmet.C`. New in the log: the per-charge in-fit block, the
+window scan of the in-fit observable A40 (μ 9.5/2.9%, e 4.3/7.0% — NOT the
+MET-plane Apred numbers), and the **REDUCED κ budget** (the stat rows are
+profiled in-fit, the plane-transport row does not apply — the m_T plane IS the
+counting plane): window ⊕ tilt → μ 1.09 / e 1.11, and with the FF total shift
+replacing the tilt → **μ 1.09 / e 1.15 = the card defaults** (the FF shift
+measures the same iso-pT correlation directly); the frozen-W residual
+(wB/dataB×0.2 ≈ μ 2.4%/2.0%, e 0.7%/0.6%) is printed for `QCD_WCR=frozen`.
+**NEW DIAGNOSTIC `runFFCheck` — the per-pT-bin fake factor** (from the
+existing `h_pt_mt[_antiiso]_*` scan planes, NO re-skim): F(pT) =
+QCD(iso-pass)/QCD(anti-iso) at m_T<30 in 5 GeV bins, pT≥25 (bins with
+sideband < 3 events fall back to flat-T, ~2–3% of the yield), applied to the
+anti-iso m_T>40 spectrum and compared with flat T_mT → `ff_pt_*` +
+`ff_closure_pt_*` plots, `ff_pt_*` histos in the rootfile, per-bin table in
+the log. **Result: μ F(pT) is flat (FF/flat−1 = +0.8%/−5.5%); the ELECTRON
+F(pT) rises genuinely (−11% at [25,30) → +34…+64% at 40–55), total FF/flat−1 =
++12.4%/+13.2%** — the direct measurement of the e iso–pT correlation, larger
+than the ⟨pT⟩-tilt proxy (7–9%), hence κ_e 1.15. If a pT-dependent transfer
+ever needs to enter the fit per bin, the documented upgrade is Combine's
+RooParametricHist (docs/abcd_rooparametrichist_tutorial in the fork).
+Consistency prints: Σ(anti-iso m_T>40 pT spectrum) ≡ C40 exactly (same events,
+two binnings — the h_iso_pt_mt40 ↔ h_iso_mt identity); no pT×MET skim plane
+exists, so the MET-sideband FF is only available pT-integrated (= T_MET).
 **Lepton-pT template (2026-07-29):** also writes `qcd_pt_{mu,ele}{Plus,Minus}` =
 (anti-iso pT shape from `h_iso_pt_*`) × (the **MET-plane** T) — relIso×pT is
 correlated for QCD, so the pT plane is never counted with the 2×2; template
@@ -200,9 +320,9 @@ IS the ABCD prediction for QCD surviving the m_T cut. **m_T>40 keeps only
 e 1881+1687→623+579). Ships an anti-iso
 slice-stability shape check (`antiiso_shape_pt_*`): μ stable; e shows a mild
 tilt (sideband pT slightly soft vs iso-pass) — the known systematic knob. **Result:** muon QCD is small (T≈0.17; ≈3% of the high-MET signal region). Electron QCD was originally huge with the loose `eleCutIdWP95` (T≈0.30; ≈24–26%), which **motivated the ID switch to `eleMVAIdWP95`** (see the isolation/ID study + FIXMEs); after the switch the electron QCD dropped to **T≈0.32–0.38, ≈10–11%** of the high-MET signal region (iso-pass QCD ≈10037→3634, W signal only −6.5%, S/B 0.34→0.87). Closure is good in both channels. (Electron T/QCD came down a further ~4% on 2026-07-30 with the relIso bin-edge fix — see the `kNIsoAB = 200` note above. **MET-plane** values, μ⁺/μ⁻ and e⁺/e⁻: μ T = 0.2001/0.1832 **unchanged** by construction, e T = 0.3967/0.3368 → **0.3802/0.3243**; iso-pass QCD μ 413.7+453.8, e 1969.5+1758.9 → **1887.2+1693.9**. NB the m_T-plane has its own T (μ 0.178/0.163, e 0.343/0.323) — don't quote those as the MET-plane numbers.)
-- [correction/ptmt_scan.C](correction/ptmt_scan.C) — **(pT × m_T) cut-pair scan** (2026-07-30, iso NOT scanned — stays at nominal): which (lepton-pT, m_T) cut combination optimizes the W selection. Signal = absolute W MC; background = the **anti-iso sideband** (full selection except iso, relIso in the qcd_abcd windows [0.30,1.0) μ / [0.20,1.0) e, ACTUAL MET/m_T) EWK-subtracted and shape-normalized to the measured iso-pass QCD total, + non-W EWK counted directly. (An earlier MET<5 "low-MET proxy" convention was **removed same day**: conditioning on MET caps the proxy's m_T at ~2√(pT·MET)≈30 GeV — a scan of m_T must not use a MET-conditioned background. Residual anti-iso caveat: mild iso–pT shape correlation, bounded by the `antiiso_shape_pt_*` slice checks.) Reads the joint `h_pt_mt_{mu,ele}{Plus,Minus}` (iso-pass) / `h_pt_mt_antiiso_*` (sideband) 2Ds from the skim. Outputs S/√(S+B) & S/B maps (optimum ★, tentative (25,40) ✚), sweep ROCs + AUC, m_T profiles → `plots/ptmt_scan_{mu,ele}/` + `rootfile/ptmt_scan_{mu,ele}.root`. **Result (anti-iso, final):** pT>25 always best (raising it only cuts the Jacobian peak; pT-sweep AUC ~0.71 vs m_T-sweep ~0.94); μ plateau flat over m_T 40–45 (S/√(S+B) 56.90–56.96, ε_S 95–97%; optimum (25,42.5)); e peaks at (25,52.5): 37.8→48.5, S/B 0.82→4.7, ε_S 89.7% (at (25,45): 47.7, ε_S 95.2%). **Channel-uniform compromise (25, 45)** sits within 0.1% (μ) / 1.7% (e) of the per-channel optima. Sideband stats: 4579 μ / 10239 e events. `root -l -q 'ptmt_scan.C+'` / `+(true)`. NB an m_T precut suits the lepton-pT-fit path; it is NOT compatible with the current MET-shape fit (it would remove the QCD-constraining low-MET region). **2026-08-04: pT grid extended down to 20** (skim scan planes now filled for pT > `kPtScanFloor` = 20 — see Stage 1; `kPtRef = 25` keeps ε_S/baseline quoted vs the CURRENT selection, so ε_S > 100% = signal gained). Result: WITH the m_T cut the FOM keeps rising as pT drops — μ optimum moves to **(20, 42.5)**: S/√(S+B) 56.99→58.14 (+2.0%), S +5.4% (3676→3874), S/B 7.6→6.9, still rising at the 20 floor; e is ~flat: (20, 50) 49.86 vs (25, 50) 49.21 (+1.3%), i.e. same S as the old (25, 40) point at S/B 4.2 vs 2.7 — but B(mT>40) grows +55% and the e sideband tilt caveat grows with the 20–25 slice (sideband: 7700 μ / 25902 e events, of which ~15k e sit in pT 20–25). WITHOUT an m_T cut (= the current MET-shape-fit selection) lowering pT only hurts: μ 53.1→52.1, e 39.6→33.6 (e QCD B ×2.4). So pT→20 is a real (small) win for the μ lepton-pT-discriminant path, a wash for e, and NOT advisable for the MET-fit selection. NB pT≥25 FOM values shifted slightly vs the 2026-07-30 numbers (μ ≤0.2%, e ~1.5% up, e best-mT 52.5→50) because the sideband-shape normalization `qcdTot/sideTot` is now anchored over the extended pT>20 plane — the iso–pT-correlation systematic in action, not a code change (per-slice transfer r = QCD_isopass/sideband: μ 0.208 in 20–25 vs 0.219 at ≥25, −5%; e 0.245 vs 0.345, −29%; the mixed anchor rescales the ≥25 QCD by ×0.98 μ / ×0.82 e). ROC/AUC now normalized to the loosest point (20, 0) (NOT comparable to the old AUCs); per-pT-cut optimum table (pT 20–30) printed in the report.
+- [correction/ptmt_scan.C](correction/ptmt_scan.C) — **(pT × m_T) cut-pair scan** (2026-07-30, iso NOT scanned — stays at nominal): which (lepton-pT, m_T) cut combination optimizes the W selection. Signal = absolute W MC; background = the **anti-iso sideband** (full selection except iso, relIso in the qcd_abcd windows [0.30,1.0) μ / [0.20,1.0) e, ACTUAL MET/m_T) EWK-subtracted and shape-normalized to the measured iso-pass QCD total, + non-W EWK counted directly. (An earlier MET<5 "low-MET proxy" convention was **removed same day**: conditioning on MET caps the proxy's m_T at ~2√(pT·MET)≈30 GeV — a scan of m_T must not use a MET-conditioned background. Residual anti-iso caveat: mild iso–pT shape correlation, bounded by the `antiiso_shape_pt_*` slice checks.) Reads the joint `h_pt_mt_{mu,ele}{Plus,Minus}` (iso-pass) / `h_pt_mt_antiiso_*` (sideband) 2Ds from the skim. Outputs S/√(S+B) & S/B maps (optimum ★, tentative (25,40) ✚), sweep ROCs + AUC, m_T profiles → `plots/ptmt_scan_{mu,ele}/` + `rootfile/ptmt_scan_{mu,ele}.root`. **Result (2026-08-20 re-run on the post-2026-08-18 skim — SUPERSEDES every earlier number in this bullet; the ~10% data-only recovery from dropping `pclusterCompatibilityFilter` landed almost entirely in the DATA-DRIVEN B, so every FOM fell ~3%):** normalization inputs (integrals over the full scan plane = pT>20, no m_T cut) — μ data 8293 − EWK 5119.4 → **QCD tot 3173.6**, sideband 14239 raw / 14192.2 EWK-subtracted; e 12946 − 4141.4 → **8804.6**, sideband 29710 / 29646.3. **μ**: baseline (25,0) S 3978.4 / B 1692.7 (QCD 1282.0 + EWK 410.7) / S/B 2.35 / **S/√(S+B) 52.83** (was 54.40); (25,40) 57.56 (B 622.6, ε_S 96.7%); (25,45) **57.67** = best at pT≥25; global optimum **(20,42.5) 59.71** (ε_S 105.9%); scan floor (20,0) 50.04. **e**: baseline (25,0) 38.50 (was 39.85; B 3812.5 of which QCD 3436.2, S/B 0.85); (25,40) 46.89 (ε_S 96.9%); (25,45) 48.25; (25,52.5) **49.01** = best at pT≥25; global optimum **(21,50) 49.58**; scan floor (20,0) 32.15. So **pT>25 costs 3.4% (μ) / 1.1% (e)** vs the unconstrained optimum, and **(25,45)** sits 0.0% (μ) / 1.5% (e) below each channel's own pT≥25 optimum — conclusions UNCHANGED: **pT>25 stands** (raising it only cuts the Jacobian peak), μ m_T plateau 40–45 (57.56/57.66/57.67 — flat to 0.2%), e rises slowly to ~52.5; **(25,40) is what the `leppt_mt40` discriminant actually uses**. AUC (rel. to the (20,0) floor): m_T sweep 0.954 μ / 0.948 e at pT>20, 0.890/0.895 at pT>25, vs pT sweep 0.821/0.834 — **the m_T cut does the discriminating, the pT cut does not**. m_T>40 at pT>25 keeps 26% of the μ QCD (335.7/1282.0) and 34% of the e QCD (1173.6/3436.2); the multijet fraction of the modelled S+B falls 23%→7.5% (μ) and 49%→26% (e) — consistent with the ABCD data-fraction figures in `qcd_abcd.C`. Sideband stats 14239 μ / 29710 e events. NB an m_T precut suits the lepton-pT-fit path; it is NOT compatible with the MET-shape fit (it would remove the QCD-constraining low-MET region). **pT grid extended down to 20 on 2026-08-04** (skim scan planes filled for pT > `kPtScanFloor` = 20 — see Stage 1; `kPtRef = 25` keeps ε_S/baseline quoted vs the CURRENT selection, so ε_S > 100% = signal gained). WITH an m_T cut the FOM still rises as pT drops (μ +3.5% from (25,45) to (20,42.5)); WITHOUT one, lowering pT only hurts — μ 52.83→50.04, e 38.50→32.15 — so pT→20 is a small win for the μ lepton-pT path, a wash for e, and NOT advisable for the MET-fit selection. Standing caveat: the sideband-shape normalization `qcdTot/sideTot` is anchored over the extended pT>20 plane, so the pT≥25 QCD inherits an extrapolation across the 20–25 slice where the transfer factor differs (the iso–pT-correlation systematic, bounded by `antiiso_shape_pt_*`); ROC/AUC are normalized to the loosest point (20, 0), NOT comparable to pre-2026-08-04 AUCs; per-pT-cut optimum table (pT 20–30) printed in the report. **Written up in [AN_selection_optimization.tex](AN_selection_optimization.tex)** (+ compiled `AN_selection_optimization.pdf`) — the AN subsection "Optimisation of the isolation and lepton-pT requirements", which covers BOTH this scan and the isolation/ID study, with the S/√(S+B) background definition spelled out and the figure-file mapping in its header comment.
 - [correction/qcd_sideband_fit_and_extrapolate.C](correction/qcd_sideband_fit_and_extrapolate.C) — **superseded** by `qcd_abcd.C`. QCD shape from anti-iso sideband, Rayleigh-like fit + linear shape-parameter extrapolation to signal iso; did not behave at pO statistics. Kept for reference.
-- [correction/isolation_mu_tight.C](correction/isolation_mu_tight.C) (muon, **current**), [correction/isolation_ele.C](correction/isolation_ele.C) (electron) — isolation ROC study, both on the **Δβ-corrected** relIso since 2026-07-06. Signal = OS Z-window pairs; backgrounds = SS pairs (≈empty for μ) and single-lepton MET<5 (QCD-like). `isolation_mu_tight.C` is the fresh, pure muon study (2026-07-06): ONE ID (`muIDTight`, pT>15, |η|<2.4), ONE variable (branch-based Δβ relIso = the skim's `RelIsoPF`), continuous 200-point scan, dbeta + nodbeta(reference) tags → `rootfile/IsoStudyOutputs_muon_tight.root`; run `root -l -q 'isolation_mu_tight.C+("/Users/zhenghuang/pO_2026_May_26/Data_May_26.root")'`. **Electron `isolation_ele.C`** scans the 8 ID WPs × 4 MVA-Iso WPs AND a continuous-relIso scan per ID (pass the current data file — default path is stale EOS). The older multi-cone/multi-def muon scan [correction/isolation.C](correction/isolation.C) is kept untouched for reference (uncorrected iso). **Conclusions (re-derived under Δβ, 2026-07-06 on May-26 data):** μ TightID AUC_MET=0.943, J(QCD) optimum 0.156 ⇒ relIso<0.15 stands (ε_sig=0.934, ε_QCD=0.130; Δβ vs uncorrected nearly identical — pO pileup tiny, PU-iso nonzero for only ~20% of leptons); e `MVAIdWP95` AUC_MET=0.909, J optimum exactly 0.095 ⇒ cut stands (`CutWP95` remains the worst ID, AUC 0.868).
+- [correction/isolation_mu_tight.C](correction/isolation_mu_tight.C) (muon, **current**), [correction/isolation_ele.C](correction/isolation_ele.C) (electron) — isolation ROC study, both on the **Δβ-corrected** relIso since 2026-07-06. Signal = OS Z-window pairs; backgrounds = SS pairs (≈empty for μ) and single-lepton MET<5 (QCD-like). `isolation_mu_tight.C` is the fresh, pure muon study (2026-07-06): ONE ID (`muIDTight`, pT>15, |η|<2.4), ONE variable (branch-based Δβ relIso = the skim's `RelIsoPF`), continuous 200-point scan, dbeta + nodbeta(reference) tags → `rootfile/IsoStudyOutputs_muon_tight.root`. **Electron `isolation_ele.C`** scans the 8 ID WPs × 4 MVA-Iso WPs AND a continuous-relIso scan per ID. **Run both through the wrapper [correction/run_isolation.sh](correction/run_isolation.sh)** (`./run_isolation.sh [mu|ele|both]`, default both) — it echoes the input path in use, pre-builds once (ACLiC race), tees the scan tables to `correction/logs/isolation_{mu,ele}.log` (ROOT prints them to stdout ONLY, and they are what `AN_selection_optimization.tex` quotes) and regenerates the summary plots; ~10 min per channel (full ntuple loop). **Input path single-sourced since 2026-08-20** — all three iso macros now `#include ../skim/skim_common.h` and default to `pOSkim::kDefaultDataFile` (`DATA_FILE=… ./run_isolation.sh` overrides), so they follow the production automatically; before that they defaulted to May-26 (`isolation_mu_tight`) or the long-dead `pO_2025.root` on EOS (`isolation_ele`/`isolation`). NB `isolation_ele.C`/`isolation.C` had to rename their local `ComputePFMET` → `ComputePFMET_ele`/`_isoleg`: `skim_common.h` declares `pOSkim::ComputePFMET` and `njet_WZ.C` does `using namespace pOSkim`, so the unqualified call there became ambiguous once both dictionaries were loaded in one session (`isolation.C` + `isolation_ele.C` together still clash on their other shared statics — pre-existing, they are near-duplicates, and nothing loads both). The older multi-cone/multi-def muon scan [correction/isolation.C](correction/isolation.C) is kept untouched for reference (uncorrected iso). **Production-independence VERIFIED 2026-08-20:** re-running both studies on July-29 reproduces the May-26 results **bit-identically** (μ: 372 OS pairs / 2 SS / 10373 QCD-like muons, AUC_MET 0.9425, J 0.8054@0.156, ε 0.9341/0.1300; e: all 8 AUCs to 4 digits). Reason measured directly: the two productions cover the same runs [393952, 394007] and contain **exactly 99959 tight muons with pT>15** each — July-29 adds 1.46M events of which **914k have no lepton at all** (May-26 has zero such events, i.e. it was lepton-skimmed), and none of the additions supply a tight muon above 15 GeV. **So the isolation working points were never stale in content**, only in provenance — but the macros were pointing at a file that could vanish, and a future production change would have silently failed to propagate. Control-sample sizes: the multijet proxy is **10373 μ / 19027 e** (at `eleMVAIdWP95`) leptons; NB the per-ID `contPassMET_*` graphs end at relIso<1.0 (μ 7882, e 17161), which is NOT the sample size — divide by `contEffMET_*` for the total. **Conclusions (re-derived under Δβ, 2026-07-06; unchanged on July-29):** μ TightID AUC_MET=0.943, J(QCD) optimum 0.156 ⇒ relIso<0.15 stands (ε_sig=0.934, ε_QCD=0.130; Δβ vs uncorrected nearly identical — pO pileup tiny, PU-iso nonzero for only ~20% of leptons); e `MVAIdWP95` AUC_MET=0.909, J optimum exactly 0.095 ⇒ cut stands (ε_sig=0.910, ε_QCD=0.184; `CutWP95` remains the worst ID, AUC 0.868). **Control samples (the "background" of these ROCs — NOTE the FOM here is efficiency-only, NOT S/√(S+B), because the two samples have no common normalization):** signal = OS Z-window pairs 80<m<100, counted PER LEG (μ 372 pairs / 744 legs, e 310 / 620); background = **exactly one ID'd lepton + PF MET < 5 GeV** (μ 7882, e 17161 leptons at MVAIdWP95); SS pairs are a cross-check only (μ 1 pair, e 5). The anti-iso sideband CANNOT serve here — relIso is the scanned axis. **Why the ID switch mattered, quantitatively:** ε_QCD at fixed relIso is similar across IDs (0.165–0.209), but the number of fake candidates the ID admits BEFORE isolation differs 2.7× (CutIdWP95 45759 vs MVAIdWP95 17161) — the rejection happens upstream, in the ID. Full 8-ID table (AUC / J / ε at 0.095 / fake candidates) in [AN_selection_optimization.tex](AN_selection_optimization.tex), which writes up this study together with the (pT × m_T) scan.
 - [correction/PlotsIsoROC.C](correction/PlotsIsoROC.C) (`PlotsIsoROC.C+(false)` for the tight set), [correction/PlotIsoROC_ele.C](correction/PlotIsoROC_ele.C) — isolation ROC curves → `correction/plotsROC[_ele]/`; plus `plotsROC_ele/roc_MET_continuous_allID.png` (one-off overlay of the 8 IDs' continuous-relIso QCD-ROC).
 - [correction/plot_iso_summary.C](correction/plot_iso_summary.C) — **per-fixed-ID summary in one consistent cosmetic**: a 2-pad canvas (LEFT = continuous efficiency vs Δβ-relIso cut for signal/QCD/SS with the operating cut marked + ε_sig/ε_QCD; RIGHT = the corresponding ROC + AUC with the operating-point star). Electron → one per ID (`plotsROC_ele/summary_<ID>.png`, reads the continuous scan from `isolation_ele.C`); muon → single tight-ID summary (`plotsROC/summary_muon.png`, reads `IsoStudyOutputs_muon_tight.root` from `isolation_mu_tight.C` — since 2026-07-06; before that the old `ggbranch` scan). `root -l -q 'plot_iso_summary.C+'`.
 - [correction/dataMC_kinematics.C](correction/dataMC_kinematics.C) — Data vs signal-MC overlay + ratio pad, shape-normalized. **Z channels** (`"Zmm"`/`"Zee"`): DY MC vs data for the Z kinematics (`h_Zpt/h_Zeta/h_Zy/h_Zphi`, `h_lepPt/h_lepEta/h_lepPhi`, `hMass`) — the Data/MC boson-pT check. **W channels** (`"Wmu"`/`"Wel"`, added 2026-07-29): leading-lepton `h_lepPt/h_lepEta/h_lepPhi` after the full W selection, data vs W⁺+W⁻ MC combined with the relative `k_s` from `mc_norm.h` (shape-norm cancels the absolute scale; backgrounds NOT subtracted — and since the W selection has NO MET cut, QCD here is ≈19% μ / ≈50% e of the plotted sample (data−EWK, 2026-07-29; the familiar 3%/10% are high-MET-region figures), so expect a low-pT data excess — it's a shape check). Probes whether lepton pT is well-enough modeled to serve as an alternative fit discriminant (Jacobian peak, MET-free). **`"Wmu_mt40"`/`"Wel_mt40"` (2026-07-30)** run the same check on the pT-discriminant selection (pT>25 && m_T>40) via the `_mt40` histos → `plots/dataMC_W{mu,el}_mt40/`; with QCD down to ~5% (μ) / ~28% (e) there, the shape comparison is far less background-dominated. `root -l -q 'dataMC_kinematics.C+("Wmu")'` etc.; W data file has no sample suffix (`<base>_hist.root`).
@@ -282,7 +402,44 @@ are measured once inclusively in y; no unearned cancellation in the asymmetry).
 κ **derived from the 2026-08-17 qcd_abcd printout** (stat ⊕ m_T-vs-MET-plane-T
 transport ~10% ⊕ anti-iso tilt): **μ 1.15, e 1.20**; env-overridable
 (`QCD_LNN_MU`/`QCD_LNN_ELE`, for robustness scans) and `QCD_MODE=free` restores
-the pre-2026-08-17 48 free `qcd_norm_<channel>` rateParams. **`lumi` lnN 1.03
+the pre-2026-08-17 48 free `qcd_norm_<channel>` rateParams.
+**`QCD_MODE=abcd` (2026-08-23, leppt_mt40 ONLY — hard error otherwise): the
+IN-FIT ABCD.** 12 counting CR channels `<F>_<C>_CR{B,C,D}` join the likelihood
+(imax 62; 1-bin shapes from the input file's CR dirs — CRB iso-pass m_T<30,
+CRC anti-iso m_T>40 = the SR template's source region, CRD anti-iso m_T<30);
+free scales `qcd_s{B,C,D}_<F>_<C>` (init 1, [0,10]) float the three prefit QCD
+counts, and the SR qcd — the **`qcd_abcd`** template, total B0·C40/D0 — is
+scaled by the FORMULA rateParam `qcd_abcd_<F>_<C> rateParam <F>_<C>_<B>_y* qcd
+(@0*@1/@2) sB,sC,sD` (Combine's documented ABCD pattern,
+docs/part2/settinguptheanalysis.md; a glob wildcard, matching only that card's
+12 SR channels). No baked constants: prefit ≡ the ABCD prediction and Asimov
+closure demands all scales = 1. The EWK subtraction rides the POIs: CRB
+`z`/`ztau` are swept into r_Z by the existing catch-all map; the CRB W content
+is 12 per-y processes `w_y0..11` (← histograms `w_<B>_y*` — the lab/fb wiring
+is load-bearing) mapped to `r_<C>_y<i>` via 24 new map lines (49 total;
+`QCD_WCR=frozen` switches to the single frozen `wfix` with no extra maps —
+residual ~2%/1% then belongs in κ); CRC/CRD carry one frozen `ewk` (≤2.5% of
+those regions). The 4 `qcd_rate_*` lnN rows STAY but with the REDUCED κ
+(`QCD_ABCD_LNN_MU`=1.09 / `QCD_ABCD_LNN_ELE`=1.15 from the 2026-08-23
+qcd_abcd log: window ⊕ FF-shift; on the SR qcd columns ONLY — never on CR qcd,
+whose yields are measurements). Sidecar gains a `qcdMode <abcd|lnN|free>` line
+(3-line legacy sidecars still inferred from the κ's); the driver passes it to
+the extractor as an 8th argument. Extraction: the formula is a RooFormulaVar —
+ABSENT from `floatParsFinal` — so `extract_pO_simfit.C::AbcdScale` evaluates
+M = κ^θ·sB·sC/sD from the floating constituents with the full-correlation
+error propagation (g = M·(lnκ, 1/sB, 1/sC, −1/sD)); M lands in the same CSV
+qcd columns ("factor on the input-file qcd template", which is now qcd_abcd)
+plus a new 18th column `qcd_model`, the scales + `qcd_abcd_mult_*` go to
+comb_summary.csv, and the Asimov closure additionally requires the 12 scales
+= 1. **Local verification 2026-08-23 all-green**: lnN/free cards byte-identical
+to the pre-change baseline; abcd card imax 62, 386 shapes lines, all rows
+column-aligned (324 process columns), correct lab/fb `w_lab_y*`/`w_fb_y*`
+wiring; postfit_incl + run_observables run on old CSVs unchanged. **NOT yet
+fit (lxplus): run `QCD_MODE=abcd ./run_pO_fits.sh both simfit --disc
+leppt_mt40 --asimov` → closure must PASS (25 POIs + 12 scales + θ's), then
+compare r's/QCD vs lnN mode (expect the e tension to relax: the lnN fit pulled
+qcd_norm_ele to 0.78 through κ=1.20, while A0 alone moves the e prefit ×0.89)
+— only after that flip the leppt_mt40 default from lnN to abcd.** **`lumi` lnN 1.03
 (±3% on L = 46.5 nb⁻¹) on EVERY MC template in all 50 channels, never on the
 data-driven `qcd`** — degenerate direction absorbed by the constraint, so each
 r gains a fully-correlated ~3% (propagates to σ via r×σ_gen, cancels in
@@ -355,12 +512,22 @@ Scripts on `zheng/po-analysis`:
   multiSignalModel maps (the 25-POI model definition), lab + fb. Since
   2026-08-17 also the systematics: 4 QCD lnN rows (κ μ 1.15 / e 1.20, env
   `QCD_LNN_MU/QCD_LNN_ELE/QCD_MODE`) + the `lumi` lnN 1.03 row (`LUMI_LNN`),
-  plus the `qcd_lnn_kappas.txt` sidecar.
+  plus the `qcd_lnn_kappas.txt` sidecar. **2026-08-23: `QCD_MODE=abcd`**
+  (62-channel card: + the 12 CR channels, the `qcd_s*` scales + formula
+  rateParams, the `w_y*` map lines; env `QCD_ABCD_LNN_MU/ELE`, `QCD_WCR`;
+  hard-errors unless disc = leppt_mt40; sidecar gains `qcdMode`). ALIGNMENT
+  RULE unchanged: every new (channel, process) column appends one entry to
+  MB/MP/MI/MR AND all five positional systematics rows in the same block.
 - `test/my_script/extract_pO_simfit.C` — simfit extraction: POIs + covariance →
   `comb_*` CSVs + `comb_fitted_yields.root` (+`h_cov_yield[_FB]`), Asimov
   closure check (incl. nuisance θ=0 since 2026-08-17); trailing κ args (from
   the sidecar via the driver) switch qcd readout between κ^θ and legacy
   rateParams; nuisance pulls dumped to `comb_summary.csv` + console.
+  **2026-08-23: 8th arg `qcdMode`** — "abcd" makes `AbcdScale` evaluate the
+  formula multiplier κ^θ·sB·sC/sD from `floatParsFinal` with full-correlation
+  errors (the RooFormulaVar itself is not there), stamps the `qcd_model` CSV
+  column, writes the scales + `qcd_abcd_mult_*` summary rows, and extends the
+  Asimov closure to the 12 scales (= 1).
 - `test/run_pO_impacts.sh` (2026-08-17) — nuisance impacts + covariance plots
   for the simfit, run AFTER `run_pO_fits.sh`: `./run_pO_impacts.sh [--disc …]
   [--variant lab|fb|both] [--pois "…"|all] [--impacts-only|--cov-only]
@@ -441,6 +608,23 @@ Fit method: `combine -M FitDiagnostics --saveShapes --saveWithUncertainties`.
 ## Current state of the work
 
 Active (in flight, recent commits):
+- **IN-FIT ABCD QCD (2026-08-23, `QCD_MODE=abcd`)** — the leppt_mt40 QCD
+  normalization moved into the simfit likelihood, per the Mattermost decision
+  (Andre's (m_T × iso) region layout — pT is never an ABCD axis — executed
+  with Combine's rateParam-formula ABCD so the EWK subtraction floats with the
+  fitted r's, killing the prefit-r circularity; the SHAPE stays the anti-iso
+  m_T>40 pT template). Implemented end-to-end: `qcd_abcd.C` (C40 region +
+  `abcd_counts_*` export + in-fit window scan + reduced κ + the per-pT-bin
+  fake-factor diagnostic `runFFCheck`), `mtandmet.C` (`qcd_abcd` 7th template
+  + 6 CR dirs), fork (`QCD_MODE=abcd` cards + maps, extractor `AbcdScale`,
+  closure extension, card-gen failure guard), `postfit_incl.C` (qcd_model
+  aware). All local checks green (lnN/free cards byte-identical; Σqcd_abcd =
+  A0; CR contents ≡ exports; observables chain regresses). **e-FF finding:
+  F(pT) rises with pT, total +13% — the direct e iso-pT correlation → κ_e
+  1.15.** **Validation pending: lxplus `QCD_MODE=abcd ./run_pO_fits.sh both
+  simfit --disc leppt_mt40 --asimov` → closure PASS → compare vs lnN → flip
+  the leppt_mt40 default.** Details in the `qcd_abcd.C` bullet + "Downstream
+  fit".
 - **GRAND SIMULTANEOUS FIT — simfit (2026-08-04, NEW DEFAULT)** — the fit
   procedure changed completely: one likelihood per binning variant (lab/fb)
   with all 48 (flavour, charge, y) W channels + both Z peaks; 25 POIs
@@ -533,6 +717,16 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
 
 - Don't expect type-checking or a test suite. Sanity check by re-running the
   relevant `skim/run_all.sh <channel>` invocation and reading `skim/logs/`.
+- **Run stages through their logging wrapper, never the bare macro, whenever the
+  console output is itself a deliverable.** Today that means
+  `correction/run_qcd_abcd.sh` for the ABCD QCD estimate (NOT
+  `root -l -b -q 'qcd_abcd.C+'`) and `skim/run_all.sh` for the skim. The ABCD
+  report — region composition, closure, factorisation tests, window scan,
+  two-plane transport + r-scan, systematic budget → lnN κ — is the source of the
+  numbers quoted in `AN_qcd_background.tex`, and ROOT prints it to stdout only,
+  so a bare run silently discards the record. If a new macro starts producing
+  numbers that get quoted anywhere, give it a wrapper too (`mkdir -p logs`,
+  pre-build once to avoid the ACLiC race, tee per job, echo the headlines).
 - After the skim refactor, common scaffolding lives in `skim_common.h` and
   the four channel selections live as functions in `skim/skim.C`. Most
   cross-channel changes (new cut, new histogram) can be made once in the
@@ -563,6 +757,35 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
 - `.so` / `_ACLiC_dict_rdict.pcm` files in `skim/` are ROOT's compiled-macro
   cache (now gitignored). Delete them if the macro signature changes and
   ROOT picks up the stale build.
+- **NEVER hardcode an input ntuple path — every macro that reads the raw
+  ntuples must take it from `skim/skim_common.h`.** `pOSkim::kDefaultDataFile`
+  (data) and `pOSkim::ResolveMCSample()` (MC) are the SINGLE SOURCE OF TRUTH for
+  the production in use. The user repoints them when a new production lands, and
+  the whole repo — `skim/` **and** `correction/` — must follow with no further
+  edits, so a macro's file argument must DEFAULT to those symbols (an explicit
+  path stays available as an override argument). Enforced 2026-08-20 after an
+  audit found four stragglers still on dead defaults:
+  `correction/isolation_mu_tight.C` (May-26 local), `correction/isolation_ele.C`
+  and `correction/isolation.C` (`pO_2025.root` on EOS — long gone) and
+  `skim/PrintHiForestStructure.C`; all four now `#include` the header and
+  default to `pOSkim::kDefaultDataFile`. **This is why the isolation working
+  points had been quoted on May-26 data while everything else ran on July-29** —
+  a silent version skew that no error message would ever have surfaced, since a
+  stale-but-existing file just opens and runs. Macros reading the SKIM outputs
+  (`../skim/rootfile/…`: `qcd_abcd.C`, `ptmt_scan.C`, `dataMC_kinematics.C`,
+  `recoil_raw*.C`, all of `plotting/` and `analysis/`) follow the production
+  automatically and need nothing — the rule is about the ones that loop the
+  ntuples themselves (today: `skim.C`, `count_ngen.C`, `gen_xsec.C`,
+  `njet_WZ.C`, the three isolation studies, `PrintHiForestStructure.C`).
+  When adding such a macro, check it against this list. Two practical notes
+  from doing this: (1) pulling `skim_common.h` into a macro puts
+  `pOSkim::ComputePFMET` etc. in scope for the WHOLE ROOT session, so a macro
+  with its own same-named helper will break a *different* macro that does
+  `using namespace pOSkim` (this bit `njet_WZ.C` — hence the
+  `ComputePFMET_ele`/`_isoleg` renames); give session-visible helpers unique
+  names. (2) Verify a repoint by grepping the run log for the entry count, not
+  by trusting the default: `Processing entries: 3890722` = July-29,
+  `2425836` = May-26.
 - **Always create output directories before writing.** Output dirs (`rootfile/`,
   `plots/`, `output/`, `logs/`) are gitignored and absent on a fresh checkout
   (e.g. a pull on lxplus), so any code that writes must `gSystem->mkdir(dir,

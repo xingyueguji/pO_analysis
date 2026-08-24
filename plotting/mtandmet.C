@@ -247,6 +247,11 @@ void mtandmet(bool isElec = 1)
     TH1D *qcdPlusBase = nullptr, *qcdMinusBase = nullptr, *qcd_met_incl = nullptr;
     TH1D *qcdPtPlusBase = nullptr, *qcdPtMinusBase = nullptr, *qcd_pt_incl = nullptr;
     TH1D *qcdPtMt40PlusBase = nullptr, *qcdPtMt40MinusBase = nullptr, *qcd_pt_mt40_incl = nullptr;
+    // In-fit ABCD (QCD_MODE=abcd, 2026-08-23): the exported m_T-plane counts and
+    // the A0-renormalized SR template bases built from them (same anti-iso
+    // m_T>40 pT SHAPE, total = A0 = qcdB0*qcdC0/qcdD0 instead of T_MET x V).
+    TH1D *abcdCountsPlus = nullptr, *abcdCountsMinus = nullptr;
+    TH1D *qcdAbcdPlusBase = nullptr, *qcdAbcdMinusBase = nullptr;
     {
         TFile *fqcd = TFile::Open(qcdFile.c_str(), "READ");
         if (fqcd && !fqcd->IsZombie())
@@ -265,6 +270,11 @@ void mtandmet(bool isElec = 1)
             if (pm40) { qcdPtMt40MinusBase = (TH1D *)pm40->Clone("qcd_pt_mt40_Minus_base"); qcdPtMt40MinusBase->SetDirectory(nullptr); }
             if (pp) { qcdPtPlusBase  = (TH1D *)pp->Clone("qcd_pt_Plus_base");  qcdPtPlusBase->SetDirectory(nullptr); }
             if (pm) { qcdPtMinusBase = (TH1D *)pm->Clone("qcd_pt_Minus_base"); qcdPtMinusBase->SetDirectory(nullptr); }
+            // in-fit ABCD counts (m_T plane; written by qcd_abcd.C since 2026-08-23)
+            TH1D *cp = (TH1D *)fqcd->Get(Form("abcd_counts_%sPlus", qlep.c_str()));
+            TH1D *cm = (TH1D *)fqcd->Get(Form("abcd_counts_%sMinus", qlep.c_str()));
+            if (cp) { abcdCountsPlus  = (TH1D *)cp->Clone("abcd_counts_Plus_loc");  abcdCountsPlus->SetDirectory(nullptr); }
+            if (cm) { abcdCountsMinus = (TH1D *)cm->Clone("abcd_counts_Minus_loc"); abcdCountsMinus->SetDirectory(nullptr); }
             fqcd->Close();
             delete fqcd;
         }
@@ -304,6 +314,59 @@ void mtandmet(bool isElec = 1)
             std::cerr << "[WARN] m_T>40 lepton-pT QCD template (qcd_pt_mt40_*) not in "
                       << qcdFile << "; re-run qcd_abcd.C on a skim with the"
                       << " h_iso_pt_mt40 planes. m_T>40 stacks will omit QCD.\n";
+    }
+
+    // Labeled-bin reader for abcd_counts_* (loop the labels and string-compare;
+    // TAxis::FindBin(label) would APPEND a new label to the mutable axis on a
+    // miss instead of failing).
+    auto countBin = [](TH1D *h, const char *lab, double *err = nullptr) -> double
+    {
+        if (!h) return 0.0;
+        for (int i = 1; i <= h->GetNbinsX(); ++i)
+            if (strcmp(h->GetXaxis()->GetBinLabel(i), lab) == 0)
+            {
+                if (err) *err = h->GetBinError(i);
+                return h->GetBinContent(i);
+            }
+        std::cerr << "[WARN] abcd_counts: no bin labeled '" << lab << "'\n";
+        return 0.0;
+    };
+
+    // In-fit ABCD SR template bases: clone of qcd_pt_mt40_* rescaled so the
+    // total is EXACTLY A0 = qcdB0*qcdC0/qcdD0 (then the card's functional
+    // rateParam (sB*sC/sD) needs no baked constants and Asimov closes at 1).
+    // Staleness guard: the template's own sideband count (total / T_MET) must
+    // match the exported C40 to ~1% (pT>100 overflow + negative-bin clamp make
+    // it not exact) -- a >2% mismatch means qcd_abcd_<lep>.root mixes objects
+    // from different qcd_abcd.C runs.
+    {
+        auto mkAbcdBase = [&](TH1D *base, TH1D *counts, const char *nm,
+                              const char *cg) -> TH1D *
+        {
+            if (!base || !counts) return nullptr;
+            const double b0 = countBin(counts, "qcdB0"), c0 = countBin(counts, "qcdC0"),
+                         d0 = countBin(counts, "qcdD0"), tmet = countBin(counts, "T_met");
+            const double v = base->Integral();
+            if (b0 <= 0.0 || c0 <= 0.0 || d0 <= 0.0 || v <= 0.0) return nullptr;
+            const double A0 = b0 * c0 / d0;
+            if (tmet > 0.0 && std::fabs(v / tmet / c0 - 1.0) > 0.02)
+                std::cerr << Form("[WARN] qcd_abcd staleness (%s): template sideband %.1f vs"
+                                  " exported C40 %.1f -- re-run correction/run_qcd_abcd.sh\n",
+                                  cg, v / tmet, c0);
+            TH1D *h = (TH1D *)base->Clone(nm);
+            h->SetDirectory(nullptr);
+            h->Scale(A0 / v);
+            std::cout << Form("[QCD-ABCD] %s: B0=%.1f C40=%.1f D0=%.1f -> A0=%.1f"
+                              "  (rescale x%.3f from the T_MET-normalized total %.1f)\n",
+                              cg, b0, c0, d0, A0, A0 / v, v);
+            return h;
+        };
+        qcdAbcdPlusBase  = mkAbcdBase(qcdPtMt40PlusBase,  abcdCountsPlus,  "qcd_abcd_Plus_base",  "W+");
+        qcdAbcdMinusBase = mkAbcdBase(qcdPtMt40MinusBase, abcdCountsMinus, "qcd_abcd_Minus_base", "W-");
+        if (!qcdAbcdPlusBase || !qcdAbcdMinusBase)
+            std::cerr << "[WARN] abcd_counts_* missing/incomplete in " << qcdFile
+                      << " -- re-run correction/run_qcd_abcd.sh. qcd_abcd + CR templates"
+                      << " will NOT be written (QCD_MODE=abcd unavailable for this input).\n";
     }
 
     // Per-y QCD weights (normalized to 1, clamped >=0) from the low-MET excess.
@@ -390,6 +453,10 @@ void mtandmet(bool isElec = 1)
     struct RegionTemplates {
         std::string dir;
         TH1D *data, *sig, *z, *ztau, *wtau, *qcd;
+        // 7th template (leppt_mt40 only): the in-fit-ABCD-normalized QCD
+        // (same shape, total = A0). NSDMI required -- accumulate()/W_incl
+        // construct RegionTemplates without makeRegion.
+        TH1D *qcdAbcd = nullptr;
     };
     std::vector<RegionTemplates> regions;          // PF MET (the nominal fit input)
     std::vector<RegionTemplates> regionsPt[kNVar]; // lepton-pT: [kVarNom], [kVarMt40]
@@ -411,7 +478,7 @@ void mtandmet(bool isElec = 1)
     auto makeRegion = [&](const std::string &dir, const std::string &tag,
                           TH1D *data, TH1D *sigA, TH1D *sigB,
                           TH1D *z, TH1D *ztau, TH1D *wtA, TH1D *wtB,
-                          TH1D *qcd) -> RegionTemplates {
+                          TH1D *qcd, TH1D *qcdAbcd = nullptr) -> RegionTemplates {
         RegionTemplates r;
         r.dir  = dir;
         r.data = cloneDetached(data, (dir + tag + "_data_obs").c_str());
@@ -420,6 +487,7 @@ void mtandmet(bool isElec = 1)
         r.ztau = cloneDetached(ztau, (dir + tag + "_ztau").c_str());
         r.wtau = sum2(wtA, wtB,      (dir + tag + "_wtau").c_str());
         r.qcd  = cloneDetached(qcd,  (dir + tag + "_qcd").c_str());
+        r.qcdAbcd = cloneDetached(qcdAbcd, (dir + tag + "_qcd_abcd").c_str());
         return r;
     };
 
@@ -454,7 +522,8 @@ void mtandmet(bool isElec = 1)
     // inclusive accumulators, mirroring how h_met_inclusive* are built.
     auto lepPtStack = [&](int var, int iy, const char *chg, const char *suf,
                           TH1D *qcdH, const char *sub1, const std::string &sub2,
-                          const std::string &outPath, bool accumulate) -> bool
+                          const std::string &outPath, bool accumulate,
+                          TH1D *qcdAbcdH = nullptr) -> bool
     {
         const std::string nm = Form("%s_%s_y%d%s", varStem[var], chg, iy, suf);
         TH1D *hD = (TH1D *)f->Get(nm.c_str());
@@ -491,7 +560,7 @@ void mtandmet(bool isElec = 1)
         regionsPt[var].push_back(makeRegion(
             Form("%s_%s_y%d", chg, (suf[0] ? "fb" : "lab"), iy),
             Form("_lp%s", varTag[var]),
-            hD, hWp, hWm, hZ, hZtau, hWptau, hWmtau, qcdH));
+            hD, hWp, hWm, hZ, hZtau, hWptau, hWmtau, qcdH, qcdAbcdH));
 
         if (accumulate)
         {
@@ -1092,16 +1161,25 @@ void mtandmet(bool isElec = 1)
             TH1D *qcd_pt40_Wp_FB = qcdPerY(qcdPtMt40PlusBase,  wQcdWpFB[iy], Form("qcd_pt_mt40_Wp_y%d_FB", iy));
             TH1D *qcd_pt40_Wm_FB = qcdPerY(qcdPtMt40MinusBase, wQcdWmFB[iy], Form("qcd_pt_mt40_Wm_y%d_FB", iy));
 
+            // in-fit ABCD (abcd-mode) per-y templates: same shape, same per-y
+            // weights (Sum_y = A0 per charge+binning since Sum w = 1), total
+            // renormalized to A0. Written as the 7th SR template `qcd_abcd`;
+            // deliberately NOT drawn in the display stacks.
+            TH1D *qcdA_Wp    = qcdPerY(qcdAbcdPlusBase,  wQcdWp[iy],   Form("qcd_abcd_Wp_y%d", iy));
+            TH1D *qcdA_Wm    = qcdPerY(qcdAbcdMinusBase, wQcdWm[iy],   Form("qcd_abcd_Wm_y%d", iy));
+            TH1D *qcdA_Wp_FB = qcdPerY(qcdAbcdPlusBase,  wQcdWpFB[iy], Form("qcd_abcd_Wp_y%d_FB", iy));
+            TH1D *qcdA_Wm_FB = qcdPerY(qcdAbcdMinusBase, wQcdWmFB[iy], Form("qcd_abcd_Wm_y%d_FB", iy));
+
             const std::string mtLab = " , m_{T} > 40 GeV";
             bool ok40 = true;
             ok40 &= lepPtStack(kVarMt40, iy, "Wp", "",    qcd_pt40_Wp,    Channeltypewplus,  yLabel[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d", iy),    /*accumulate=*/true);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d", iy),    /*accumulate=*/true,  qcdA_Wp);
             ok40 &= lepPtStack(kVarMt40, iy, "Wm", "",    qcd_pt40_Wm,    Channeltypewminus, yLabel[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d", iy),    /*accumulate=*/true);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d", iy),    /*accumulate=*/true,  qcdA_Wm);
             ok40 &= lepPtStack(kVarMt40, iy, "Wp", "_FB", qcd_pt40_Wp_FB, Channeltypewplus,  yLabel_FB[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d_FB", iy), /*accumulate=*/false);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d_FB", iy), /*accumulate=*/false, qcdA_Wp_FB);
             ok40 &= lepPtStack(kVarMt40, iy, "Wm", "_FB", qcd_pt40_Wm_FB, Channeltypewminus, yLabel_FB[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d_FB", iy), /*accumulate=*/false);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d_FB", iy), /*accumulate=*/false, qcdA_Wm_FB);
             if (!ok40 && iy == 0)
                 std::cerr << "[WARN] h_leppt_mt40_* not found (skim predates the m_T>40"
                           << " lepton-pT histos); m_T>40 stacks skipped.\n";
@@ -1216,15 +1294,131 @@ void mtandmet(bool isElec = 1)
             commonTuner);
     }
 
+    // --- in-fit ABCD control-region channels (QCD_MODE=abcd, leppt_mt40 only) --
+    // Three counting CRs per charge on the (relIso x m_T) plane, from the
+    // exported abcd_counts_*: CRB (iso-pass, m_T<30), CRC (anti-iso, m_T>40 --
+    // the template's own source region), CRD (anti-iso, m_T<30). All 1-bin
+    // templates: data_obs = raw data count; qcd = the prefit EWK-subtracted
+    // count (the free CR scale's x1 anchor); z/ztau in CRB ride r_Z via the
+    // fork's existing map regex; the CRB W-related content is written BOTH ways
+    // -- per-y w_lab_y*/w_fb_y* (split by the SR per-y signal fractions and
+    // mapped to the r POIs = the floating subtraction) AND a single frozen
+    // wfix -- the card generator picks one (QCD_WCR=float|frozen). CRC/CRD
+    // carry one frozen `ewk` (<= 2.5% of those regions).
+    struct CRTemplates {
+        std::string dir;
+        TH1D *data = nullptr, *qcd = nullptr, *z = nullptr, *ztau = nullptr,
+             *wfix = nullptr, *ewk = nullptr;
+        std::vector<TH1D *> wLab, wFb;
+    };
+    std::vector<CRTemplates> crRegions;
+    if (qcdAbcdPlusBase && qcdAbcdMinusBase && !regionsPt[kVarMt40].empty())
+    {
+        auto mk1 = [](const std::string &nm, double v, double e) -> TH1D * {
+            TH1D *h = new TH1D(nm.c_str(), nm.c_str(), 1, 0.0, 1.0);
+            h->SetDirectory(nullptr);
+            h->SetBinContent(1, v);
+            h->SetBinError(1, e);
+            return h;
+        };
+        // Per-y (signal+wtau) fractions of the SR, per charge x binning, from
+        // the already-collected mt40 regions (the same integrals the fit sees).
+        // Approximates the y composition of the CRB W content by the SR's --
+        // second-order on a ~12% component, see the qcd_abcd.C channel report.
+        auto srFracs = [&](const std::string &chg, const std::string &bin) -> std::vector<double> {
+            std::vector<double> fr(NY, 0.0);
+            double sum = 0.0;
+            for (int iy = 0; iy < NY; ++iy)
+            {
+                const std::string want = Form("%s_%s_y%d", chg.c_str(), bin.c_str(), iy);
+                for (const auto &r : regionsPt[kVarMt40])
+                {
+                    if (r.dir != want) continue;
+                    double v = 0.0;
+                    if (r.sig)  v += r.sig->Integral();
+                    if (r.wtau) v += r.wtau->Integral();
+                    fr[iy] = std::max(0.0, v);
+                    sum += fr[iy];
+                    break;
+                }
+            }
+            for (int iy = 0; iy < NY; ++iy)
+                fr[iy] = (sum > 0.0) ? fr[iy] / sum : 1.0 / NY;
+            return fr;
+        };
+        for (int ic = 0; ic < 2; ++ic)
+        {
+            const std::string cg = (ic == 0) ? "Wp" : "Wm";
+            TH1D *cnt = (ic == 0) ? abcdCountsPlus : abcdCountsMinus;
+            auto cb = [&](const char *lab, double *err) { return countBin(cnt, lab, err); };
+            double e = 0.0, v = 0.0;
+
+            CRTemplates crb;
+            crb.dir = cg + "_CRB";
+            v = cb("dataB", &e);
+            crb.data = mk1(crb.dir + "_data_obs", v, e);
+            v = cb("qcdB0", &e);
+            if (v < 0.0) { std::cerr << "[WARN] " << crb.dir << ": negative qcdB0 clamped to 0\n"; v = 0.0; }
+            crb.qcd = mk1(crb.dir + "_qcd", v, e);
+            v = cb("zB", &e);
+            crb.z = mk1(crb.dir + "_z", v, e);
+            v = cb("ztauB", &e);
+            crb.ztau = mk1(crb.dir + "_ztau", v, e);
+            double wBe = 0.0;
+            const double wBv = cb("wB", &wBe);
+            crb.wfix = mk1(crb.dir + "_wfix", wBv, wBe);
+            const std::vector<double> fLab = srFracs(cg, "lab");
+            const std::vector<double> fFb  = srFracs(cg, "fb");
+            for (int iy = 0; iy < NY; ++iy)
+            {
+                crb.wLab.push_back(mk1(Form("%s_w_lab_y%d", crb.dir.c_str(), iy), wBv * fLab[iy], wBe * fLab[iy]));
+                crb.wFb.push_back(mk1(Form("%s_w_fb_y%d", crb.dir.c_str(), iy), wBv * fFb[iy], wBe * fFb[iy]));
+            }
+            crRegions.push_back(crb);
+
+            CRTemplates crc;
+            crc.dir = cg + "_CRC";
+            v = cb("dataC40", &e);
+            crc.data = mk1(crc.dir + "_data_obs", v, e);
+            v = cb("qcdC0", &e);
+            if (v < 0.0) { std::cerr << "[WARN] " << crc.dir << ": negative qcdC0 clamped to 0\n"; v = 0.0; }
+            crc.qcd = mk1(crc.dir + "_qcd", v, e);
+            {
+                double e1 = 0.0, e2 = 0.0;
+                const double v1 = cb("wC40", &e1), v2 = cb("zC40", &e2);
+                crc.ewk = mk1(crc.dir + "_ewk", v1 + v2, std::sqrt(e1 * e1 + e2 * e2));
+            }
+            crRegions.push_back(crc);
+
+            CRTemplates crd;
+            crd.dir = cg + "_CRD";
+            v = cb("dataD", &e);
+            crd.data = mk1(crd.dir + "_data_obs", v, e);
+            v = cb("qcdD0", &e);
+            if (v < 0.0) { std::cerr << "[WARN] " << crd.dir << ": negative qcdD0 clamped to 0\n"; v = 0.0; }
+            crd.qcd = mk1(crd.dir + "_qcd", v, e);
+            {
+                double e1 = 0.0, e2 = 0.0;
+                const double v1 = cb("wD", &e1), v2 = cb("zD", &e2);
+                crd.ewk = mk1(crd.dir + "_ewk", v1 + v2, std::sqrt(e1 * e1 + e2 * e2));
+            }
+            crRegions.push_back(crd);
+        }
+        std::cout << "[QCD-ABCD] built " << crRegions.size()
+                  << " CR channel dirs (CRB/CRC/CRD x Wp/Wm) for combine_input_W_leppt_mt40.root\n";
+    }
+
     {
         // --- Structured per-region Combine input files -------------------------
-        // One TDirectory per fit region; each holds the 6 absolute templates.
+        // One TDirectory per fit region; each holds the 6 absolute templates
+        // (7 for leppt_mt40: + qcd_abcd) and, for leppt_mt40, the 6 CR dirs.
         // Written once per discriminant: PF MET (the nominal fit input) and the
         // two lepton-pT variants (SEPARATE files -- same region names with a
         // different discriminant must never share a file).
         auto writeCombineInput = [&](const std::string &combineOut,
                                      std::vector<RegionTemplates> &regs,
-                                     const std::string &tag) {
+                                     const std::string &tag,
+                                     const std::vector<CRTemplates> *crs) {
             TFile *fcomb = TFile::Open(combineOut.c_str(), "RECREATE");
             if (!fcomb || fcomb->IsZombie())
             {
@@ -1250,6 +1444,7 @@ void mtandmet(bool isElec = 1)
                     add(s.ztau, r.ztau, "_ztau");
                     add(s.wtau, r.wtau, "_wtau");
                     add(s.qcd,  r.qcd,  "_qcd");
+                    add(s.qcdAbcd, r.qcdAbcd, "_qcd_abcd");
                 }
                 return s;
             };
@@ -1263,6 +1458,7 @@ void mtandmet(bool isElec = 1)
             W_incl.ztau = sum2(Wp_incl.ztau, Wm_incl.ztau, ("W_incl" + tag + "_ztau").c_str());
             W_incl.wtau = sum2(Wp_incl.wtau, Wm_incl.wtau, ("W_incl" + tag + "_wtau").c_str());
             W_incl.qcd  = sum2(Wp_incl.qcd,  Wm_incl.qcd,  ("W_incl" + tag + "_qcd").c_str());
+            W_incl.qcdAbcd = sum2(Wp_incl.qcdAbcd, Wm_incl.qcdAbcd, ("W_incl" + tag + "_qcd_abcd").c_str());
 
             auto writeRegionTemplates = [&](const RegionTemplates &r) {
                 TDirectory *d = fcomb->mkdir(r.dir.c_str());
@@ -1288,6 +1484,7 @@ void mtandmet(bool isElec = 1)
                 wn(r.ztau, "ztau");
                 wn(r.wtau, "wtau");
                 if (r.qcd) wn(r.qcd, "qcd");
+                if (r.qcdAbcd) wn(r.qcdAbcd, "qcd_abcd");
             };
 
             if ((int)regs.size() != 4 * NY)
@@ -1299,17 +1496,50 @@ void mtandmet(bool isElec = 1)
             writeRegionTemplates(Wm_incl);
             writeRegionTemplates(W_incl);
 
+            // --- in-fit ABCD CR channel dirs (leppt_mt40 only) ---
+            int nCR = 0;
+            if (crs)
+                for (const auto &cr : *crs)
+                {
+                    TDirectory *d = fcomb->mkdir(cr.dir.c_str());
+                    if (!d) { std::cerr << "[WARN] mkdir failed: " << cr.dir << "\n"; continue; }
+                    auto wn1 = [&](TH1D *h, const char *nm) {
+                        if (!h) return;
+                        d->cd();
+                        TH1D *hc = (TH1D *)h->Clone(nm);
+                        hc->SetDirectory(d);
+                        // same all-zero-shape guard as wn() above
+                        if (strcmp(nm, "data_obs") != 0 && hc->Integral() <= 0.0)
+                        {
+                            std::cerr << "[WARN] " << combineOut << " " << cr.dir << "/" << nm
+                                      << " is empty -> flooring to 1e-6 for Combine\n";
+                            hc->SetBinContent(1, 1e-6);
+                        }
+                        hc->Write(nm, TObject::kOverwrite);
+                    };
+                    wn1(cr.data, "data_obs");
+                    wn1(cr.qcd, "qcd");
+                    wn1(cr.z, "z");
+                    wn1(cr.ztau, "ztau");
+                    wn1(cr.wfix, "wfix");
+                    wn1(cr.ewk, "ewk");
+                    for (int iy = 0; iy < (int)cr.wLab.size(); ++iy) wn1(cr.wLab[iy], Form("w_lab_y%d", iy));
+                    for (int iy = 0; iy < (int)cr.wFb.size(); ++iy)  wn1(cr.wFb[iy],  Form("w_fb_y%d", iy));
+                    ++nCR;
+                }
+
             fcomb->Close();
             delete fcomb;
             std::cout << "[INFO] Saved structured Combine input: " << combineOut
                       << "  (" << regs.size()
-                      << " per-(charge,y) regions + Wp_incl/Wm_incl/W_incl)\n";
+                      << " per-(charge,y) regions + Wp_incl/Wm_incl/W_incl"
+                      << (nCR ? Form(" + %d CR dirs", nCR) : "") << ")\n";
         };
 
-        writeCombineInput(outBase + "/combine_input_W.root", regions, "");
+        writeCombineInput(outBase + "/combine_input_W.root", regions, "", nullptr);
         if (!regionsPt[kVarNom].empty())
             writeCombineInput(outBase + "/combine_input_W_leppt.root",
-                              regionsPt[kVarNom], "_lp");
+                              regionsPt[kVarNom], "_lp", nullptr);
         else
         {
             gSystem->Unlink((outBase + "/combine_input_W_leppt.root").c_str());
@@ -1318,7 +1548,8 @@ void mtandmet(bool isElec = 1)
         }
         if (!regionsPt[kVarMt40].empty())
             writeCombineInput(outBase + "/combine_input_W_leppt_mt40.root",
-                              regionsPt[kVarMt40], "_lp_mt40");
+                              regionsPt[kVarMt40], "_lp_mt40",
+                              crRegions.empty() ? nullptr : &crRegions);
         else
         {
             gSystem->Unlink((outBase + "/combine_input_W_leppt_mt40.root").c_str());

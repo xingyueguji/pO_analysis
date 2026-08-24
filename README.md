@@ -31,7 +31,7 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 ```bash
 # ---- pO_analysis (plain ROOT) ----
 cd skim        && ./run_all.sh all && ./run_ngen.sh                          # 1,2 skims + N_gen
-cd ../correction && root -l -b -q 'qcd_abcd.C+' && root -l -b -q 'qcd_abcd.C+(true)'   # 3a ABCD QCD (mu,ele)
+cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
 cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
                           'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
                           'plotRpOtheory.C+'; do root -l -q -b "$a"; done       # 3b inputs + theory
@@ -51,7 +51,7 @@ cd ../../pO_analysis/analysis && ./run_observables.sh                           
 | ------------------ | -------------------------------------- | ----------- |
 | `merge_rootfile/`  | (one-time) discover/hadd EOS ntuples   | `make_filelist.sh`, `hadd_from_list.sh` |
 | `skim/`            | selection → per-sample histos; N_gen   | `run_all.sh`, `run_ngen.sh` |
-| `correction/`      | ABCD QCD, isolation WP, Data/MC checks | `qcd_abcd.C`, … |
+| `correction/`      | ABCD QCD, isolation WP, Data/MC checks | `run_qcd_abcd.sh` → `qcd_abcd.C`, … |
 | `plotting/`        | data/MC overlays + **Combine inputs**  | `mtandmet.C`, `dileptonpeak.C`, `plotRpOtheory.C` |
 | `analysis/`        | charge asymmetry, F/B ratio            | `charge_asym.C`, `FBratio.C` |
 | (fork) `test/`     | Combine fit pipeline                   | `run_pO_fits.sh`, `sync_lxplus.sh` |
@@ -119,9 +119,10 @@ ABSOLUTE (no area norm). Escape hatch: if absolute MC is ~16× off, set `kA_O=1.
 
 ```bash
 # 3a. Data-driven ABCD QCD templates (low-MET background). FROM correction/.
+#     ALWAYS go through the wrapper -- it keeps the log (see the note below).
 cd correction/
-root -l -b -q 'qcd_abcd.C+'                 # muon     -> rootfile/qcd_abcd_mu.root
-root -l -b -q 'qcd_abcd.C+(true)'           # electron -> rootfile/qcd_abcd_ele.root
+./run_qcd_abcd.sh                           # both channels -> rootfile/qcd_abcd_{mu,ele}.root
+#   ./run_qcd_abcd.sh mu                    # one channel only
 
 # 3b. Data/MC MT+MET plots AND the structured Combine inputs. FROM plotting/.
 cd ../plotting/
@@ -134,11 +135,31 @@ root -l -b -q 'dileptonpeak.C+(true)'       # Zee   -> plots/Elec/combine_input_
 root -l -b -q 'plotRpOtheory.C+'            # -> RpO_rootfile/RpO_FB_graphs.root
 ```
 
+**Why the wrapper and not `root -l -b -q 'qcd_abcd.C+'` directly:** the macro's
+console output IS a deliverable, not chatter. It carries the region composition
+and closure, the factorisation tests (`T` in sub-slices of the low-y band), the
+anti-iso window scan, the two-plane transport with its r-scan, the multijet
+fraction of every fitted selection, and the assembled systematic budget → the
+lnN κ used in the datacards — plus, since 2026-08-23, the **in-fit ABCD block**
+(the m_T-plane B/C40/D counts + A40 prediction exported as `abcd_counts_*`, the
+reduced κ for `QCD_MODE=abcd`) and the **per-pT-bin fake-factor diagnostic**
+(F(pT) tables + `ff_*` plots). Those are the numbers quoted in
+[AN_qcd_background.tex](AN_qcd_background.tex), and ROOT prints them to stdout
+only. `run_qcd_abcd.sh` pre-builds once (so the two channels cannot race on the
+ACLiC artifacts), tees each channel to `correction/logs/qcd_abcd_<chan>.log`
+(~290 lines) and echoes the transfer factors and the κ's to the terminal.
+Takes ~2 s per channel, so regenerate freely — but never run the macro bare and
+lose the report.
+
 `combine_input_W.root` is **structured**: one TDirectory per fit region
 (`Wp_lab_y0..11`, `Wm_lab_y*`, `Wp_fb_y*`, `Wm_fb_y*`, `Wp_incl`, `Wm_incl`,
 `W_incl`), each with the 6 **absolute** templates `data_obs/signal/z/ztau/wtau/qcd`
 (MET discriminant; per-y ABCD QCD). `combine_input_Z.root` has a `Z_incl/` dir
-(`data_obs/signal/w/wtau/ztau`, mass peak).
+(`data_obs/signal/w/wtau/ztau`, mass peak). **`combine_input_W_leppt_mt40.root`
+additionally carries the in-fit-ABCD objects (2026-08-23):** a 7th SR template
+`qcd_abcd` (same shape, total = B0·C40/D0) and 6 CR dirs `{Wp,Wm}_CR{B,C,D}`
+of 1-bin templates — consumed only by `QCD_MODE=abcd` cards; run 3a BEFORE 3b
+or the writer warns and skips them.
 
 Optional/cosmetic: `mtandmet_overlay.C`, `plotZcurve.C`. Scratch (ignore):
 `test.C`, `test111.C`, `Z_MC_overlay.C`.
@@ -168,7 +189,16 @@ Z-inclusive peaks**, with 2N+1 = **25 POIs**:
   every W channel and the DY signal (+`ztau`) under both Z peaks. The DY
   rapidity dependence across W bins comes fixed from MC; only this global
   normalization floats, pinned jointly by the two Z peaks.
-- `qcd_norm_<channel>` — free per W channel (48; data-driven ABCD templates).
+- QCD (data-driven ABCD templates) — three modes via `QCD_MODE`:
+  **`lnN` (default)**: one log-normal nuisance per (flavour, charge),
+  `qcd_rate_{mu,ele}_{Wp,Wm}`, κ μ 1.15 / e 1.20 at the ABCD prediction
+  (2026-08-17); **`free`**: the pre-2026-08-17 48 per-channel `qcd_norm`
+  rateParams; **`abcd` (2026-08-23, `--disc leppt_mt40` only)**: the IN-FIT
+  ABCD — 12 counting CR channels (`<F>_<C>_CR{B,C,D}`, m_T plane) with free
+  scales `qcd_s{B,C,D}_<F>_<C>`, the SR `qcd_abcd` template scaled by the
+  formula rateParam `(sB·sC/sD)`, EWK subtraction riding the POIs (CRB DY →
+  r_Z, CRB W → per-y `w_y*` mapped to the r's; `QCD_WCR=frozen` freezes it),
+  and the reduced residual κ μ 1.09 / e 1.15 (`QCD_ABCD_LNN_MU/ELE`).
 - `w`/`wtau` under the Z peaks — **frozen at absolute MC** (0.03–0.06 events
   under 372/252-event peaks; decision 2026-08-04).
 
@@ -404,8 +434,7 @@ Run from `correction/`; outputs in `correction/plots/`, `correction/rootfile/`.
 
 ```bash
 cd correction/
-root -l -b -q 'qcd_abcd.C+'                       # ABCD QCD (muon)  [also Module 3a]
-root -l -b -q 'qcd_abcd.C+(true)'                 # ABCD QCD (electron)
+./run_qcd_abcd.sh [mu|ele|both]                    # ABCD QCD, logged  [also Module 3a]
 root -l -b -q 'isolation_mu_tight.C+("<data.root>")' # muon iso study (TightID, Δβ relIso) [current]
 root -l -b -q 'isolation_ele.C+("<data.root>")'   # electron iso/ID ROC study (Δβ relIso)
 root -l -b -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots

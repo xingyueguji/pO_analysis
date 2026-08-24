@@ -195,7 +195,11 @@ inline bool PassEventSelection_pO(bool &warnedOnce,
 
   bool ok = true;
   ok = ok && requireIfExists(has_pprimaryVertexFilter,        pprimaryVertexFilter,        "pprimaryVertexFilter");
-  ok = ok && requireIfExists(has_pclusterCompatibilityFilter, pclusterCompatibilityFilter, "pclusterCompatibilityFilter");
+  // pclusterCompatibilityFilter DISABLED 2026-08-18: the filter is problematic
+  // in pO, so it is not applied. Branch wiring in the callers is kept so this
+  // is a one-line re-enable.
+  // ok = ok && requireIfExists(has_pclusterCompatibilityFilter, pclusterCompatibilityFilter, "pclusterCompatibilityFilter");
+  (void)has_pclusterCompatibilityFilter; (void)pclusterCompatibilityFilter;
 
   warnedOnce = true;
   return ok;
