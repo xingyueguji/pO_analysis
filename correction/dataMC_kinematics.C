@@ -245,12 +245,21 @@ void dataMC_kinematics(const char *channel = "Zmm")
         }
 
         const std::string out = outDir + "/" + o.hist;
+        // W-channel lepton-pT: start the axis at the 25 GeV selection floor
+        // (bin edge 24 on the 2 GeV grid) -- no empty [0,25) band. Z-channel
+        // legs go down to 10-15 GeV, so those keep the full axis.
+        PlotStyle pso = ps;
+        if (isW && o.hist.rfind("h_lepPt", 0) == 0)
+        {
+            pso.xRangeLo = 24.0;
+            pso.xRangeHi = 100.0;
+        }
         SaveDataMCRatio(hD, hM, out,
                         o.xTitle, "Events (a.u.)",
                         header,
                         sub1,
                         sub2,
-                        ps,
+                        pso,
                         /*normToData=*/true,
                         "Data",
                         mcLabel);

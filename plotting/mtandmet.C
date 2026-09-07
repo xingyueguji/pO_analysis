@@ -550,9 +550,16 @@ void mtandmet(bool isElec = 1)
             Form("Passing Events: %.0f", hD->Integral(1, hD->GetNbinsX())),
             Form("W signal MC: %.0f", sigInt({hWp, hWm}))};
 
+        // pT axes start at the selection floor (bin edge 24 encloses the
+        // 25 GeV cut on the 2 GeV grid) -- no empty [0,25) band. The helper
+        // restores the full range after saving, so the Combine-input writing
+        // below sees untouched histograms.
+        PlotStyle psPt = ps;
+        psPt.xRangeLo = 24.0;
+        psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(hD, bkgs, names, outPath,
                                ptTitle, "Events / 2.0 GeV", "",
-                               sub1, sub2, box, ps, commonTuner);
+                               sub1, sub2, box, psPt, commonTuner);
 
         // Collect this region's templates for the lepton-pT Combine inputs
         // (written to SEPARATE combine_input_W_leppt[_mt40].root files below --
@@ -1278,6 +1285,10 @@ void mtandmet(bool isElec = 1)
         pushIf(h_leppt_inclusive_MC_Wtau[var], "W+/W- tau");
         pushIf(var == kVarMt40 ? qcd_pt_mt40_incl : qcd_pt_incl, "QCD (ABCD)");
 
+        // pT axis starts at the selection floor (see lepPtStack)
+        PlotStyle psPt = ps;
+        psPt.xRangeLo = 24.0;
+        psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(
             h_leppt_inclusive[var],
             bkgs,
@@ -1290,7 +1301,7 @@ void mtandmet(bool isElec = 1)
             Channeltype,
             (var == kVarMt40 ? "inclusive, m_{T} > 40 GeV" : "inclusive"),
             box,
-            ps,
+            psPt,
             commonTuner);
     }
 

@@ -78,7 +78,9 @@
 //
 // Inputs : ../skim/rootfile/WToMuNu_pO_PFMet_hist.root        (data)
 //          ../skim/rootfile/WToMuNu_pO_PFMet_{Wp,Wm,DY,DYtau,Wptau,Wmtau}_hist.root
-// Output : ./plots/qcd_abcd_mu/   + ./rootfile/qcd_abcd_mu.root (templates)
+// Output : ./plots/qcd_abcd_mu/{met_fit,leppt_fit}/  (two self-contained views,
+//          one per fit choice -- see the layout comment in the driver)
+//          + ./rootfile/qcd_abcd_mu.root (templates; layout-independent)
 //
 // Run from correction/:  root -l -q 'qcd_abcd.C+'           (muon)
 //                        root -l -q 'qcd_abcd.C+(true)'     (electron)
@@ -88,6 +90,7 @@
 #include "TH1D.h"
 #include "TH2.h"
 #include "TH2D.h"
+#include "TBox.h"
 #include "TCanvas.h"
 #include "TLine.h"
 #include "TLatex.h"
@@ -123,6 +126,13 @@ struct ABCDConfig
 // a bin edge on both the m_T (2.5 GeV) and MET (2 GeV) axes. The [yCut, 40)
 // band stays an unused buffer (Jacobian protection for B/D).
 const double kSRMtCut = 40.0;
+
+// Display range for lepton-pT axes: the W selection starts at pT > 25, so pT
+// plots hide the empty low band instead of wasting a quarter of the axis on
+// it. 24 = the 2-GeV-grid bin edge enclosing the threshold (the [24,26) bin
+// holds the 25-26 GeV events); the 1-GeV scan planes have a true edge at 25.
+const double kPtAxisLo = 24.0;
+const double kPtAxisHi = 100.0;
 
 struct Count
 {
@@ -186,6 +196,21 @@ TH1D *projY(TH2 *h, double xlo, double xhi, const char *name)
   const int bxlo = (xlo <= ax->GetXmin()) ? 1 : ax->FindBin(xlo + eps);
   const int bxhi = (xhi >= ax->GetXmax()) ? ax->GetNbins() : ax->FindBin(xhi - eps);
   TH1D *p = h->ProjectionY(name, bxlo, bxhi);
+  p->SetDirectory(nullptr);
+  return p;
+}
+
+// ProjectionX (the relIso distribution) over the y-window [ylo,yhi); a sentinel
+// yhi >= axis max includes the y overflow, matching count2D's convention.
+TH1D *projX(TH2 *h, double ylo, double yhi, const char *name)
+{
+  if (!h) return nullptr;
+  const TAxis *ay = h->GetYaxis();
+  const double eps = 1e-6;
+  const int bylo = (ylo <= ay->GetXmin()) ? 1 : ay->FindBin(ylo + eps);
+  const int byhi = (yhi >= ay->GetXmax()) ? ay->GetNbins() + 1 // include overflow
+                                          : ay->FindBin(yhi - eps);
+  TH1D *p = h->ProjectionX(name, bylo, byhi);
   p->SetDirectory(nullptr);
   return p;
 }
@@ -278,8 +303,15 @@ TH2D *sumEWK2D(const std::vector<MCFile> &mc, const char *hname, const char *out
 // Draw a QCD-only 2D (colz) with the ABCD region boundaries overlaid.
 // drawYSplit=false suppresses the horizontal yCut line (the lepton-pT plane has
 // no y-axis region split -- its normalization comes from the MET plane).
+// srCut > 0 draws the IN-FIT region layout instead (2026-08-24): horizontal
+// lines at BOTH cfg.yCut and srCut, the unused bands -- the y buffer
+// [yCut, srCut) and the relIso gap [isoCut, isoFailLo) -- shaded, and the four
+// regions labeled (B/D below, SR/C40 above).
+// yLo >= 0 zooms the y axis to [yLo, ymax] (e.g. start the lepton-pT axis at
+// the 25 GeV selection floor instead of showing the empty [0,25) band).
 void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
-            const std::string &title, const char *ytit, bool drawYSplit = true)
+            const std::string &title, const char *ytit, bool drawYSplit = true,
+            double srCut = -1.0, double yLo = -1.0)
 {
   if (!h) return;
   gStyle->SetOptStat(0);
@@ -291,6 +323,11 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   h->GetXaxis()->SetTitle("relIso");
   h->GetYaxis()->SetTitle(ytit);
   h->GetXaxis()->SetRangeUser(0.0, cfg.isoFailHi);
+  if (yLo >= 0.0)
+    h->GetYaxis()->SetRangeUser(yLo, h->GetYaxis()->GetXmax());
+  // visible y-range edges (== full axis unless yLo zoomed it) for lines/boxes
+  const double yVis1 = h->GetYaxis()->GetBinLowEdge(h->GetYaxis()->GetFirst());
+  const double yVis2 = h->GetYaxis()->GetBinUpEdge(h->GetYaxis()->GetLast());
   // Clamp the z (color) range: a single over-subtracted W-peak bin (relIso~0,
   // y~40 -- the W peak of whichever y this plane carries) otherwise dominates the
   // scale and washes out the actual QCD structure. Floor at -0.3*max so that
@@ -300,7 +337,7 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   h->Draw("COLZ");
 
   auto vline = [&](double x) {
-    TLine *l = new TLine(x, h->GetYaxis()->GetXmin(), x, h->GetYaxis()->GetXmax());
+    TLine *l = new TLine(x, yVis1, x, yVis2);
     l->SetLineColor(kRed + 1); l->SetLineWidth(2); l->SetLineStyle(2); l->Draw();
   };
   auto hline = [&](double y, double x1, double x2) {
@@ -310,6 +347,30 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   vline(cfg.isoCut);
   vline(cfg.isoFailLo);
   if (drawYSplit) hline(cfg.yCut, 0.0, cfg.isoFailHi);
+  if (srCut > 0.0)
+  {
+    hline(srCut, 0.0, cfg.isoFailHi);
+    // shade the EXCLUDED bands: the y buffer and the relIso gap
+    TBox *by = new TBox(0.0, cfg.yCut, cfg.isoFailHi, srCut);
+    by->SetFillColorAlpha(kGray + 2, 0.35);
+    by->SetLineWidth(0);
+    by->Draw();
+    TBox *bx = new TBox(cfg.isoCut, yVis1, cfg.isoFailLo, yVis2);
+    bx->SetFillColorAlpha(kGray + 2, 0.35);
+    bx->SetLineWidth(0);
+    bx->Draw();
+    TLatex lr;
+    lr.SetTextFont(62);
+    lr.SetTextSize(0.045);
+    lr.SetTextAlign(22);
+    const double ymax  = yVis2;
+    const double xPass = 0.5 * cfg.isoCut;
+    const double xFail = 0.5 * (cfg.isoFailLo + cfg.isoFailHi);
+    lr.DrawLatex(xPass, 0.5 * cfg.yCut, "B");
+    lr.DrawLatex(xFail, 0.5 * cfg.yCut, "D");
+    lr.DrawLatex(xPass, 0.5 * (srCut + ymax), "SR");
+    lr.DrawLatex(xFail, 0.5 * (srCut + ymax), "C_{40}");
+  }
 
   TLatex t; t.SetNDC(); t.SetTextFont(42); t.SetTextSize(0.03);
   t.DrawLatex(0.14, 0.92, title.c_str());
@@ -509,6 +570,13 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
   // --- diagnostics: 2D colz with boundaries ---
   draw2D(qcd2D, cfg, outDir + Form("/qcd2D_%s_%s%s", plane.c_str(), lep.c_str(), chg.c_str()),
          Form("QCD-only (data-EWK), %s", chgLatex.c_str()), ytit.c_str());
+  // the m_T plane additionally gets the IN-FIT layout view: both boundaries
+  // (B/D below yCut, SR/C40 above kSRMtCut), the excluded bands shaded
+  if (plane == "mt")
+    draw2D(qcd2D, cfg,
+           outDir + Form("/qcd2D_mt_infit_%s%s", lep.c_str(), chg.c_str()),
+           Form("QCD-only (data-EWK), %s -- in-fit ABCD regions", chgLatex.c_str()),
+           ytit.c_str(), /*drawYSplit=*/true, /*srCut=*/kSRMtCut);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
   TH1D *passData = projY(data2D, 0.0, cfg.isoCut,
@@ -612,7 +680,7 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   // --- diagnostics: 2D colz (no y-split line -- normalization is MET-plane) ---
   draw2D(qcd2D, cfg, outDir + Form("/qcd2D_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
          Form("QCD-only (data-EWK), %s", chgLatex.c_str()), ytit.c_str(),
-         /*drawYSplit=*/false);
+         /*drawYSplit=*/false, /*srCut=*/-1.0, /*yLo=*/kPtAxisLo);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
   TH1D *passData = projY(data2D, 0.0, cfg.isoCut,
@@ -627,6 +695,8 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   ps.headerX = 0.64;
   ps.headerY = 0.66;
   ps.titleSize = 0.04;
+  ps.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
+  ps.xRangeHi = kPtAxisHi;
 
   if (passEWK)
   {
@@ -667,6 +737,8 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
     ps2.headerX = 0.60;
     ps2.headerY = 0.66;
     ps2.titleSize = 0.04;
+    ps2.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
+    ps2.xRangeHi = kPtAxisHi;
     // NB both inputs are DATA-derived (EWK-subtracted sideband slices) -- the
     // "data" point style / "MC" fill style are just the helper's cosmetics, so
     // relabel the ratio pad accordingly (low slice / high slice).
@@ -905,6 +977,8 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
     ps.headerX = 0.60;
     ps.headerY = 0.66;
     ps.titleSize = 0.04;
+    ps.xRangeLo = kPtMin; // 5-GeV rebinned scan bins: 25 is a true edge
+    ps.xRangeHi = kPtAxisHi;
     // Both inputs are data-derived (the helper's data/MC styles are cosmetics).
     SaveDataMCRatio(pred, flat,
                     outDir + Form("/ff_closure_pt_%s", tagc.c_str()),
@@ -929,6 +1003,624 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
   delete dAnti;
   if (ePass) delete ePass;
   if (eAnti) delete eAnti;
+}
+
+// ----------------------------------------------------------------------------
+// IN-FIT ABCD PREDICTION CHECK (2026-08-31, prefit r = 1 throughout).
+// The counting relation A = B*C40/D is algebraically symmetric -- "horizontal"
+// (A = C40 x T, T = B/D migrated along relIso) and "vertical" (A = B x R,
+// R = C40/D migrated along m_T) give the SAME number -- so the two views below
+// differ in WHICH variable stays differential, and that is where a
+// relIso (x) m_T correlation would show up:
+//   1. srcheck_mt_horiz_* : the iso-pass m_T spectrum, data vs EWK(r=1) + QCD
+//      (= anti-iso m_T shape x T). Low-m_T closes in norm by construction
+//      (T is defined there); the m_T > 40 part IS the SR prediction. Region
+//      boundaries (30/40) and the unused buffer are drawn on the plot.
+//   2. srcheck_iso_vert_*  : the relIso spectrum at m_T > 40, data vs EWK(r=1)
+//      + QCD (= the m_T < 30 relIso shape x R). The anti-iso window closes in
+//      norm by construction (R is defined there); the relIso < cut part is the
+//      SR prediction, and per-bin deviations across relIso are the direct
+//      correlation check. The gap [isoCut, isoFailLo) is predicted too (from
+//      the low-m_T gap), a bonus closure region.
+//   3. srcheck_pt_*        : the same SR prediction displayed in the FITTED
+//      variable: iso-pass (pT, m_T>40) data vs EWK(r=1) + the in-fit-ABCD-
+//      normalized QCD template (anti-iso m_T>40 pT shape x T_mT, total = A40).
+// Every plot carries A_pred = B*C40/D and A_actual = data - EWK(r=1) in the
+// SR. NB at r-hat != 1 A_actual absorbs (r-1)*S_SR -- the W-related SR yield
+// is printed so the reader can size that caveat.
+// ----------------------------------------------------------------------------
+void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
+                   const std::vector<MCFile> &mcZ, const std::string &chg,
+                   const ABCDConfig &cfg, const std::string &outDir,
+                   const std::string &chgLatex, const std::string &lep,
+                   const ChargeInfo &ci)
+{
+  const ABCDResult &r = ci.mt; // the m_T-plane counts (B, C40, D at r = 1)
+  if (r.D.n == 0.0 || r.Apred40 == 0.0)
+  {
+    std::cerr << "[WARN] runInfitCheck " << lep << chg
+              << ": no m_T-plane ABCD result -> skipped\n";
+    return;
+  }
+
+  // union of the W- and DY-related MC (total EWK)
+  std::vector<MCFile> mc(mcW);
+  mc.insert(mc.end(), mcZ.begin(), mcZ.end());
+
+  // ---- rebuild the m_T-plane 2Ds (runPlaneCharge owns+deletes its own) -----
+  const std::string hname = Form("h_iso_mt_%s%s", lep.c_str(), chg.c_str());
+  TH2D *data2D = (TH2D *)fData->Get(hname.c_str());
+  if (!data2D)
+  {
+    std::cerr << "[WARN] runInfitCheck: missing " << hname << " -> skipped\n";
+    return;
+  }
+  data2D = (TH2D *)data2D->Clone(Form("%s_ck", hname.c_str()));
+  data2D->SetDirectory(nullptr);
+  TH2D *w2D   = sumEWK2D(mcW, hname.c_str(), Form("%s_ckw", hname.c_str()));
+  TH2D *ewk2D = sumEWK2D(mc,  hname.c_str(), Form("%s_ckewk", hname.c_str()));
+  TH2D *qcd2D = (TH2D *)data2D->Clone(Form("%s_ckqcd", hname.c_str()));
+  qcd2D->SetDirectory(nullptr);
+  if (ewk2D) qcd2D->Add(ewk2D, -1.0);
+
+  // ---- the numbers on every plot ------------------------------------------
+  const double R    = r.C40.n / r.D.n; // vertical transfer: m_T migration
+  const double Rerr = std::fabs(R) * std::sqrt(relErr(r.C40) * relErr(r.C40) +
+                                               relErr(r.D) * relErr(r.D));
+  const Count Aact = count2D(qcd2D, 0.0, cfg.isoCut, kSRMtCut, 1e9);
+  const Count wSR  = count2D(w2D,  0.0, cfg.isoCut, kSRMtCut, 1e9);
+  const double ratio = Aact.n / r.Apred40;
+  const double ratioErr = std::fabs(ratio) *
+      std::sqrt(relErr(Aact) * relErr(Aact) +
+                (r.Apred40err / r.Apred40) * (r.Apred40err / r.Apred40));
+
+  std::cout << "\n=== IN-FIT ABCD PREDICTION CHECK (prefit, r = 1)  " << lep
+            << " " << chg << "  [m_T plane] ===\n"
+            << Form("  regions: B/D at m_T < %.0f (iso-pass / anti-iso), SR/C40 at"
+                    " m_T > %.0f, [%.0f,%.0f) buffer\n",
+                    cfg.yCut, kSRMtCut, cfg.yCut, kSRMtCut)
+            << Form("  horizontal reading: A_pred = C40 x T,  T = B/D   = %.4f +/- %.4f\n",
+                    r.T, r.Terr)
+            << Form("  vertical   reading: A_pred = B x R,    R = C40/D = %.4f +/- %.4f\n",
+                    R, Rerr)
+            << Form("  (identical by construction) A_pred = B*C40/D = %.1f +/- %.1f\n",
+                    r.Apred40, r.Apred40err)
+            << Form("  A_actual = data - EWK(r=1) in the SR       = %.1f +/- %.1f\n",
+                    Aact.n, Aact.e)
+            << Form("  A_actual / A_pred = %.2f +/- %.2f\n", ratio, ratioErr)
+            << Form("  NB A_actual rides the prefit W scale: W-related MC in the SR"
+                    " = %.1f, so a fitted r shifts the actual-QCD estimate by"
+                    " -(r-1)*S (r=1.18 -> %+.1f)\n",
+                    wSR.n, -0.18 * wSR.n);
+
+  // shared box + style for the three stacks
+  const std::vector<std::string> boxCommon = {
+      Form("T = B/D = %.3f,  R = C_{40}/D = %.3f", r.T, R),
+      Form("A_{pred} = B#timesC_{40}/D = %.1f #pm %.1f", r.Apred40, r.Apred40err),
+      Form("A_{act} = Data#minusEWK(r=1) = %.1f #pm %.1f", Aact.n, Aact.e),
+      Form("A_{act}/A_{pred} = %.2f #pm %.2f", ratio, ratioErr)};
+  const std::string sub1 = Form("in-fit ABCD check, %s  (prefit r = 1)",
+                                chgLatex.c_str());
+
+  PlotStyle ps;
+  ps.logy = true;
+  ps.normBkgToData = false; // absolute k_s stacks
+  ps.pullPad = true;
+  ps.yTitleOffset = 1.55;
+  ps.headerX = 0.50;
+  ps.subSize = 0.034;
+  ps.boxX1 = 0.56; ps.boxX2 = 0.93;
+  ps.boxY1 = 0.50; ps.boxY2 = 0.74;             // 4 lines -> 0.52-0.72
+  ps.legX1 = 0.64; ps.legY1 = 0.30;             // explicit legend below the box
+  ps.legX2 = 0.93; ps.legY2 = 0.48;
+
+  const std::string lepSym = (lep == "ele") ? "e" : "#mu";
+
+  // coarse relIso edges shared by the vertical stack and the R-stability plot
+  // (all on the 0.005 grid; isoCut and isoFailLo are bin edges -- the
+  // projection-boundary rule)
+  std::vector<double> edges;
+  if (cfg.isoCut == 0.15) // muon
+    edges = {0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30,
+             0.40, 0.50, 0.65, 0.80, 1.00};
+  else                    // electron (isoCut 0.095, sideband from 0.20)
+    edges = {0.00, 0.03, 0.06, 0.095, 0.15, 0.20, 0.25, 0.30,
+             0.40, 0.50, 0.65, 0.80, 1.00};
+
+  // rebin a fine (0.005) relIso projection onto the coarse edges
+  auto coarse = [&](TH1D *fine, const char *nm) -> TH1D * {
+    if (!fine) return nullptr;
+    TH1D *rb = (TH1D *)fine->Rebin((int)edges.size() - 1, nm, edges.data());
+    rb->SetDirectory(nullptr);
+    return rb;
+  };
+
+  // ---- 1. horizontal view: iso-pass m_T spectrum --------------------------
+  {
+    TH1D *dPass = projY(data2D, 0.0, cfg.isoCut, Form("ck_mt_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *ePass = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut, Form("ck_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
+                        : nullptr;
+    TH1D *qTpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
+                       Form("ck_mt_qcd_%s%s", lep.c_str(), chg.c_str()));
+    const TemplateNorm tn = ScaleToIsoPass(qTpl, r.T, r.Terr);
+    std::cout << Form("  [mt view] template total = %.1f (= B + T x C(m_T>%.0f);"
+                      " its m_T>%.0f integral = T x C40 = A_pred)\n",
+                      tn.total, cfg.yCut, kSRMtCut);
+    if (dPass && ePass)
+    {
+      const double yCut = cfg.yCut;
+      PlotTuner tuner = [yCut](TCanvas *c, TH1 *h) {
+        (void)c;
+        if (!h) return;
+        h->SetMinimum(0.2);
+        h->SetMaximum(30.0 * h->GetMaximum());
+        gPad->Modified();
+        gPad->Update();
+        double y1 = gPad->GetUymin(), y2 = gPad->GetUymax();
+        if (gPad->GetLogy()) { y1 = std::pow(10.0, y1); y2 = std::pow(10.0, y2); }
+        TBox *b = new TBox(yCut, y1, kSRMtCut, y2); // the unused buffer band
+        b->SetFillColorAlpha(kGray + 2, 0.25);
+        b->SetLineWidth(0);
+        b->Draw();
+        for (const double x : {yCut, kSRMtCut})
+        {
+          TLine *l = new TLine(x, y1, x, y2);
+          l->SetLineColor(kRed + 1);
+          l->SetLineWidth(2);
+          l->SetLineStyle(2);
+          l->Draw();
+        }
+        TLatex t;
+        t.SetTextFont(62);
+        t.SetTextSize(0.035);
+        t.SetTextAlign(22);
+        const double ytxt = std::pow(10.0, 0.70 * std::log10(y2) + 0.30 * std::log10(std::max(y1, 1e-3)));
+        t.DrawLatex(0.5 * yCut, ytxt, "B");
+        t.DrawLatex(60.0, ytxt, "SR"); // left part of the SR band, clear of the legend
+      };
+      SaveNicePlot1D_WithBkg(dPass, {ePass, qTpl},
+                             {"EWK MC (r = 1)", "QCD (ABCD)"},
+                             outDir + Form("/srcheck_mt_horiz_%s%s", lep.c_str(), chg.c_str()),
+                             "m_{T} (GeV)", "Events / 2.5 GeV", "",
+                             sub1,
+                             "horizontal: QCD = anti-iso shape #times T",
+                             boxCommon, ps, tuner);
+    }
+    delete dPass;
+    if (ePass) delete ePass;
+    delete qTpl;
+  }
+
+  // ---- 1b. the x R twin of the m_T view: the SR band alone ----------------
+  // Requested companion of srcheck_mt_horiz. Within the SR band the two
+  // factorizations are BIN-IDENTICAL (per m_T bin, B x [antiiso_j/D] ==
+  // T x antiiso_j), so this shows the SAME prediction zoomed to the entire SR
+  // with the vertical narration: B is measured at low m_T, R = C40/D migrates
+  // it up, QCD total = B x R. Where the two factorizations differ TESTABLY is
+  // the stability pair (block 4: T(m_T) / R(relIso) flatness).
+  {
+    TH1D *dPass = projY(data2D, 0.0, cfg.isoCut, Form("ckv_mt_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *ePass = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut, Form("ckv_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
+                        : nullptr;
+    TH1D *qTpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
+                       Form("ckv_mt_qcd_%s%s", lep.c_str(), chg.c_str()));
+    if (dPass && ePass && qTpl)
+    {
+      // keep only the SR band, clamp negative fluctuations, and renormalize
+      // the drawn part to A_pred = B x R (the m_T > 200 anti-iso overflow that
+      // C40 counts sits outside the axis, same convention as the pT view)
+      for (int i = 1; i <= qTpl->GetNbinsX(); ++i)
+      {
+        if (qTpl->GetXaxis()->GetBinUpEdge(i) <= kSRMtCut + 1e-6)
+        {
+          qTpl->SetBinContent(i, 0.0);
+          qTpl->SetBinError(i, 0.0);
+        }
+        else if (qTpl->GetBinContent(i) < 0.0)
+          qTpl->SetBinContent(i, 0.0);
+      }
+      const double vIn = qTpl->Integral(1, qTpl->GetNbinsX());
+      if (vIn > 0.0) qTpl->Scale(r.Apred40 / vIn);
+      std::cout << Form("  [mt vert] SR-band template renormalized %.1f -> A_pred %.1f"
+                        " (m_T>200 anti-iso overflow outside the axis)\n",
+                        vIn, r.Apred40);
+
+      PlotStyle psV = ps;
+      psV.xRangeLo = kSRMtCut; // the entire SR band
+      psV.xRangeHi = 200.0;
+      PlotTuner tuner = [](TCanvas *c, TH1 *h) {
+        (void)c;
+        if (!h) return;
+        h->SetMinimum(0.2);
+        h->SetMaximum(30.0 * h->GetMaximum());
+      };
+      SaveNicePlot1D_WithBkg(dPass, {ePass, qTpl},
+                             {"EWK MC (r = 1)", "QCD (B #times R)"},
+                             outDir + Form("/srcheck_mt_vert_%s%s", lep.c_str(), chg.c_str()),
+                             "m_{T} (GeV)", "Events / 2.5 GeV", "",
+                             sub1,
+                             "vertical: QCD = B#timesR (#equiv T#timesC_{40})",
+                             boxCommon, psV, tuner);
+    }
+    delete dPass;
+    if (ePass) delete ePass;
+    delete qTpl;
+  }
+
+  // ---- 2. vertical view: relIso spectrum at m_T > 40 ----------------------
+  {
+    TH1D *dFine = projX(data2D, kSRMtCut, 1e9, Form("ck_iso_dataf_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *eFine = ewk2D ? projX(ewk2D, kSRMtCut, 1e9, Form("ck_iso_ewkf_%s%s", lep.c_str(), chg.c_str()))
+                        : nullptr;
+    TH1D *qFine = projX(qcd2D, 0.0, cfg.yCut, Form("ck_iso_qcdf_%s%s", lep.c_str(), chg.c_str()));
+
+    TH1D *dSR = coarse(dFine, Form("ck_iso_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *eSR = coarse(eFine, Form("ck_iso_ewk_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *qLow = coarse(qFine, Form("ck_iso_qcd_%s%s", lep.c_str(), chg.c_str()));
+    const TemplateNorm tnV = ScaleToIsoPass(qLow, R, Rerr); // clamp + x R
+    if (qLow)
+    {
+      const int bCut = qLow->GetXaxis()->FindBin(cfg.isoCut - 1e-6);
+      double eIso = 0.0;
+      const double predIso = qLow->IntegralAndError(1, bCut, eIso);
+      std::cout << Form("  [iso view] template iso-pass part = %.1f (vs A_pred"
+                        " %.1f; differs only by the negative-bin clamp), full"
+                        " range = %.1f\n",
+                        predIso, r.Apred40, tnV.total);
+    }
+    if (dSR && eSR)
+    {
+      const double isoCut = cfg.isoCut, isoFailLo = cfg.isoFailLo;
+      PlotTuner tuner = [isoCut, isoFailLo](TCanvas *c, TH1 *h) {
+        (void)c;
+        if (!h) return;
+        h->SetMinimum(0.1);
+        h->SetMaximum(30.0 * h->GetMaximum());
+        gPad->Modified();
+        gPad->Update();
+        double y1 = gPad->GetUymin(), y2 = gPad->GetUymax();
+        if (gPad->GetLogy()) { y1 = std::pow(10.0, y1); y2 = std::pow(10.0, y2); }
+        for (const double x : {isoCut, isoFailLo})
+        {
+          TLine *l = new TLine(x, y1, x, y2);
+          l->SetLineColor(kRed + 1);
+          l->SetLineWidth(2);
+          l->SetLineStyle(2);
+          l->Draw();
+        }
+        TLatex t;
+        t.SetTextFont(62);
+        t.SetTextSize(0.035);
+        t.SetTextAlign(22);
+        const double ytxt = std::pow(10.0, 0.70 * std::log10(y2) + 0.30 * std::log10(std::max(y1, 1e-3)));
+        t.DrawLatex(0.5 * isoCut, ytxt, "SR");
+        t.DrawLatex(0.5 * (isoFailLo + 0.6), ytxt, "C_{40}"); // clear of the legend
+      };
+      SaveNicePlot1D_WithBkg(dSR, {eSR, qLow},
+                             {"EWK MC (r = 1)", "QCD (m_{T}<30 #times R)"},
+                             outDir + Form("/srcheck_iso_vert_%s%s", lep.c_str(), chg.c_str()),
+                             "relIso", "Events / bin", "",
+                             sub1,
+                             Form("vertical: m_{T}>%.0f, QCD = m_{T}<%.0f shape #times R",
+                                  kSRMtCut, cfg.yCut),
+                             boxCommon, ps, tuner);
+    }
+    delete dFine;
+    if (eFine) delete eFine;
+    delete qFine;
+    delete dSR;
+    if (eSR) delete eSR;
+    delete qLow;
+  }
+
+  // ---- 2b. the x T twin of the relIso view: the iso-pass region alone -----
+  // Mirror of block 1b, requested as the x T version of srcheck_iso_vert.
+  // Within the iso-pass region the two factorizations are BIN-IDENTICAL
+  // (B_i x (T*C40/B) == B_i x R), so this shows the SAME prediction zoomed to
+  // the SR's own relIso bins with the horizontal narration: C40 is measured
+  // in the sideband, T = B/D migrates it across, QCD total = T x C40 = A_pred
+  // (shape from the low-m_T iso-pass row -- the only relIso shape available
+  // inside iso-pass, since the m_T>40 part IS the SR).
+  {
+    TH1D *dFine = projX(data2D, kSRMtCut, 1e9, Form("ckh_iso_dataf_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *eFine = ewk2D ? projX(ewk2D, kSRMtCut, 1e9, Form("ckh_iso_ewkf_%s%s", lep.c_str(), chg.c_str()))
+                        : nullptr;
+    TH1D *qFine = projX(qcd2D, 0.0, cfg.yCut, Form("ckh_iso_qcdf_%s%s", lep.c_str(), chg.c_str()));
+
+    TH1D *dSR = coarse(dFine, Form("ckh_iso_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *eSR = coarse(eFine, Form("ckh_iso_ewk_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *qTpl = coarse(qFine, Form("ckh_iso_qcd_%s%s", lep.c_str(), chg.c_str()));
+    if (dSR && eSR && qTpl)
+    {
+      // keep only the iso-pass bins, clamp negatives, renormalize to
+      // A_pred = T x C40
+      for (int i = 1; i <= qTpl->GetNbinsX(); ++i)
+      {
+        if (qTpl->GetXaxis()->GetBinLowEdge(i) >= cfg.isoCut - 1e-6)
+        {
+          qTpl->SetBinContent(i, 0.0);
+          qTpl->SetBinError(i, 0.0);
+        }
+        else if (qTpl->GetBinContent(i) < 0.0)
+          qTpl->SetBinContent(i, 0.0);
+      }
+      const double vIn = qTpl->Integral(1, qTpl->GetNbinsX());
+      if (vIn > 0.0) qTpl->Scale(r.Apred40 / vIn);
+      std::cout << Form("  [iso horiz] iso-pass template renormalized %.1f -> A_pred"
+                        " %.1f (scale = %.3f ~ R, low-m_T iso-pass shape)\n",
+                        vIn, r.Apred40, vIn > 0.0 ? r.Apred40 / vIn : 0.0);
+
+      PlotStyle psH = ps;
+      psH.xRangeLo = 0.0; // the SR's own relIso bins
+      psH.xRangeHi = cfg.isoCut;
+      PlotTuner tuner = [](TCanvas *c, TH1 *h) {
+        (void)c;
+        if (!h) return;
+        h->SetMinimum(0.5);
+        h->SetMaximum(30.0 * h->GetMaximum());
+      };
+      SaveNicePlot1D_WithBkg(dSR, {eSR, qTpl},
+                             {"EWK MC (r = 1)", "QCD (T #times C_{40})"},
+                             outDir + Form("/srcheck_iso_horiz_%s%s", lep.c_str(), chg.c_str()),
+                             "relIso", "Events / bin", "",
+                             sub1,
+                             Form("horizontal: m_{T}>%.0f, QCD = T#timesC_{40} (#equiv B#timesR)",
+                                  kSRMtCut),
+                             boxCommon, psH, tuner);
+    }
+    delete dFine;
+    if (eFine) delete eFine;
+    delete qFine;
+    delete dSR;
+    if (eSR) delete eSR;
+    delete qTpl;
+  }
+
+  // ---- 3. the SR in the fitted variable: lepton pT ------------------------
+  {
+    const std::string hpt = Form("h_iso_pt_mt40_%s%s", lep.c_str(), chg.c_str());
+    TH2D *dataP = (TH2D *)fData->Get(hpt.c_str());
+    if (!dataP)
+      std::cerr << "[WARN] runInfitCheck: missing " << hpt
+                << " (pre-2026-07-30 skim?) -> pT SR check skipped\n";
+    else
+    {
+      dataP = (TH2D *)dataP->Clone(Form("%s_ck", hpt.c_str()));
+      dataP->SetDirectory(nullptr);
+      TH2D *ewkP = sumEWK2D(mc, hpt.c_str(), Form("%s_ckewk", hpt.c_str()));
+      TH2D *qcdP = (TH2D *)dataP->Clone(Form("%s_ckqcd", hpt.c_str()));
+      qcdP->SetDirectory(nullptr);
+      if (ewkP) qcdP->Add(ewkP, -1.0);
+
+      TH1D *dPass = projY(dataP, 0.0, cfg.isoCut, Form("ck_pt_data_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *ePass = ewkP ? projY(ewkP, 0.0, cfg.isoCut, Form("ck_pt_ewk_%s%s", lep.c_str(), chg.c_str()))
+                         : nullptr;
+      TH1D *qTpl = projY(qcdP, cfg.isoFailLo, cfg.isoFailHi,
+                         Form("ck_pt_qcd_%s%s", lep.c_str(), chg.c_str()));
+      const TemplateNorm tnP = ScaleToIsoPass(qTpl, r.T, r.Terr); // T_mT x shape
+      // The fit's qcd_abcd template is renormalized so its TOTAL equals A_pred
+      // exactly (the anti-iso pT projection loses the pT>100 overflow that the
+      // C40 count keeps, <~1%); reproduce that normalization here.
+      if (tnP.total > 0.0) qTpl->Scale(r.Apred40 / tnP.total);
+      const Count AactPt = count2D(qcdP, 0.0, cfg.isoCut, 0.0, 1e9);
+      std::cout << Form("  [pT view] template total renormalized %.1f -> A_pred"
+                        " %.1f (the %.1f%% gap = anti-iso pT>100 overflow, kept"
+                        " by C40, outside the pT axis)\n",
+                        tnP.total, r.Apred40,
+                        r.Apred40 != 0.0 ? 100.0 * (1.0 - tnP.total / r.Apred40) : 0.0)
+                << Form("  [pT view] A_actual from the pT plane = %.1f (vs m_T-plane"
+                        " %.1f; same events)\n",
+                        AactPt.n, Aact.n);
+      if (std::fabs(tnP.total - r.Apred40) > 0.02 * r.Apred40)
+        std::cerr << Form("[WARN] runInfitCheck %s%s: pT-template total %.1f vs"
+                          " A_pred %.1f differ by >2%% -- more than the pT>100"
+                          " overflow can explain\n",
+                          lep.c_str(), chg.c_str(), tnP.total, r.Apred40);
+      if (dPass && ePass)
+      {
+        PlotStyle psPt = ps;
+        psPt.xRangeLo = kPtAxisLo; // start at the 25 GeV selection floor
+        psPt.xRangeHi = kPtAxisHi;
+        PlotTuner tuner = [](TCanvas *c, TH1 *h) {
+          (void)c;
+          if (!h) return;
+          h->SetMinimum(0.2);
+          h->SetMaximum(30.0 * h->GetMaximum());
+        };
+        SaveNicePlot1D_WithBkg(dPass, {ePass, qTpl},
+                               {"EWK MC (r = 1)", "QCD (in-fit ABCD)"},
+                               outDir + Form("/srcheck_pt_%s%s", lep.c_str(), chg.c_str()),
+                               Form("p_{T}^{%s} [GeV]", lepSym.c_str()),
+                               "Events / 2 GeV", "",
+                               sub1,
+                               Form("SR (p_{T}>25, m_{T}>%.0f): QCD total = A_{pred}", kSRMtCut),
+                               boxCommon, psPt, tuner);
+      }
+      delete dPass;
+      if (ePass) delete ePass;
+      delete qTpl;
+      delete dataP;
+      if (ewkP) delete ewkP;
+      delete qcdP;
+    }
+  }
+
+  // ---- 4. transfer-factor STABILITY: T(m_T) vs R(relIso) ------------------
+  // The like-for-like comparison of the two factorizations: each transfer
+  // factor is measured differentially along the axis it is ASSUMED constant
+  // over, against the flat value the counting uses (dashed + stat band).
+  //   T(m_T) = QCD(iso-pass)/QCD(anti-iso) per 5 GeV m_T bin. Solid = m_T<30
+  //     (where the flat T is measured); OPEN = the [30,40) buffer (approach
+  //     region -- rising Jacobian in the numerator, prefit-r subtracted);
+  //     m_T>40 excluded (numerator = the SR, signal-blinded at r=1).
+  //   R(relIso) = QCD(m_T>40)/QCD(m_T<30) per coarse relIso bin. Solid = the
+  //     anti-iso window (where the flat R is measured); OPEN = the gap
+  //     (approach region, larger prefit EWK subtraction); relIso < isoCut
+  //     excluded (numerator = the SR).
+  // chi2/ndf vs flat over the solid bins is the one-number flatness metric
+  // for the R-vs-T comparison.
+  {
+    const double kMinDen = 3.0; // skip bins with a near-empty denominator
+
+    auto drawStab = [&](TH1D *num, TH1D *den, std::function<int(int)> cls,
+                        double flat, double flatErr, const char *xtit,
+                        const char *ytit, double xlo, double xhi,
+                        const std::string &outName, const std::string &toplab,
+                        const std::string &openlab, const std::string &logtag)
+    {
+      TH1D *hRat = (TH1D *)num->Clone((outName + "_ratio").c_str());
+      hRat->SetDirectory(nullptr);
+      hRat->Divide(den); // disjoint regions -> uncorrelated errors
+      TGraphErrors *gS = new TGraphErrors();
+      TGraphErrors *gO = new TGraphErrors();
+      double chi2 = 0.0;
+      int nSolid = 0;
+      double ymax = 2.2 * flat;
+      std::cout << "    " << logtag
+                << Form("  (flat = %.4f +/- %.4f)\n", flat, flatErr);
+      for (int i = 1; i <= hRat->GetNbinsX(); ++i)
+      {
+        const int c = cls(i);
+        if (c == 0) continue;
+        const double lo = hRat->GetXaxis()->GetBinLowEdge(i);
+        const double hi = hRat->GetXaxis()->GetBinUpEdge(i);
+        if (den->GetBinContent(i) < kMinDen)
+        {
+          std::cout << Form("      [%5.2f,%6.2f)   --  (denominator < %.0f events)\n",
+                            lo, hi, kMinDen);
+          continue;
+        }
+        const double v = hRat->GetBinContent(i), e = hRat->GetBinError(i);
+        TGraphErrors *g = (c == 1) ? gS : gO;
+        const int ip = g->GetN();
+        g->SetPoint(ip, 0.5 * (lo + hi), v);
+        g->SetPointError(ip, 0.5 * (hi - lo), e);
+        if (c == 1 && e > 0.0)
+        {
+          chi2 += (v - flat) * (v - flat) / (e * e);
+          ++nSolid;
+        }
+        ymax = std::max(ymax, 1.25 * (v + e));
+        std::cout << Form("      [%5.2f,%6.2f)   %.4f +/- %.4f  (%+6.1f%% vs flat)%s\n",
+                          lo, hi, v, e,
+                          flat != 0.0 ? 100.0 * (v / flat - 1.0) : 0.0,
+                          c == 2 ? Form("  [%s]", openlab.c_str()) : "");
+      }
+      const int ndf = std::max(nSolid - 1, 1);
+      std::cout << Form("      -> chi2/ndf vs flat (solid bins) = %.1f / %d = %.2f\n",
+                        chi2, ndf, chi2 / (double)ndf);
+
+      gStyle->SetOptStat(0);
+      gStyle->SetOptTitle(0);
+      TCanvas *c1 = new TCanvas(("c_" + outName).c_str(), "", 800, 650);
+      c1->SetLeftMargin(0.14);
+      TH1D *frame = (TH1D *)hRat->Clone((outName + "_frame").c_str());
+      frame->SetDirectory(nullptr);
+      frame->Reset("ICESM");
+      frame->GetXaxis()->SetRangeUser(xlo, xhi);
+      frame->GetXaxis()->SetTitle(xtit);
+      frame->GetYaxis()->SetTitle(ytit);
+      frame->GetYaxis()->SetTitleOffset(1.4);
+      frame->SetMinimum(0.0);
+      frame->SetMaximum(ymax);
+      frame->Draw("AXIS");
+      TBox *band = new TBox(xlo, flat - flatErr, xhi, flat + flatErr);
+      band->SetFillColorAlpha(kRed - 9, 0.35);
+      band->SetLineWidth(0);
+      band->Draw();
+      TLine *lf = new TLine(xlo, flat, xhi, flat);
+      lf->SetLineColor(kRed + 1);
+      lf->SetLineWidth(2);
+      lf->SetLineStyle(2);
+      lf->Draw();
+      for (TGraphErrors *g : {gS, gO})
+      {
+        g->SetLineColor(kBlue + 1);
+        g->SetMarkerColor(kBlue + 1);
+        g->SetMarkerSize(1.1);
+        g->SetLineWidth(2);
+      }
+      gS->SetMarkerStyle(20);
+      gO->SetMarkerStyle(24);
+      if (gS->GetN() > 0) gS->Draw("P SAME");
+      if (gO->GetN() > 0) gO->Draw("P SAME");
+      TLatex t;
+      t.SetNDC();
+      t.SetTextFont(42);
+      t.SetTextSize(0.035);
+      t.DrawLatex(0.17, 0.86, toplab.c_str());
+      t.DrawLatex(0.17, 0.80, Form("#color[633]{dashed: flat = %.4f #pm %.4f}", flat, flatErr));
+      t.DrawLatex(0.17, 0.74, Form("#chi^{2}/ndf vs flat (solid) = %.1f / %d", chi2, ndf));
+      t.DrawLatex(0.17, 0.68, Form("open markers: %s", openlab.c_str()));
+      c1->SaveAs((outDir + "/" + outName + ".png").c_str());
+      c1->SaveAs((outDir + "/" + outName + ".pdf").c_str());
+      delete c1;
+      delete frame;
+      delete gS;
+      delete gO;
+      delete band;
+      delete lf;
+      delete hRat;
+    };
+
+    std::cout << "\n  --- transfer-factor stability, " << lep << " " << chg
+              << " (prefit r=1 subtraction) ---\n";
+
+    // T(m_T): the horizontal factor along the axis it must not depend on
+    {
+      TH1D *num = projY(qcd2D, 0.0, cfg.isoCut, Form("stabT_num_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *den = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi, Form("stabT_den_%s%s", lep.c_str(), chg.c_str()));
+      num->Rebin(2); // 2.5 -> 5 GeV
+      den->Rebin(2);
+      auto cls = [&, num](int i) -> int {
+        const double x = num->GetXaxis()->GetBinCenter(i);
+        if (x > kSRMtCut) return 0; // the SR: numerator signal-blinded
+        if (x > cfg.yCut) return 2; // the [30,40) buffer: approach region
+        return 1;                   // below yCut: where the flat T is measured
+      };
+      drawStab(num, den, cls, r.T, r.Terr, "m_{T} (GeV)",
+               "T(m_{T}) = QCD(iso-pass) / QCD(anti-iso)", 0.0, kSRMtCut,
+               Form("stab_T_mt_%s%s", lep.c_str(), chg.c_str()),
+               Form("iso transfer factor vs m_{T}, %s", chgLatex.c_str()),
+               "buffer [30,40)", "T(m_T) per 5 GeV bin");
+      delete num;
+      delete den;
+    }
+
+    // R(relIso): the vertical factor along the axis it must not depend on
+    {
+      TH1D *numF = projX(qcd2D, kSRMtCut, 1e9, Form("stabR_numf_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *denF = projX(qcd2D, 0.0, cfg.yCut, Form("stabR_denf_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *num = (TH1D *)numF->Rebin((int)edges.size() - 1,
+                                      Form("stabR_num_%s%s", lep.c_str(), chg.c_str()), edges.data());
+      TH1D *den = (TH1D *)denF->Rebin((int)edges.size() - 1,
+                                      Form("stabR_den_%s%s", lep.c_str(), chg.c_str()), edges.data());
+      num->SetDirectory(nullptr);
+      den->SetDirectory(nullptr);
+      auto cls = [&, num](int i) -> int {
+        const double x = num->GetXaxis()->GetBinCenter(i);
+        if (x < cfg.isoCut) return 0;    // iso-pass: numerator = the SR
+        if (x < cfg.isoFailLo) return 2; // the gap: approach region
+        return 1;                        // anti-iso window: where the flat R is measured
+      };
+      drawStab(num, den, cls, R, Rerr, "relIso",
+               Form("R(relIso) = QCD(m_{T}>%.0f) / QCD(m_{T}<%.0f)", kSRMtCut, cfg.yCut),
+               cfg.isoCut, cfg.isoFailHi,
+               Form("stab_R_relIso_%s%s", lep.c_str(), chg.c_str()),
+               Form("m_{T} migration vs relIso, %s", chgLatex.c_str()),
+               Form("gap [%.3g,%.2g)", cfg.isoCut, cfg.isoFailLo),
+               "R(relIso) per bin");
+      delete numF;
+      delete denF;
+      delete num;
+      delete den;
+    }
+  }
+
+  delete data2D;
+  if (w2D) delete w2D;
+  if (ewk2D) delete ewk2D;
+  delete qcd2D;
 }
 
 void printChannelReport(const std::string &lep, const ABCDConfig &cfg,
@@ -1103,6 +1795,7 @@ void printChannelReport(const std::string &lep, const ABCDConfig &cfg,
   double totFF[2];
   for (int i = 0; i < 2; ++i)
     totFF[i] = std::sqrt(window40[i] * window40[i] + ffs[i] * ffs[i]);
+  row("TOTAL (window (+) FF shift)", totFF);
   std::cout << Form("   => reduced kappa with the FF shift replacing the tilt row  = %.2f\n",
                     1.0 + 0.01 * std::max(totFF[0], totFF[1]));
   // If the CR-B W-related content is FROZEN at absolute MC instead of floated
@@ -1248,9 +1941,24 @@ void qcd_abcd(bool isElec = false)
     (isW ? mcW : mcZ).push_back({s.label, f});
   }
 
-  const std::string outDir  = "./plots/qcd_abcd_" + lep;
+  // Plot layout (2026-08-24): TWO SELF-CONTAINED VIEWS per lepton, one per fit
+  // choice, so each discriminant finds ALL its plots in one place:
+  //   met_fit/   -- the |ETmiss|-discriminant estimate: the MET plane (2D +
+  //                 closure), its display-only lepton-pT templates (no m_T
+  //                 cut, qcd2D_pt_* etc.), and a COPY of the m_T-plane plots
+  //                 as the transport cross-check.
+  //   leppt_fit/ -- the in-fit ABCD of the pT>25 && m_T>40 fit: the m_T
+  //                 counting plane incl. the in-fit layout with the 30-40
+  //                 buffer (qcd2D_mt_infit_*), its closure, the m_T>40
+  //                 template plots (qcd2D_pt_mt40_* etc.), the sideband
+  //                 shape checks and the fake-factor diagnostic (ff_*).
+  // The rootfile is untouched by the layout (names are load-bearing).
+  const std::string outBase = "./plots/qcd_abcd_" + lep;
+  const std::string outMet  = outBase + "/met_fit";
+  const std::string outPt   = outBase + "/leppt_fit";
   const std::string outFile = "./rootfile/qcd_abcd_" + lep + ".root";
-  gSystem->mkdir(outDir.c_str(), kTRUE);
+  gSystem->mkdir(outMet.c_str(), kTRUE);
+  gSystem->mkdir(outPt.c_str(), kTRUE);
   gSystem->mkdir("./rootfile", kTRUE);
 
   std::cout << "\n[CONFIG] channel=" << lep << "  isoCut=" << cfg.isoCut
@@ -1273,10 +1981,14 @@ void qcd_abcd(bool isElec = false)
 
   for (const Plane &pl : planes)
   {
+    // met plane -> the met_fit view; mt plane -> the leppt_fit view (its
+    // counting plane); the mt plots are copied into met_fit/ below (they
+    // double as the MET fit's transport cross-check).
+    const std::string &pOut = (pl.key == "met") ? outMet : outPt;
     for (const auto &cq : charges)
     {
       ABCDResult res;
-      TH1D *tmpl = runPlaneCharge(fData, mcW, mcZ, pl.key, cq.first, cfg, outDir,
+      TH1D *tmpl = runPlaneCharge(fData, mcW, mcZ, pl.key, cq.first, cfg, pOut,
                                   cq.second, pl.ytit, lep, res);
       if (tmpl)
       {
@@ -1291,6 +2003,20 @@ void qcd_abcd(bool isElec = false)
     }
   }
 
+  // the m_T-plane plots double as the MET fit's transport cross-check: copy
+  // them into met_fit/ so each view is self-contained
+  {
+    const char *stems[3] = {"qcd2D_mt_", "closure_noQCD_mt_", "closure_withQCD_mt_"};
+    const char *exts[2] = {".png", ".pdf"};
+    for (const auto &cq : charges)
+      for (int is2 = 0; is2 < 3; ++is2)
+        for (int ie2 = 0; ie2 < 2; ++ie2)
+        {
+          const std::string f = stems[is2] + lep + cq.first + exts[ie2];
+          gSystem->CopyFile((outPt + "/" + f).c_str(), (outMet + "/" + f).c_str(), kTRUE);
+        }
+  }
+
   // --- lepton-pT plane: anti-iso SHAPE x the MET-plane T (template only) ---
   for (const auto &cq : charges)
   {
@@ -1301,13 +2027,14 @@ void qcd_abcd(bool isElec = false)
                 << "; skipping the lepton-pT QCD template\n";
       continue;
     }
-    // "" = nominal iso-pass; "mt40" = + the lepton-pT-discriminant m_T > 40 cut
+    // "" = nominal iso-pass (-> met_fit view, display templates);
+    // "mt40" = + the lepton-pT-discriminant m_T > 40 cut (-> leppt_fit view)
     for (const std::string &tag : {std::string(""), std::string("mt40")})
     {
       TemplateNorm ptn;
       double tilt3[3] = {0.0, 0.0, 0.0};   // tilt %, <pT> lower half, <pT> upper half
-      TH1D *tmpl = runPtCharge(fData, mc, cq.first, cfg, outDir, cq.second, lep, mres, ptn,
-                               tag, tilt3);
+      TH1D *tmpl = runPtCharge(fData, mc, cq.first, cfg, tag.empty() ? outMet : outPt,
+                               cq.second, lep, mres, ptn, tag, tilt3);
       const double tilt = tilt3[0];
       if (!tmpl) continue;
       {
@@ -1342,8 +2069,12 @@ void qcd_abcd(bool isElec = false)
   }
 
   // --- per-pT-bin fake-factor diagnostic (flat-T shape-assumption check) ---
-  runFFCheck(fData, mc, "Plus", cfg, outDir, lepP, lep, infoPlus, fout);
-  runFFCheck(fData, mc, "Minus", cfg, outDir, lepM, lep, infoMinus, fout);
+  runFFCheck(fData, mc, "Plus", cfg, outPt, lepP, lep, infoPlus, fout);
+  runFFCheck(fData, mc, "Minus", cfg, outPt, lepM, lep, infoMinus, fout);
+
+  // --- in-fit ABCD prediction check: horizontal/vertical SR stacks (r = 1) ---
+  runInfitCheck(fData, mcW, mcZ, "Plus", cfg, outPt, lepP, lep, infoPlus);
+  runInfitCheck(fData, mcW, mcZ, "Minus", cfg, outPt, lepM, lep, infoMinus);
 
   printChannelReport(lep, cfg, infoPlus, infoMinus);
 
@@ -1405,6 +2136,6 @@ void qcd_abcd(bool isElec = false)
   delete fData;
   for (MCFile &m : mc) { m.f->Close(); delete m.f; }
 
-  std::cout << "\n[DONE] ABCD QCD (" << lep << ") -> plots: " << outDir
-            << "/   templates: " << outFile << "\n";
+  std::cout << "\n[DONE] ABCD QCD (" << lep << ") -> plots: " << outBase
+            << "/{met_fit,leppt_fit}/   templates: " << outFile << "\n";
 }

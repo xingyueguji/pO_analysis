@@ -1,0 +1,114 @@
+--- POWHEG-BOX/lhapdfif.f	2025-02-13 15:15:54.000000001 +0100
++++ POWHEG-BOX_MOD/lhapdfif.f	2025-09-23 06:14:13.000000001 +0200
+@@ -148,19 +148,34 @@
+       subroutine genericpdf(ndns,ih,xmu2,x,fx)
+ c Interface to lhapdf package.
+       implicit none
+-      include 'nlegborn.h'
+       include 'pwhg_pdf.h'
+       integer ndns,ih
+       real * 8 xmu2,x,fx(-pdf_nparton:pdf_nparton)
++      call genericpdfa(ndns,ih,1,xmu2,x,fx)
++      end
++
++      subroutine genericpdfa(ndns,ih,ia,xmu2,x,fx)
++      implicit none
++      include 'nlegborn.h'
++      include 'pwhg_pdf.h'
++      integer ndns,ih,ia,nPDFset
++      real * 8 xmu2,x,fx(-pdf_nparton:pdf_nparton)
+       real * 8 fxlha(-6:6)
+       integer j
+-      real * 8 tmp
++      real * 8 tmp,Z
+       real*8 photon
++      real * 8 powheginput
++      external powheginput
+       call genericpdfset(ndns)
+ 
++      nPDFset=powheginput('#nPDFerrSet')
++
+ c photon induced work only with MRST2004QED (ndns = 20460)
+       if (ndns.eq.20460) then
+           call evolvePDFphoton(x,sqrt(xmu2),fxlha,photon)
++      elseif ((nPDFset.ge.1).and.(ia.ge.16)) then
++          call evolvePDFhi(ia,nPDFset,x,xmu2,fxlha)
++          photon=0d0
+       else
+           call evolvePDF(x,sqrt(xmu2),fxlha)
+           photon=0d0
+@@ -171,8 +186,27 @@
+       if(pdf_nparton.ge.22) then
+          fx(22)=photon/x
+       endif
++      if(ia.ge.16) then
++         if(ia.eq.208) then
++            Z=82.d0
++         elseif(ia.eq.131) then
++            Z=54.d0
++         elseif(ia.eq.20) then
++            Z=10.d0
++         elseif(ia.eq.16) then
++            Z=8.d0
++         else
++            write(*,*) ' genericpdf: unimplemented ion type ',ia
++            stop
++         endif
++         tmp=fx(-2)
++         fx(-2)=fx(-2)*Z/ia + fx(-1)*(ia-Z)/ia
++         fx(-1)=fx(-1)*Z/ia + tmp*(ia-Z)/ia
++         tmp=fx(1)
++         fx(1)=fx(1)*Z/ia + fx(2)*(ia-Z)/ia
++         fx(2)=fx(2)*Z/ia + tmp*(ia-Z)/ia
+ c 1 is proton, -1 is antiproton, 3 is pi+, -3 is pi-
+-      if(ih.eq.1) then
++      elseif(ih.eq.1) then
+          return
+       elseif(ih.eq.-1) then
+          do j=1,6
+@@ -231,3 +265,45 @@
+       character * 3 whichpdfpk
+       whichpdfpk='lha'
+       end
++
++c evolve routine for EPPS21 nPDF
++      subroutine evolvePDFhi(ia,ipset,xin,qin,f)
++      implicit none
++      integer ia,ipset
++      real*8 xin,qin,f(-6:6)
++      call evolvePDFhiM(ia,ipset,1,xin,qin,f)
++      return
++      END
++
++      subroutine evolvePDFhiM(ia,ipset,nset,xin,qin,f)
++      implicit none
++      real*8 xin,qin,x,q,f(-6:6)
++      real*8 ruv,rdv,ru,rd,rs,rc,rb,rg
++      integer nset,ipset,ia
++
++c check range of x and Q. Freeze in boundaries of EPPS21
++      if(xin.lt.0.0000001) write(*,*) "Warning: x<1E-7"
++      if(xin.gt.1.d0) write(*,*) "Warning: x>1"
++      if(qin.lt.1.69d0) write(*,*) "Warning: Q<1.3GeV"
++      if(qin.gt.100000000.d0) write(*,*) "Warning: Q>10000GeV"
++      x = max(0.0000001,min(1.d0,xin))
++      q = sqrt(max(0d0,1.69d0,min(100000000.d0,qin)))
++
++      if(ipset.lt.1) ipset=1
++      call EPPS21(2,ipset,ia,x,q,ruv,rdv,ru,rd,rs,rc,rb,rg)
++
++      call evolvePDFM(nset,x,q,f)
++      f(0) = f(0)*rg
++      f(1) = f(1)*rdv-f(-1)*(rdv-rd)
++      f(2) = f(2)*ruv-f(-2)*(ruv-ru)
++      f(3) = f(3)*rs
++      f(4) = f(4)*rc
++      f(5) = f(5)*rb
++      f(-5) = f(-5)*rb
++      f(-4) = f(-4)*rc
++      f(-3) = f(-3)*rs
++      f(-2) = f(-2)*ru
++      f(-1) = f(-1)*rd
++
++      return
++      end

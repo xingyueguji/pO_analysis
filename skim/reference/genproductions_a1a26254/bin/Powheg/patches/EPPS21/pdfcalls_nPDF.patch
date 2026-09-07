@@ -1,0 +1,50 @@
+--- POWHEG-BOX/pdfcalls.f	2025-02-13 15:15:54.000000001 +0100
++++ POWHEG-BOX_MOD/pdfcalls.f	2025-09-12 04:54:52.000000001 +0200
+@@ -5,6 +5,11 @@
+       real * 8 x,pdf(-pdf_nparton:pdf_nparton)
+       include 'pwhg_st.h'
+       integer npdf
++      integer nPDF_ia1,nPDF_ia2
++      real * 8 powheginput
++      external powheginput
++      nPDF_ia1=powheginput('#ia1')
++      nPDF_ia2=powheginput('#ia2')
+       if(ih == 1 .and. pdf_ndns1 == -100) then
+          pdf = 1
+          return
+@@ -21,9 +26,9 @@
+          return
+       endif
+       if(ih.eq.1) then
+-         call genericpdf0(pdf_ndns1,pdf_ih1,st_mufact2,x,pdf)
++         call genericpdf0(pdf_ndns1,pdf_ih1,nPDF_ia1,st_mufact2,x,pdf)
+       elseif(ih.eq.2) then
+-         call genericpdf0(pdf_ndns2,pdf_ih2,st_mufact2,x,pdf)
++         call genericpdf0(pdf_ndns2,pdf_ih2,nPDF_ia2,st_mufact2,x,pdf)
+       else
+          write(*,*) ' pdfcall: invalid call, ih=',ih
+          stop
+@@ -37,12 +42,12 @@
+ c In this framework it is found that nrec=8 would be enough.
+ c This provides a remarkable increase in spead (better than a factor of 3)
+ c when cteq6 pdf are used.
+-      subroutine genericpdf0(ns,ih,xmu2,x,fx)
++      subroutine genericpdf0(ns,ih,ia,xmu2,x,fx)
+       implicit none
+       include 'pwhg_pdf.h'
+       integer maxparton
+       parameter (maxparton=22)
+-      integer ns,ih
++      integer ns,ih,ia
+       real * 8 xmu2,x,fx(-pdf_nparton:pdf_nparton)
+       integer nrec
+       parameter (nrec=10)
+@@ -129,7 +134,7 @@
+          ofx(-1,irec)= (tmp_p * nprot + tmp_n * nneut)/nnucl
+          ofx(-2,irec)= (tmp_n * nprot + tmp_p * nneut)/nnucl
+       else
+-         call genericpdf(ns,ih,xmu2,x,
++         call genericpdfa(ns,ih,ia,xmu2,x,
+      1        ofx(-pdf_nparton:pdf_nparton,irec))
+       endif
+ c Flavour thresholds:

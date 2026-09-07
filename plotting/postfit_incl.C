@@ -261,6 +261,11 @@ void postfit_incl(const char *disc = "met",
             ps.boxY1 = 0.46; ps.boxY2 = 0.76;
             ps.legX1 = 0.72; ps.legY1 = 0.275;
             ps.legX2 = 0.93; ps.legY2 = 0.455;
+            if (!isMET) // pT axes start at the selection floor (edge 24
+            {           // encloses the 25 GeV cut on the 2 GeV grid)
+                ps.xRangeLo = 24.0;
+                ps.xRangeHi = 100.0;
+            }
             PlotTuner tuner = [&](TCanvas *c, TH1 *h) {
                 (void)c;
                 if (!h) return;
