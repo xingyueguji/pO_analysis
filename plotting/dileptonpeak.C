@@ -5,7 +5,10 @@
 #include "TSystem.h"
 #include "plotting_helper.C"
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
+#include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the hMass_<syst>Up/Down twins written by skim/lhe_updown.py
 
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 #include <functional>
@@ -236,9 +239,65 @@ void dileptonpeak(bool isElec = 0)
             write_clone(h_Wtau, "wtau");   // W+/W- -> tau nu
             write_clone(h_DYth, "ztau");   // DY -> tau tau
 
+            // --- LHE shape systematics (2026-09-07): <process>_<syst>Up/Down ---
+            // Same sources and treatment as the nominal templates above, from
+            // the hMass_<syst>Up/Down twins skim/lhe_updown.py wrote into every
+            // MC skim file (nPDF / qcdScale / alphaS): rebinned + k_s-scaled,
+            // W+ + W- summed. A syst is written (and listed in the sidecar the
+            // fork's card generator reads) only when all four processes have
+            // both directions.
+            std::vector<std::string> systsWritten;
+            for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+            {
+                const char *syst = pOLhe::kLheSystNames[is];
+                std::map<std::string, TH1D *> got;
+                bool complete = true;
+                for (const char *dir : {"Up", "Down"})
+                {
+                    const std::string nm = Form("%s_%s%s", hname, syst, dir);
+                    TH1D *vDY  = getRebinned(f_DY,    nm.c_str());
+                    TH1D *vWp  = getRebinned(f_Wp,    nm.c_str());
+                    TH1D *vWm  = getRebinned(f_Wm,    nm.c_str());
+                    TH1D *vDYt = getRebinned(f_DYtau, nm.c_str());
+                    TH1D *vWpt = getRebinned(f_Wptau, nm.c_str());
+                    TH1D *vWmt = getRebinned(f_Wmtau, nm.c_str());
+                    if (!vDY || !vWp || !vWm || !vDYt || !vWpt || !vWmt) { complete = false; break; }
+                    kScale(vWp, k_Wp);   kScale(vWm, k_Wm);
+                    kScale(vDY, k_DY);   kScale(vDYt, k_DYtau);
+                    kScale(vWpt, k_Wptau); kScale(vWmt, k_Wmtau);
+                    vWp->Add(vWm);   // w    = W+ + W- (both already detached copies)
+                    vWpt->Add(vWmt); // wtau = W+tau + W-tau
+                    const std::string key = std::string("_") + syst + dir;
+                    got["signal" + key] = vDY;
+                    got["ztau" + key]   = vDYt;
+                    got["w" + key]      = vWp;
+                    got["wtau" + key]   = vWpt;
+                }
+                if (!complete)
+                {
+                    std::cerr << "[WARN] combine_input_Z: LHE syst " << syst << ": " << hname << "_" << syst
+                              << "Up/Down missing in at least one MC skim file -> not written"
+                              << " (run skim/run_lhe_updown.sh after the skim)\n";
+                    continue;
+                }
+                for (auto &kv : got) write_clone(kv.second, kv.first.c_str());
+                systsWritten.push_back(syst);
+            }
+
             fout->Close();
             delete fout;
             std::cout << "[INFO] Saved Combine hist file: " << combineOut << "\n";
+
+            // sidecar (same format as the W inputs): <systematic> <processes>
+            {
+                const std::string side = combineOut.substr(0, combineOut.size() - 5) + "_systs.txt";
+                std::ofstream sf(side.c_str());
+                sf << "# LHE shape systematics in " << combineOut << " (plotting/dileptonpeak.C)\n"
+                   << "# <systematic> <processes carrying <process>_<systematic>Up/Down in Z_incl>\n";
+                for (const std::string &s : systsWritten) sf << s << " signal ztau w wtau\n";
+                std::cout << "[INFO] LHE shape systematics in " << combineOut << ": " << systsWritten.size()
+                          << " listed in " << side << "\n";
+            }
         }
     }
 

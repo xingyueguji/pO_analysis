@@ -20,6 +20,7 @@
 // Output filenames and histogram names are unchanged.
 
 #include "skim_common.h"
+#include "lhe_index.h" // ttbar_w member twins of the fit templates (pOLhe::BookTwins/FillTwins)
 
 #include "TFile.h"
 #include "TTree.h"
@@ -443,6 +444,21 @@ int skim_Wmu(const char *fname, SampleType sample)
   if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Wmu: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
+  // -------- LHE reweighting weights (MC only; lhe_index.h) --------
+  // hiEvtAnalyzer/HiTree::ttbar_w (217 per event) fills the _epps21 / _scale /
+  // _alphas member twins of the FIT-TEMPLATE histograms only (h_met_* and
+  // h_leppt_mt40_*, lab + FB). Data has no branch -> nothing booked/written.
+  // Status AND address set together (fast-skim rule).
+  std::vector<float> *lheW   = nullptr;
+  const bool          hasLhe = isMC && HasBranch(tHi, "ttbar_w");
+  if (hasLhe) { tHi->SetBranchStatus("ttbar_w", 1); tHi->SetBranchAddress("ttbar_w", &lheW); }
+  else if (isMC) std::cout << "[WARN] skim_Wmu: MC sample but no 'ttbar_w' branch on HiTree; LHE member twins not produced.\n";
+  std::vector<TH2D *> lheTwins; // every twin booked below, for the write loop
+  pOLhe::Twins t_met_Wp[kNY], t_met_Wm[kNY], t_met_Wp_FB[kNY], t_met_Wm_FB[kNY];
+  pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
+  bool               warnedLheOnce = false;
+  unsigned long long nLheSkipped   = 0;
+
   // -------- PF tree (for MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -515,6 +531,14 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_mt_Wp[b]->Sumw2();     h_mt_Wm[b]->Sumw2();
     h_met_Wp_FB[b]->Sumw2(); h_met_Wm_FB[b]->Sumw2();
     h_mt_Wp_FB[b]->Sumw2();  h_mt_Wm_FB[b]->Sumw2();
+
+    if (hasLhe) // LHE member twins of the MET fit templates (x axis copied from the nominal)
+    {
+      t_met_Wp[b]    = pOLhe::BookTwins(h_met_Wp[b],    lheTwins);
+      t_met_Wm[b]    = pOLhe::BookTwins(h_met_Wm[b],    lheTwins);
+      t_met_Wp_FB[b] = pOLhe::BookTwins(h_met_Wp_FB[b], lheTwins);
+      t_met_Wm_FB[b] = pOLhe::BookTwins(h_met_Wm_FB[b], lheTwins);
+    }
   }
 
   // QCD sideband (anti-iso) histograms
@@ -664,6 +688,14 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_leppt_Wp_FB[b]->Sumw2();      h_leppt_Wm_FB[b]->Sumw2();
     h_leppt_mt40_Wp[b]->Sumw2();    h_leppt_mt40_Wm[b]->Sumw2();
     h_leppt_mt40_Wp_FB[b]->Sumw2(); h_leppt_mt40_Wm_FB[b]->Sumw2();
+
+    if (hasLhe) // LHE member twins of the lepton-pT (m_T>40) fit templates
+    {
+      t_leppt_mt40_Wp[b]    = pOLhe::BookTwins(h_leppt_mt40_Wp[b],    lheTwins);
+      t_leppt_mt40_Wm[b]    = pOLhe::BookTwins(h_leppt_mt40_Wm[b],    lheTwins);
+      t_leppt_mt40_Wp_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wp_FB[b], lheTwins);
+      t_leppt_mt40_Wm_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wm_FB[b], lheTwins);
+    }
   }
 
   // -------- Leading-lepton kinematics (full W selection) --------
@@ -704,6 +736,11 @@ int skim_Wmu(const char *fname, SampleType sample)
     if (isMC) tGen->GetEntry(ie);
 
     const double w = has_genWeight ? (double)genWeight : 1.0;
+
+    // LHE member weights of this event (all families): w x ttbar_w[i]/ttbar_w[0]
+    pOLhe::MemberWeights mw;
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wmu");
+    if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
 
@@ -846,24 +883,26 @@ int skim_Wmu(const char *fname, SampleType sample)
     const int    ybin    = FindYBin(y, kYEdges,   kNY);
     const int    ybin_FB = FindYBin(y, kYEdgesFB, kNY);
 
+    // The LHE member twins (t_*) are filled right next to their nominal fit
+    // template with the per-event member weights (same events, same x).
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(muPt->at(iLead), w); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(muPt->at(iLead), w); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp[ybin], met, mw); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm[ybin], met, mw); }
       if (passMtCut)
       {
-        if      (isWp) h_leppt_mt40_Wp[ybin]->Fill(muPt->at(iLead), w);
-        else if (isWm) h_leppt_mt40_Wm[ybin]->Fill(muPt->at(iLead), w);
+        if      (isWp) { h_leppt_mt40_Wp[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], muPt->at(iLead), mw); }
+        else if (isWm) { h_leppt_mt40_Wm[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], muPt->at(iLead), mw); }
       }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw); }
       if (passMtCut)
       {
-        if      (isWp) h_leppt_mt40_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w);
-        else if (isWm) h_leppt_mt40_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w);
+        if      (isWp) { h_leppt_mt40_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], muPt->at(iLead), mw); }
+        else if (isWm) { h_leppt_mt40_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], muPt->at(iLead), mw); }
       }
     }
   }
@@ -871,6 +910,10 @@ int skim_Wmu(const char *fname, SampleType sample)
   // -------- Cutflow + outputs --------
   PrintCutflow(std::cout, N);
   WriteCutflowTxt(outPrefix, isMC, N);
+  if (hasLhe)
+    std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
+              << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
+              << " members per template); events without usable ttbar_w: " << nLheSkipped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
@@ -893,6 +936,8 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_leppt_mt40_Wp_FB[i]->Write("", 2);
     h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
+  // LHE member twins of the fit templates (MC only; the vector is empty for data)
+  for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_muPlus [b]->Write("", TObject::kOverwrite);
@@ -1136,6 +1181,19 @@ int skim_Wel(const char *fname, SampleType sample)
   if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Wel: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
+  // -------- LHE reweighting weights (MC only; lhe_index.h) --------
+  // Same as skim_Wmu: ttbar_w fills the _epps21 / _scale / _alphas member
+  // twins of the fit-template histograms only (h_met_*, h_leppt_mt40_*).
+  std::vector<float> *lheW   = nullptr;
+  const bool          hasLhe = isMC && HasBranch(tHi, "ttbar_w");
+  if (hasLhe) { tHi->SetBranchStatus("ttbar_w", 1); tHi->SetBranchAddress("ttbar_w", &lheW); }
+  else if (isMC) std::cout << "[WARN] skim_Wel: MC sample but no 'ttbar_w' branch on HiTree; LHE member twins not produced.\n";
+  std::vector<TH2D *> lheTwins; // every twin booked below, for the write loop
+  pOLhe::Twins t_met_Wp[kNY], t_met_Wm[kNY], t_met_Wp_FB[kNY], t_met_Wm_FB[kNY];
+  pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
+  bool               warnedLheOnce = false;
+  unsigned long long nLheSkipped   = 0;
+
   // -------- PF tree (MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -1210,6 +1268,14 @@ int skim_Wel(const char *fname, SampleType sample)
     h_mt_Wp[b]->Sumw2();     h_mt_Wm[b]->Sumw2();
     h_met_Wp_FB[b]->Sumw2(); h_met_Wm_FB[b]->Sumw2();
     h_mt_Wp_FB[b]->Sumw2();  h_mt_Wm_FB[b]->Sumw2();
+
+    if (hasLhe) // LHE member twins of the MET fit templates (x axis copied from the nominal)
+    {
+      t_met_Wp[b]    = pOLhe::BookTwins(h_met_Wp[b],    lheTwins);
+      t_met_Wm[b]    = pOLhe::BookTwins(h_met_Wm[b],    lheTwins);
+      t_met_Wp_FB[b] = pOLhe::BookTwins(h_met_Wp_FB[b], lheTwins);
+      t_met_Wm_FB[b] = pOLhe::BookTwins(h_met_Wm_FB[b], lheTwins);
+    }
   }
 
   static const int NISO = 3;
@@ -1333,6 +1399,14 @@ int skim_Wel(const char *fname, SampleType sample)
     h_leppt_Wp_FB[b]->Sumw2();      h_leppt_Wm_FB[b]->Sumw2();
     h_leppt_mt40_Wp[b]->Sumw2();    h_leppt_mt40_Wm[b]->Sumw2();
     h_leppt_mt40_Wp_FB[b]->Sumw2(); h_leppt_mt40_Wm_FB[b]->Sumw2();
+
+    if (hasLhe) // LHE member twins of the lepton-pT (m_T>40) fit templates
+    {
+      t_leppt_mt40_Wp[b]    = pOLhe::BookTwins(h_leppt_mt40_Wp[b],    lheTwins);
+      t_leppt_mt40_Wm[b]    = pOLhe::BookTwins(h_leppt_mt40_Wm[b],    lheTwins);
+      t_leppt_mt40_Wp_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wp_FB[b], lheTwins);
+      t_leppt_mt40_Wm_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wm_FB[b], lheTwins);
+    }
   }
 
   // -------- Leading-lepton kinematics (full W selection) --------
@@ -1369,6 +1443,11 @@ int skim_Wel(const char *fname, SampleType sample)
     if (isMC) tGen->GetEntry(ie);
 
     const double w = has_genWeight ? (double)genWeight : 1.0;
+
+    // LHE member weights of this event (all families): w x ttbar_w[i]/ttbar_w[0]
+    pOLhe::MemberWeights mw;
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wel");
+    if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
 
@@ -1518,24 +1597,26 @@ int skim_Wel(const char *fname, SampleType sample)
     const int    ybin    = FindYBin(y, kYEdges,   kNY);
     const int    ybin_FB = FindYBin(y, kYEdgesFB, kNY);
 
+    // The LHE member twins (t_*) are filled right next to their nominal fit
+    // template with the per-event member weights (same events, same x).
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(elePt->at(iLead), w); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(elePt->at(iLead), w); }
+      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp[ybin], met, mw); }
+      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm[ybin], met, mw); }
       if (passMtCut)
       {
-        if      (isWp) h_leppt_mt40_Wp[ybin]->Fill(elePt->at(iLead), w);
-        else if (isWm) h_leppt_mt40_Wm[ybin]->Fill(elePt->at(iLead), w);
+        if      (isWp) { h_leppt_mt40_Wp[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], elePt->at(iLead), mw); }
+        else if (isWm) { h_leppt_mt40_Wm[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], elePt->at(iLead), mw); }
       }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); }
+      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw); }
+      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw); }
       if (passMtCut)
       {
-        if      (isWp) h_leppt_mt40_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w);
-        else if (isWm) h_leppt_mt40_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w);
+        if      (isWp) { h_leppt_mt40_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], elePt->at(iLead), mw); }
+        else if (isWm) { h_leppt_mt40_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], elePt->at(iLead), mw); }
       }
     }
   }
@@ -1543,6 +1624,10 @@ int skim_Wel(const char *fname, SampleType sample)
   // -------- Cutflow + outputs --------
   PrintCutflow(std::cout, N);
   WriteCutflowTxt(outPrefix, isMC, N);
+  if (hasLhe)
+    std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
+              << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
+              << " members per template); events without usable ttbar_w: " << nLheSkipped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
@@ -1565,6 +1650,8 @@ int skim_Wel(const char *fname, SampleType sample)
     h_leppt_mt40_Wp_FB[i]->Write("", 2);
     h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
+  // LHE member twins of the fit templates (MC only; the vector is empty for data)
+  for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_elePlus [b]->Write("", TObject::kOverwrite);
@@ -1711,6 +1798,18 @@ int skim_Zmm(const char *fname, SampleType sample)
   if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Zmm: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
+  // -------- LHE reweighting weights (MC only; lhe_index.h) --------
+  // ttbar_w fills the _epps21 / _scale / _alphas member twins of hMass (the
+  // Z_incl/signal template). HiTree is optional here -> gated on haveHiTree.
+  std::vector<float> *lheW   = nullptr;
+  const bool          hasLhe = isMC && haveHiTree && HasBranch(tHi, "ttbar_w");
+  if (hasLhe) { tHi->SetBranchStatus("ttbar_w", 1); tHi->SetBranchAddress("ttbar_w", &lheW); }
+  else if (isMC) std::cout << "[WARN] skim_Zmm: MC sample but no 'ttbar_w' branch on HiTree; LHE member twins not produced.\n";
+  std::vector<TH2D *> lheTwins;
+  pOLhe::Twins       t_mass; // booked with hMass below
+  bool               warnedLheOnce = false;
+  unsigned long long nLheSkipped   = 0;
+
   // -------- PF iso --------
   std::vector<float> *muPFChIso = nullptr, *muPFNeuIso = nullptr, *muPFPhoIso = nullptr;
   std::vector<float> *muPFPUIso = nullptr;
@@ -1823,6 +1922,7 @@ int skim_Zmm(const char *fname, SampleType sample)
       Form("%s; m_{#mu#mu} [GeV]; Events", outPrefix.c_str()),
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
+  if (hasLhe) t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
 
   // -------- Kinematics of the dimuon (Z) system and its muons --------
   // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
@@ -1875,6 +1975,11 @@ int skim_Zmm(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
 
     const double w = has_genWeight ? (double)genWeight : 1.0;
+
+    // LHE member weights of this event (per EVENT; hMass is filled per OS pair below)
+    pOLhe::MemberWeights mw;
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zmm");
+    if (hasLhe && !lheOk) ++nLheSkipped;
 
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
 
@@ -1941,6 +2046,7 @@ int skim_Zmm(const char *fname, SampleType sample)
           if (!(m < 60 || m > 120))
           {
             hMass->Fill(m, w);
+            if (lheOk) pOLhe::FillTwins(t_mass, m, mw); // LHE member twins (per pair, per-event weights)
             const TLorentzVector ll = v1 + v2;
             h_Zpt ->Fill(ll.Pt(),  w);
             h_Zeta->Fill(ll.Eta(), w);
@@ -1984,12 +2090,16 @@ int skim_Zmm(const char *fname, SampleType sample)
 
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
+  if (hasLhe)
+    std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
+              << "; events without usable ttbar_w: " << nLheSkipped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
+  for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite); // LHE member twins of hMass (MC only)
   h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   h_uPar->Write("", 2); h_uPerp->Write("", 2);
@@ -2142,6 +2252,17 @@ int skim_Zee(const char *fname, SampleType sample)
   if (has_genWeight) { tHi->SetBranchStatus("weight", 1); tHi->SetBranchAddress("weight", &genWeight); }
   else if (isMC)     std::cout << "[WARN] skim_Zee: MC sample but no 'weight' branch on HiTree; filling unweighted.\n";
 
+  // -------- LHE reweighting weights (MC only; lhe_index.h) --------
+  // Same as skim_Zmm: member twins of hMass (the Z_incl/signal template).
+  std::vector<float> *lheW   = nullptr;
+  const bool          hasLhe = isMC && haveHiTree && HasBranch(tHi, "ttbar_w");
+  if (hasLhe) { tHi->SetBranchStatus("ttbar_w", 1); tHi->SetBranchAddress("ttbar_w", &lheW); }
+  else if (isMC) std::cout << "[WARN] skim_Zee: MC sample but no 'ttbar_w' branch on HiTree; LHE member twins not produced.\n";
+  std::vector<TH2D *> lheTwins;
+  pOLhe::Twins       t_mass; // booked with hMass below
+  bool               warnedLheOnce = false;
+  unsigned long long nLheSkipped   = 0;
+
   // -------- HLT objects --------
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEG10_v");
   if (!tHLTobj)
@@ -2238,6 +2359,7 @@ int skim_Zee(const char *fname, SampleType sample)
       Form("%s; m_{ee} [GeV]; Events", outPrefix.c_str()),
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
+  if (hasLhe) t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
 
   // -------- Kinematics of the dielectron (Z) system and its electrons --------
   // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
@@ -2291,6 +2413,11 @@ int skim_Zee(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
 
     const double w = has_genWeight ? (double)genWeight : 1.0;
+
+    // LHE member weights of this event (per EVENT; hMass is filled per OS pair below)
+    pOLhe::MemberWeights mw;
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zee");
+    if (hasLhe && !lheOk) ++nLheSkipped;
 
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
 
@@ -2357,6 +2484,7 @@ int skim_Zee(const char *fname, SampleType sample)
           if (!(m < 60 || m > 120))
           {
             hMass->Fill(m, w);
+            if (lheOk) pOLhe::FillTwins(t_mass, m, mw); // LHE member twins (per pair, per-event weights)
             const TLorentzVector ll = v1 + v2;
             h_Zpt ->Fill(ll.Pt(),  w);
             h_Zeta->Fill(ll.Eta(), w);
@@ -2400,12 +2528,16 @@ int skim_Zee(const char *fname, SampleType sample)
 
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
+  if (hasLhe)
+    std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
+              << "; events without usable ttbar_w: " << nLheSkipped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
   hMass->Write("", 2);
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
+  for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite); // LHE member twins of hMass (MC only)
   h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   h_uPar->Write("", 2); h_uPerp->Write("", 2);

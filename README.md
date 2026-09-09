@@ -30,7 +30,7 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 
 ```bash
 # ---- pO_analysis (plain ROOT) ----
-cd skim        && ./run_all.sh all && ./run_ngen.sh                          # 1,2 skims + N_gen
+cd skim        && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims + nPDF Up/Down + N_gen
 cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
 cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
                           'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
@@ -90,6 +90,7 @@ cd skim/
 grep '^DATA_FILE=' run_all.sh           # 2.1 sanity-check the input path
 ./run_all.sh Wmu Data                   # 2.2 smoke-test one channel×sample
 ./run_all.sh all                        # 2.3 everything (Zmm Zee Wmu Wel × 7 samples)
+./run_lhe_updown.sh                     # 2.4 nPDF Up/Down templates from the LHE weights (MC files; needs lhe_env.sh)
 ```
 CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples…]` (samples ⊂
 `Data DY Wp Wm DYtau Wptau Wmtau`).
@@ -98,6 +99,20 @@ CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples…]` (samples ⊂
 `skim/rootfile/*_hist.root`. W files hold `h_{mt,met}_W{p,m}_y0..11` (+ `_FB`)
 and the ABCD planes `h_iso_{met,mt}_{mu,ele}{Plus,Minus}`; Z files hold `hMass*`
 + Z kinematics + recoil histos.
+
+**2.4 — LHE-weight templates (2026-09-07).** MC files additionally carry, for
+every fit-template histogram (`h_met_*`, `h_leppt_mt40_*`, `hMass`), the TH2D
+member twins `<h>_epps21` (107 = the LHAPDF set `EPPS21nlo_CT18Anlo_O16`),
+`<h>_scale` (9) and `<h>_alphas` (5), filled by the skim with
+`w·ttbar_w[i]/ttbar_w[0]` (layout: `skim/lhe_index.h`). `./run_lhe_updown.sh
+[Wmu|Wel|Zmm|Zee|all]` then writes three Up/Down pairs per template into the
+same files: `<h>_nPDFUp/Down` (LHAPDF's `PDFSet.uncertainty()` per bin),
+`<h>_qcdScaleUp/Down` (μR/μF envelope over all 9 points, per-bin max/min) and
+`<h>_alphaSUp/Down` (the α_s 0.119/0.117 member templates); log:
+`skim/logs/lhe_updown_<chan>.log`; it must be re-run after every re-skim. Environment: `source skim/lhe_env.sh`
+(LHAPDF 6.5.6 built under `~/local/lhapdf` for the PyROOT python; recipe in the
+file). Re-skim regression: `./compare_reskim.sh <backup-dir>` checks every
+pre-existing histogram for bit-identity (`compare_hists.C`).
 
 ## Module 2b — MC normalization (`skim/run_ngen.sh` + `skim/mc_norm.h`) — DONE
 
@@ -155,7 +170,18 @@ lose the report.
 (`Wp_lab_y0..11`, `Wm_lab_y*`, `Wp_fb_y*`, `Wm_fb_y*`, `Wp_incl`, `Wm_incl`,
 `W_incl`), each with the 6 **absolute** templates `data_obs/signal/z/ztau/wtau/qcd`
 (MET discriminant; per-y ABCD QCD). `combine_input_Z.root` has a `Z_incl/` dir
-(`data_obs/signal/w/wtau/ztau`, mass peak). **`combine_input_W_leppt_mt40.root`
+(`data_obs/signal/w/wtau/ztau`, mass peak). **Since 2026-09-07 every MC
+process of every region also carries the LHE shape systematics
+`<process>_{nPDF,qcdScale,alphaS}Up/Down`** (from the skim's Up/Down twins,
+Module 2.4; not in the dropped plain `leppt` file), and a sidecar
+`<input>_systs.txt` next to each file lists what was written — the fork's
+card generator reads it for its `shape` rows. Diagnostics of those templates
+(per-region Up/Down-over-nominal plots, per-region overlays of the nominal
+with all 106 EPPS21 member templates in `members/`, integral-shift summaries
+vs rapidity, the inclusive-consistency tables and the LHAPDF-vs-Hessian
+closure):
+`./run_syst_shapes.sh [met|leppt_mt40|all]` → `plots[/Elec]/syst_shapes/<disc>/`
++ `logs/syst_shapes_<disc>.log`. **`combine_input_W_leppt_mt40.root`
 additionally carries the in-fit-ABCD objects (2026-08-23):** a 7th SR template
 `qcd_abcd` (same shape, total = B0·C40/D0) and 6 CR dirs `{Wp,Wm}_CR{B,C,D}`
 of 1-bin templates — consumed only by `QCD_MODE=abcd` cards; run 3a BEFORE 3b
@@ -189,6 +215,16 @@ Z-inclusive peaks**, with 2N+1 = **25 POIs**:
   every W channel and the DY signal (+`ztau`) under both Z peaks. The DY
   rapidity dependence across W bins comes fixed from MC; only this global
   normalization floats, pinned jointly by the two Z peaks.
+- **LHE shape systematics (2026-09-07, `LHE_SYST=auto|off|list`)** — three
+  `shape` nuisances `nPDF` / `qcdScale` / `alphaS` from the
+  `<process>_<syst>Up/Down` templates in the Combine inputs (Module 2.4 → 3),
+  flag `1` on the MC processes, `-` on the data-driven `qcd` and the CR
+  channels; one θ each for the whole card, group `lhe` (stat-only comparison:
+  `--freezeNuisanceGroups lhe`). The generator reads the inputs' `_systs.txt`
+  sidecars; `LHE_SYST=off` reproduces the earlier cards. Pulls + constraints
+  land in `comb_summary.csv` as `<name>_theta` rows and enter the Asimov
+  closure. With shape nuisances, `postfit_incl.C` needs the FitDiagnostics
+  files (`sync_lxplus.sh download` now pulls them).
 - QCD (data-driven ABCD templates) — three modes via `QCD_MODE`:
   **`lnN` (default)**: one log-normal nuisance per (flavour, charge),
   `qcd_rate_{mu,ele}_{Wp,Wm}`, κ μ 1.15 / e 1.20 at the ABCD prediction
@@ -435,6 +471,8 @@ Run from `correction/`; outputs in `correction/plots/`, `correction/rootfile/`.
 ```bash
 cd correction/
 ./run_qcd_abcd.sh [mu|ele|both]                    # ABCD QCD, logged  [also Module 3a]
+./run_trig_eff_mb.sh [mu|ele|both]                 # trigger turn-on, data vs W MC, MB-triggered denominator, logged
+./run_charge_flip.sh [mu|ele|both]                 # lepton charge-flip rate from W MC, logged
 root -l -b -q 'isolation_mu_tight.C+("<data.root>")' # muon iso study (TightID, Δβ relIso) [current]
 root -l -b -q 'isolation_ele.C+("<data.root>")'   # electron iso/ID ROC study (Δβ relIso)
 root -l -b -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots

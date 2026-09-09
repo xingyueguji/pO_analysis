@@ -1,0 +1,5 @@
+# LHE shape systematics in ./plots/Elec/combine_input_Z.root (plotting/dileptonpeak.C)
+# <systematic> <processes carrying <process>_<systematic>Up/Down in Z_incl>
+nPDF signal ztau w wtau
+qcdScale signal ztau w wtau
+alphaS signal ztau w wtau

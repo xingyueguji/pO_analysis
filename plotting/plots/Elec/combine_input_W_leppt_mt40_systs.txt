@@ -1,0 +1,5 @@
+# LHE shape systematics in ./plots/Elec/combine_input_W_leppt_mt40.root (plotting/mtandmet.C)
+# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>
+nPDF signal z ztau wtau
+qcdScale signal z ztau wtau
+alphaS signal z ztau wtau

@@ -7,7 +7,11 @@
 #include "TSystem.h"
 #include "plotting_helper.C"
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
+#include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the <hist>_<syst>Up/Down twins written by skim/lhe_updown.py
 
+#include <fstream>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <functional>
@@ -457,6 +461,12 @@ void mtandmet(bool isElec = 1)
         // (same shape, total = A0). NSDMI required -- accumulate()/W_incl
         // construct RegionTemplates without makeRegion.
         TH1D *qcdAbcd = nullptr;
+        // LHE shape systematics (2026-09-07): "<process>_<syst>Up|Down" -> the
+        // absolute varied template, process in {signal, z, ztau, wtau}, syst in
+        // pOLhe::kLheSystNames (nPDF, qcdScale, alphaS), built by attachSysts()
+        // from the <hist>_<syst>Up/Down twins skim/lhe_updown.py wrote into
+        // every MC skim file. data_obs and the data-driven qcd/qcd_abcd have none.
+        std::map<std::string, TH1D *> syst;
     };
     std::vector<RegionTemplates> regions;          // PF MET (the nominal fit input)
     std::vector<RegionTemplates> regionsPt[kNVar]; // lepton-pT: [kVarNom], [kVarMt40]
@@ -518,6 +528,54 @@ void mtandmet(bool isElec = 1)
         return h;
     };
 
+    // LHE shape systematics for one region (2026-09-07). For every syst in
+    // pOLhe::kLheSystNames and direction Up/Down, read the per-sample
+    // "<baseName>_<syst><dir>" twins (written by skim/lhe_updown.py into the MC
+    // skim files), scale each by its own k_s and combine them EXACTLY like the
+    // nominal templates: signal = W+ sample + W- sample reconstructed with this
+    // region's charge, wtau = both tau samples, z / ztau single samples. A syst
+    // is attached only when all six inputs exist in BOTH directions (otherwise
+    // [WARN] once per syst and skipped); the sidecar written next to each
+    // Combine input lists what every region carries, and the fork's card
+    // generator must not reference more. Each varied name is Get()'d exactly
+    // once per file (region names are unique), so the in-place Scale is safe.
+    std::set<std::string> lheWarned;
+    auto attachSysts = [&](RegionTemplates &r, const std::string &tag, const char *baseName)
+    {
+        for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+        {
+            const char *syst = pOLhe::kLheSystNames[is];
+            std::map<std::string, TH1D *> got;
+            bool complete = true;
+            for (const char *dir : {"Up", "Down"})
+            {
+                const std::string nm = Form("%s_%s%s", baseName, syst, dir);
+                TH1D *hWp  = getScaled(f_Wp,    k_Wp,    nm.c_str());
+                TH1D *hWm  = getScaled(f_Wm,    k_Wm,    nm.c_str());
+                TH1D *hZ   = getScaled(f_DY,    k_DY,    nm.c_str());
+                TH1D *hZt  = getScaled(f_DYtau, k_DYtau, nm.c_str());
+                TH1D *hWpt = getScaled(f_Wptau, k_Wptau, nm.c_str());
+                TH1D *hWmt = getScaled(f_Wmtau, k_Wmtau, nm.c_str());
+                if (!hWp || !hWm || !hZ || !hZt || !hWpt || !hWmt) { complete = false; break; }
+                const std::string key = std::string("_") + syst + dir; // e.g. "_nPDFUp"
+                const std::string pre = r.dir + tag;
+                got["signal" + key] = sum2(hWp, hWm,   (pre + "_signal" + key).c_str());
+                got["z" + key]      = cloneDetached(hZ,  (pre + "_z" + key).c_str());
+                got["ztau" + key]   = cloneDetached(hZt, (pre + "_ztau" + key).c_str());
+                got["wtau" + key]   = sum2(hWpt, hWmt, (pre + "_wtau" + key).c_str());
+            }
+            if (!complete)
+            {
+                if (lheWarned.insert(syst).second)
+                    std::cerr << "[WARN] LHE syst " << syst << ": " << baseName << "_" << syst
+                              << "Up/Down missing in at least one MC skim file -> not attached"
+                              << " (run skim/run_lhe_updown.sh after the skim)\n";
+                continue;
+            }
+            r.syst.insert(got.begin(), got.end());
+        }
+    };
+
     // One lepton-pT stack region. accumulate=true (lab bins) also feeds the
     // inclusive accumulators, mirroring how h_met_inclusive* are built.
     auto lepPtStack = [&](int var, int iy, const char *chg, const char *suf,
@@ -568,6 +626,9 @@ void mtandmet(bool isElec = 1)
             Form("%s_%s_y%d", chg, (suf[0] ? "fb" : "lab"), iy),
             Form("_lp%s", varTag[var]),
             hD, hWp, hWm, hZ, hZtau, hWptau, hWmtau, qcdH, qcdAbcdH));
+        // LHE shape systematics: the skim stores twins for h_met_* and
+        // h_leppt_mt40_* only (the plain leppt discriminant is dropped).
+        if (var == kVarMt40) attachSysts(regionsPt[var].back(), Form("_lp%s", varTag[var]), nm.c_str());
 
         if (accumulate)
         {
@@ -733,22 +794,28 @@ void mtandmet(bool isElec = 1)
         // Collect the absolute per-region Combine templates (MET discriminant).
         // signal carries BOTH W samples reconstructed with this charge; the EWK
         // backgrounds and the per-y ABCD QCD are projected the same way.
+        // Each region also gets its LHE shape systematics (attachSysts: the
+        // <hist>_<syst>Up/Down twins of the same per-sample histograms).
         regions.push_back(makeRegion(Form("Wp_lab_y%d", iy), "",
             h_met_Wp, h_met_Wp_MC_Wp, h_met_Wp_MC_Wm,
             h_met_Wp_MC_Z, h_met_Wp_MC_Ztau, h_met_Wp_MC_Wptau, h_met_Wp_MC_Wmtau,
             qcd_met_Wp));
+        attachSysts(regions.back(), "", Form("h_met_Wp_y%d", iy));
         regions.push_back(makeRegion(Form("Wm_lab_y%d", iy), "",
             h_met_Wm, h_met_Wm_MC_Wp, h_met_Wm_MC_Wm,
             h_met_Wm_MC_Z, h_met_Wm_MC_Ztau, h_met_Wm_MC_Wptau, h_met_Wm_MC_Wmtau,
             qcd_met_Wm));
+        attachSysts(regions.back(), "", Form("h_met_Wm_y%d", iy));
         regions.push_back(makeRegion(Form("Wp_fb_y%d", iy), "",
             h_met_Wp_FB, h_met_Wp_FB_MC_Wp, h_met_Wp_FB_MC_Wm,
             h_met_Wp_FB_MC_Z, h_met_Wp_FB_MC_Ztau, h_met_Wp_FB_MC_Wptau, h_met_Wp_FB_MC_Wmtau,
             qcd_met_Wp_FB));
+        attachSysts(regions.back(), "", Form("h_met_Wp_y%d_FB", iy));
         regions.push_back(makeRegion(Form("Wm_fb_y%d", iy), "",
             h_met_Wm_FB, h_met_Wm_FB_MC_Wp, h_met_Wm_FB_MC_Wm,
             h_met_Wm_FB_MC_Z, h_met_Wm_FB_MC_Ztau, h_met_Wm_FB_MC_Wptau, h_met_Wm_FB_MC_Wmtau,
             qcd_met_Wm_FB));
+        attachSysts(regions.back(), "", Form("h_met_Wm_y%d_FB", iy));
 
         if (!h_mt_inclusive)
         {
@@ -1456,6 +1523,7 @@ void mtandmet(bool isElec = 1)
                     add(s.wtau, r.wtau, "_wtau");
                     add(s.qcd,  r.qcd,  "_qcd");
                     add(s.qcdAbcd, r.qcdAbcd, "_qcd_abcd");
+                    for (auto &kv : r.syst) add(s.syst[kv.first], kv.second, ("_" + kv.first).c_str());
                 }
                 return s;
             };
@@ -1470,6 +1538,12 @@ void mtandmet(bool isElec = 1)
             W_incl.wtau = sum2(Wp_incl.wtau, Wm_incl.wtau, ("W_incl" + tag + "_wtau").c_str());
             W_incl.qcd  = sum2(Wp_incl.qcd,  Wm_incl.qcd,  ("W_incl" + tag + "_qcd").c_str());
             W_incl.qcdAbcd = sum2(Wp_incl.qcdAbcd, Wm_incl.qcdAbcd, ("W_incl" + tag + "_qcd_abcd").c_str());
+            for (auto &kv : Wp_incl.syst)
+            {
+                auto it = Wm_incl.syst.find(kv.first);
+                W_incl.syst[kv.first] = sum2(kv.second, it != Wm_incl.syst.end() ? it->second : nullptr,
+                                             ("W_incl" + tag + "_" + kv.first).c_str());
+            }
 
             auto writeRegionTemplates = [&](const RegionTemplates &r) {
                 TDirectory *d = fcomb->mkdir(r.dir.c_str());
@@ -1496,6 +1570,9 @@ void mtandmet(bool isElec = 1)
                 wn(r.wtau, "wtau");
                 if (r.qcd) wn(r.qcd, "qcd");
                 if (r.qcdAbcd) wn(r.qcdAbcd, "qcd_abcd");
+                // LHE shape systematics: <process>_<syst>Up / Down (Combine's
+                // `shapes ... $PROCESS_$SYSTEMATIC` convention)
+                for (auto &kv : r.syst) wn(kv.second, kv.first.c_str());
             };
 
             if ((int)regs.size() != 4 * NY)
@@ -1545,6 +1622,39 @@ void mtandmet(bool isElec = 1)
                       << "  (" << regs.size()
                       << " per-(charge,y) regions + Wp_incl/Wm_incl/W_incl"
                       << (nCR ? Form(" + %d CR dirs", nCR) : "") << ")\n";
+
+            // --- LHE shape-systematics sidecar (read by the fork's card generator) ---
+            // <combineOut minus .root>_systs.txt: one line per systematic that is
+            // COMPLETE (signal/z/ztau/wtau x Up/Down) in EVERY per-(charge,y)
+            // region, followed by the processes carrying it. An incomplete syst
+            // is warned about and left out, so a card can never reference a
+            // shape that is missing somewhere.
+            {
+                const std::string side = combineOut.substr(0, combineOut.size() - 5) + "_systs.txt";
+                std::ofstream sf(side.c_str());
+                sf << "# LHE shape systematics in " << combineOut << " (plotting/mtandmet.C)\n"
+                   << "# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>\n";
+                int nListed = 0;
+                for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+                {
+                    const char *syst = pOLhe::kLheSystNames[is];
+                    int nFull = 0;
+                    for (auto &r : regs)
+                    {
+                        int have = 0;
+                        for (const char *p : {"signal", "z", "ztau", "wtau"})
+                            for (const char *d : {"Up", "Down"})
+                                have += (int)r.syst.count(std::string(p) + "_" + syst + d);
+                        if (have == 8) ++nFull;
+                    }
+                    if (nFull > 0 && nFull == (int)regs.size()) { sf << syst << " signal z ztau wtau\n"; ++nListed; }
+                    else if (nFull > 0)
+                        std::cerr << "[WARN] " << combineOut << ": LHE syst " << syst << " complete in only "
+                                  << nFull << "/" << regs.size() << " regions -> NOT listed in " << side << "\n";
+                }
+                std::cout << "[INFO] LHE shape systematics in " << combineOut << ": " << nListed
+                          << " listed in " << side << "\n";
+            }
         };
 
         writeCombineInput(outBase + "/combine_input_W.root", regions, "", nullptr);

@@ -26,10 +26,22 @@
 // Summing those over i reproduces combine's postfit sum identically -- and
 // needs only the structured inputs (combine_input_W*.root) plus the fitted
 // parameters (simfit/summary/comb_W_yields.csv), i.e. no fitDiagnostics file.
-// NB if SHAPE systematics are ever added to the fit, this shortcut breaks and
-// the plots must come from shapes_fit_s in fitDiagnostics instead.
+//
+// WITH SHAPE NUISANCES (2026-09-07: the LHE nPDF / qcdScale / alphaS rows,
+// recorded in the fitted cards' sidecar datacards/qcd_lnn_kappas.txt as
+// `lheSysts a,b,c`) the shortcut is no longer exact: the fitted thetas morph
+// every MC template. Then the per-channel POSTFIT shapes are read from
+// shapes_fit_s/<F>_<C>_lab_y<i>/<process> of fits/simfit_lab/
+// fitDiagnostics_simfit_lab.root (pulled by `sync_lxplus.sh download`),
+// remapped onto the input's physical axis (FitDiagnostics stores unit-width
+// bins) and summed over the 12 y bins -- same procedure as the fork's
+// draw_postfit_pO.C. If that file is missing the macro falls back to the
+// prefit x scale reconstruction WITH A LOUD WARNING and labels the plot
+// "approx" (the theta-shape effects are ignored there).
 //
 //   postfit_incl(disc)  -> plots/comb/postfit_incl/<disc>/postfit_{mu,ele}_{Wp,Wm,W}.{png,pdf}
+//   postfit_incl(disc, csv, muW, eleW, lheSysts, fitDiag): explicit paths;
+//     lheSysts "" = read the sidecar, "none" = force the shortcut path
 //
 // Same cosmetics as the per-bin postfit plots (SaveNicePlot1D_WithBkg, pull
 // pad). Run by analysis/run_observables.sh (comb chain), or by hand:
@@ -142,23 +154,90 @@ void AccTemplate(TFile *f, const TString &path, TH1D *&acc, const char *nm)
     acc->Add(h);
 }
 
+// The `lheSysts` line of the fitted cards' sidecar ("" when absent/none).
+std::string ReadLheSysts(const TString &sidecar)
+{
+    std::ifstream in(sidecar.Data());
+    if (!in) return "";
+    std::string key, val;
+    while (in >> key >> val)
+        if (key == "lheSysts") return (val == "none") ? "" : val;
+    return "";
+}
+
+// Add a FitDiagnostics postfit shape (unit-width bins 1..N, contents = events)
+// into acc on the physical axis of ref (the input's data_obs), as the fork's
+// draw_postfit_pO.C::RemapToRef does; bin errors = the postfit uncertainties.
+bool AccPostfitShape(TFile *fd, const TString &path, const TH1 *ref, TH1D *&acc, const char *nm)
+{
+    TH1 *src = (TH1 *)fd->Get(path);
+    if (!src) return false;
+    if (!acc)
+    {
+        acc = (TH1D *)ref->Clone(nm);
+        acc->SetDirectory(nullptr);
+        acc->Reset();
+    }
+    const int n = std::min(src->GetNbinsX(), acc->GetNbinsX());
+    if (src->GetNbinsX() != acc->GetNbinsX())
+        std::cerr << "[WARN] " << path << ": postfit nbins " << src->GetNbinsX()
+                  << " != input " << acc->GetNbinsX() << " (copying " << n << ")\n";
+    for (int b = 1; b <= n; ++b)
+    {
+        acc->SetBinContent(b, acc->GetBinContent(b) + src->GetBinContent(b));
+        const double e0 = acc->GetBinError(b), e1 = src->GetBinError(b);
+        acc->SetBinError(b, std::sqrt(e0 * e0 + e1 * e1));
+    }
+    return true;
+}
+
 } // namespace
 
 void postfit_incl(const char *disc = "met",
                   const char *csv = nullptr,       // default: pO_fit_out<suffix>/simfit/summary/comb_W_yields.csv
                   const char *muWFile = nullptr,   // default: plots/combine_input_W<suffix>.root
-                  const char *eleWFile = nullptr)  // default: plots/Elec/combine_input_W<suffix>.root
+                  const char *eleWFile = nullptr,  // default: plots/Elec/combine_input_W<suffix>.root
+                  const char *lheSysts = "",       // "" = read the fitted cards' sidecar; "none" = shortcut path
+                  const char *fitDiag = nullptr)   // default: pO_fit_out<suffix>/simfit/fits/simfit_lab/fitDiagnostics_simfit_lab.root
 {
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
 
-    const TString sCsv = csv ? TString(csv)
-        : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit/summary/comb_W_yields.csv", dsuf.Data());
+    const TString fork = TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit", dsuf.Data());
+    const TString sCsv = csv ? TString(csv) : fork + "/summary/comb_W_yields.csv";
     const TString sMuW  = muWFile  ? TString(muWFile)  : TString::Format("./plots/combine_input_W%s.root", dsuf.Data());
     const TString sEleW = eleWFile ? TString(eleWFile) : TString::Format("./plots/Elec/combine_input_W%s.root", dsuf.Data());
+    const TString sFD   = fitDiag ? TString(fitDiag) : fork + "/fits/simfit_lab/fitDiagnostics_simfit_lab.root";
 
     SimfitPars pars = ReadPars(sCsv);
     if (!pars.ok) return;
+
+    // shape nuisances in the fit? -> the postfit shapes must come from shapes_fit_s
+    std::string lhe = (TString(lheSysts) == "") ? ReadLheSysts(fork + "/datacards/qcd_lnn_kappas.txt")
+                                                : ((TString(lheSysts) == "none") ? "" : std::string(lheSysts));
+    int nLhe = 0;
+    for (size_t i = 0; i < lhe.size(); ++i) if (lhe[i] == ',') ++nLhe;
+    if (!lhe.empty()) ++nLhe;
+    TFile *fFD = nullptr;
+    bool useShapes = false;
+    if (nLhe > 0)
+    {
+        fFD = TFile::Open(sFD, "READ");
+        if (fFD && !fFD->IsZombie() && fFD->Get("shapes_fit_s"))
+        {
+            useShapes = true;
+            std::cout << "[postfit-incl] shape nuisances in the fit (" << lhe
+                      << ") -> postfit shapes from " << sFD << "\n";
+        }
+        else
+        {
+            if (fFD) { fFD->Close(); delete fFD; fFD = nullptr; }
+            std::cerr << "[WARN] postfit_incl: the fit has shape nuisances (" << lhe << ") but " << sFD
+                      << " is missing or has no shapes_fit_s -> falling back to prefit x fitted scale,"
+                         " which IGNORES the fitted shape nuisances (approximate; run"
+                         " sync_lxplus.sh download to fetch the fitDiagnostics files)\n";
+        }
+    }
 
     const bool isMET = (TString(disc) == "met");
     const char *xTitle = isMET ? "PF MET (GeV)" : "Lepton p_{T} (GeV)";
@@ -190,6 +269,21 @@ void postfit_incl(const char *disc = "met",
                     const TString R = TString::Format("%s_lab_y%d", C, iy);
                     // data (unscaled)
                     AccTemplate(fW, R + "/data_obs", hData, Form("pfincl_data_%s_%s", flavs[fl], tag[is]));
+                    if (useShapes)
+                    {
+                        // the fit's own postfit templates (thetas applied), per
+                        // grand-fit channel <F>_<C>_lab_y<i>, on the input's axis
+                        const TH1 *ref = (TH1 *)fW->Get(R + "/data_obs");
+                        const TString ch = TString::Format("shapes_fit_s/%s_%s", flavs[fl], R.Data());
+                        bool okc = ref != nullptr;
+                        okc &= AccPostfitShape(fFD, ch + "/signal", ref, hSig, Form("pfincl_sig_%s_%s", flavs[fl], tag[is]));
+                        okc &= AccPostfitShape(fFD, ch + "/wtau",   ref, hWt,  Form("pfincl_wt_%s_%s",  flavs[fl], tag[is]));
+                        okc &= AccPostfitShape(fFD, ch + "/z",      ref, hZ,   Form("pfincl_z_%s_%s",   flavs[fl], tag[is]));
+                        okc &= AccPostfitShape(fFD, ch + "/ztau",   ref, hZt,  Form("pfincl_zt_%s_%s",  flavs[fl], tag[is]));
+                        okc &= AccPostfitShape(fFD, ch + "/qcd",    ref, hQ,   Form("pfincl_q_%s_%s",   flavs[fl], tag[is]));
+                        if (!okc) std::cerr << "[WARN] postfit_incl: incomplete " << ch << " in " << sFD << "\n";
+                        continue;
+                    }
                     // postfit-scaled templates: clone region histos, scale, add
                     auto addScaled = [&](const char *proc, TH1D *&acc, double scale, const char *nm) {
                         TH1 *h = (TH1 *)fW->Get(R + "/" + proc);
@@ -238,8 +332,9 @@ void postfit_incl(const char *disc = "met",
             // abcd mode: the multiplier is y-identical so qcdShared fires ->
             // 1 QCD param per (flavour, charge) -- the right count here, since
             // the 3 CR scales are constrained by CR data outside this sum.
-            const int ndfPars = pars.qcdShared ? ((is == 2) ? 28 : 15)
-                                               : ((is == 2) ? 49 : 25);
+            // + the LHE shape nuisances (one theta each, shared by everything)
+            const int ndfPars = (pars.qcdShared ? ((is == 2) ? 28 : 15)
+                                                : ((is == 2) ? 49 : 25)) + nLhe;
             int ndf = nUsed - ndfPars;
             if (ndf < 1) ndf = (nUsed > 0 ? nUsed : 1);
             std::vector<std::string> box = {
@@ -247,7 +342,9 @@ void postfit_incl(const char *disc = "met",
                 Form("Postfit total: %.0f", hTot->Integral()),
                 Form("#chi^{2}/ndf = %.2f, p = %.2f", chi2 / ndf, TMath::Prob(chi2, ndf)),
                 Form("DY norm = %.3f #pm %.3f", pars.rZ, pars.rZe),
-                "sum of 12 lab y bins (per-bin r's)"};
+                useShapes ? "sum of 12 lab y bins (shapes_fit_s)"
+                          : (nLhe > 0 ? "sum of 12 lab y bins (APPROX: shape #theta's ignored)"
+                                      : "sum of 12 lab y bins (per-bin r's)")};
 
             PlotStyle ps;
             ps.drawOpt = "hist";
@@ -283,5 +380,8 @@ void postfit_incl(const char *disc = "met",
         fW->Close();
         delete fW;
     }
-    std::cout << "[OK] inclusive simfit postfit stacks (disc=" << disc << ") -> " << outDir << "\n";
+    if (fFD) { fFD->Close(); delete fFD; }
+    std::cout << "[OK] inclusive simfit postfit stacks (disc=" << disc << ", "
+              << (useShapes ? "shapes_fit_s" : (nLhe > 0 ? "APPROX prefit x scale" : "prefit x scale"))
+              << ") -> " << outDir << "\n";
 }
