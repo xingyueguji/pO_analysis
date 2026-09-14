@@ -6,7 +6,9 @@
 #include "plotting_helper.C"
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the hMass_<syst>Up/Down twins written by skim/lhe_updown.py
+#include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames: the hMass_mu{ID,Iso,Trig}Up/Down twins written by skim.C (muon MC only)
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <string>
@@ -239,17 +241,21 @@ void dileptonpeak(bool isElec = 0)
             write_clone(h_Wtau, "wtau");   // W+/W- -> tau nu
             write_clone(h_DYth, "ztau");   // DY -> tau tau
 
-            // --- LHE shape systematics (2026-09-07): <process>_<syst>Up/Down ---
+            // --- shape systematics (2026-09-07 LHE, 2026-09-14 muon SFs): <process>_<syst>Up/Down ---
             // Same sources and treatment as the nominal templates above, from
-            // the hMass_<syst>Up/Down twins skim/lhe_updown.py wrote into every
-            // MC skim file (nPDF / qcdScale / alphaS): rebinned + k_s-scaled,
-            // W+ + W- summed. A syst is written (and listed in the sidecar the
-            // fork's card generator reads) only when all four processes have
-            // both directions.
+            // the hMass_<syst>Up/Down twins in every MC skim file (nPDF /
+            // qcdScale / alphaS from skim/lhe_updown.py, both flavours; muID /
+            // muIso / muTrig from skim.C, muon channel only): rebinned +
+            // k_s-scaled, W+ + W- summed. A syst is written (and listed in the
+            // sidecar the fork's card generator reads) only when all four
+            // processes have both directions.
+            std::vector<std::string> systNames(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
+            if (!isElec)
+                systNames.insert(systNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
             std::vector<std::string> systsWritten;
-            for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+            for (const std::string &systStr : systNames)
             {
-                const char *syst = pOLhe::kLheSystNames[is];
+                const char *syst = systStr.c_str();
                 std::map<std::string, TH1D *> got;
                 bool complete = true;
                 for (const char *dir : {"Up", "Down"})
@@ -275,9 +281,9 @@ void dileptonpeak(bool isElec = 0)
                 }
                 if (!complete)
                 {
-                    std::cerr << "[WARN] combine_input_Z: LHE syst " << syst << ": " << hname << "_" << syst
+                    std::cerr << "[WARN] combine_input_Z: shape syst " << syst << ": " << hname << "_" << syst
                               << "Up/Down missing in at least one MC skim file -> not written"
-                              << " (run skim/run_lhe_updown.sh after the skim)\n";
+                              << " (LHE families: run skim/run_lhe_updown.sh after the skim; muon SFs: re-skim)\n";
                     continue;
                 }
                 for (auto &kv : got) write_clone(kv.second, kv.first.c_str());
@@ -292,10 +298,12 @@ void dileptonpeak(bool isElec = 0)
             {
                 const std::string side = combineOut.substr(0, combineOut.size() - 5) + "_systs.txt";
                 std::ofstream sf(side.c_str());
-                sf << "# LHE shape systematics in " << combineOut << " (plotting/dileptonpeak.C)\n"
+                sf << "# Shape systematics in " << combineOut << " (plotting/dileptonpeak.C)\n"
                    << "# <systematic> <processes carrying <process>_<systematic>Up/Down in Z_incl>\n";
+                if (std::find(systNames.begin(), systNames.end(), std::string("muTrig")) != systNames.end())
+                    sf << "#! muTrig corr " << pOSF::kMuTrigCorr << "\n"; // dormant while the combined muSF is shipped; see mtandmet.C
                 for (const std::string &s : systsWritten) sf << s << " signal ztau w wtau\n";
-                std::cout << "[INFO] LHE shape systematics in " << combineOut << ": " << systsWritten.size()
+                std::cout << "[INFO] shape systematics in " << combineOut << ": " << systsWritten.size()
                           << " listed in " << side << "\n";
             }
         }

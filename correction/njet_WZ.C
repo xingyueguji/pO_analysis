@@ -287,6 +287,14 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   if (has_puIso) { tLep->SetBranchStatus(bPU, 1); tLep->SetBranchAddress(bPU, &puIso); }
   else std::cout << "[WARN] RunW: no " << bPU << " branch; relIso uncorrected (no Delta-beta).\n";
 
+  // ECAL-gap veto input (electrons only, 2026-09-14) -- tracks the skim's eleIDNoGap
+  std::vector<float> *scEta = nullptr;
+  if (!isMu)
+  {
+    if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunW: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+  }
+
   const bool has_muIsPF = isMu && HasBranch(tLep, "muIsPF");
   if (has_muIsPF) { tLep->SetBranchStatus("muIsPF", 1); tLep->SetBranchAddress("muIsPF", &muIsPF); }
 
@@ -397,6 +405,7 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
       {
         if (lepPt->at(i) <= dyPtMin) continue;
         if (lepID->at(i) == 0) continue;
+        if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
         if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
         if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
         cand.push_back(i);
@@ -422,6 +431,7 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
     for (int i = 0; i < nLep; ++i)
     {
       if (lepID->at(i) == 0) continue;
+      if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
       if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
       if (lepPt->at(i) > bestPt) { bestPt = lepPt->at(i); iLead = i; }
     }
@@ -475,7 +485,7 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   const double ptMin1  = 15.0; // leading leg
   const double ptMin2  = 10.0; // both legs
   const double etaMax  = 2.4;
-  const double isoMax  = isMu ? 0.2 : 0.095;
+  const double isoMax  = isMu ? 0.15 : 0.095; // = the skim's (Zmm 0.2 -> 0.15 on 2026-09-14, harmonized with the W)
   const double vzMax   = 15.0;
   const double massMin = 60.0, massMax = 120.0;
   const double lepMass = isMu ? MU_MASS : ELE_MASS;
@@ -573,6 +583,14 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   if (has_muIsGlobal) { tLep->SetBranchStatus("muIsGlobal", 1); tLep->SetBranchAddress("muIsGlobal", &muIsGlobal); }
   else if (isMu) std::cout << "[WARN] RunZ: no muIsGlobal branch; Global requirement not applied.\n";
 
+  // ECAL-gap veto input (electrons only, 2026-09-14) -- both legs, as in skim_Zee
+  std::vector<float> *scEta = nullptr;
+  if (!isMu)
+  {
+    if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunZ: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+  }
+
   // -------- HLT bit --------
   const std::string hltNeedle = isMu ? "HLT_OxyL1SingleMuOpen_v1" : "HLT_OxyL1SingleEG10_v1";
   const std::string hltName   = FindBranchContaining(tHLT, hltNeedle);
@@ -641,6 +659,7 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
     {
       if (lepPt->at(i) < ptMin2) return false;
       if (TMath::Abs(lepEta->at(i)) > etaMax) return false;
+      if (scEta && pOSkim::InEcalGap(scEta->at(i))) return false; // e: ECAL crack veto
       if (has_muIsGlobal && muIsGlobal->at(i) == 0) return false;
       if (lepID->at(i) == 0) return false;
       return true;

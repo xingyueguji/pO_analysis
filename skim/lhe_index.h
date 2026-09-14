@@ -332,6 +332,16 @@ inline bool ComputeMemberWeights(double w, const std::vector<float> *ww, MemberW
   return true;
 }
 
+// Multiply every member weight by a per-event factor that becomes part of the
+// nominal weight only after the lepton is known (the muon efficiency SFs of
+// skim/muon_sf.h, folded in after step 8) -- keeps member 0 == the nominal
+// fill weight, so the LHE variations are computed on the SF-weighted MC.
+inline void ScaleMemberWeights(MemberWeights &mw, double factor)
+{
+  for (int f = 0; f < kNFamilies; ++f)
+    for (int m = 0; m < kNMembers[f]; ++m) mw.w[f][m] *= factor;
+}
+
 // One twin: x axis copied from the nominal (fixed or variable bins), y = member index.
 inline TH2D *BookTwin(const TH1 *nom, Family f)
 {

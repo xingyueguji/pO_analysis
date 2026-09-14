@@ -21,6 +21,7 @@
 
 #include "skim_common.h"
 #include "lhe_index.h" // ttbar_w member twins of the fit templates (pOLhe::BookTwins/FillTwins)
+#include "muon_sf.h"   // muon efficiency SFs folded into the MC weight + their Up/Down twins (pOSF)
 
 #include "TFile.h"
 #include "TTree.h"
@@ -459,6 +460,28 @@ int skim_Wmu(const char *fname, SampleType sample)
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
 
+  // -------- Muon efficiency scale factors (MC only; muon_sf.h) --------
+  // ID (TightID | TrackerMuons) x ISO (TightPFIso | TightID) from the Muon POG
+  // pp-2025 file + the trigger SF (path fired && matched, per y bin) of
+  // correction/trig_eff_mb.C. Folded into `w` once the leading muon is known
+  // (after step 8, before any fill); every fit-template histogram additionally
+  // gets <h>_muID/muIso/muTrigUp|Down twins (one source at +-1 sigma, the
+  // others nominal). Missing inputs are FATAL -- never a silent SF = 1;
+  // PO_MUON_SF=off disables on purpose (regression checks) and says so.
+  pOSF::MuonSF muonSF;
+  const bool   applySF = isMC && pOSF::MuonSFEnabled();
+  if (applySF && !muonSF.Load(std::cout))
+  {
+    std::cerr << "[FATAL] skim_Wmu: muon SF inputs missing/unreadable (see the [SF] ERR line above)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applySF) std::cout << "[WARN] skim_Wmu: PO_MUON_SF=off -> MC filled WITHOUT muon scale factors\n";
+  std::vector<pOSF::SFTwins> sfTwinSets; // every SF twin set booked below (finalized + written at the end)
+  pOSF::SFTwins s_met_Wp[kNY], s_met_Wm[kNY], s_met_Wp_FB[kNY], s_met_Wm_FB[kNY];
+  pOSF::SFTwins s_leppt_mt40_Wp[kNY], s_leppt_mt40_Wm[kNY], s_leppt_mt40_Wp_FB[kNY], s_leppt_mt40_Wm_FB[kNY];
+  pOSF::SFStats sfStats;
+
   // -------- PF tree (for MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -715,6 +738,22 @@ int skim_Wmu(const char *fname, SampleType sample)
   h_lepPt->Sumw2(); h_lepEta->Sumw2(); h_lepPhi->Sumw2();
   h_lepPt_mt40->Sumw2(); h_lepEta_mt40->Sumw2(); h_lepPhi_mt40->Sumw2();
 
+  // -------- Muon-SF twins of the fit templates (MC only; muon_sf.h) --------
+  // Same histogram set as the LHE member twins (h_met_* and h_leppt_mt40_*,
+  // lab + FB); booked here, after every nominal template exists.
+  if (applySF)
+    for (int b = 0; b < kNY; ++b)
+    {
+      s_met_Wp[b]    = pOSF::BookSFTwins(h_met_Wp[b],    sfTwinSets);
+      s_met_Wm[b]    = pOSF::BookSFTwins(h_met_Wm[b],    sfTwinSets);
+      s_met_Wp_FB[b] = pOSF::BookSFTwins(h_met_Wp_FB[b], sfTwinSets);
+      s_met_Wm_FB[b] = pOSF::BookSFTwins(h_met_Wm_FB[b], sfTwinSets);
+      s_leppt_mt40_Wp[b]    = pOSF::BookSFTwins(h_leppt_mt40_Wp[b],    sfTwinSets);
+      s_leppt_mt40_Wm[b]    = pOSF::BookSFTwins(h_leppt_mt40_Wm[b],    sfTwinSets);
+      s_leppt_mt40_Wp_FB[b] = pOSF::BookSFTwins(h_leppt_mt40_Wp_FB[b], sfTwinSets);
+      s_leppt_mt40_Wm_FB[b] = pOSF::BookSFTwins(h_leppt_mt40_Wm_FB[b], sfTwinSets);
+    }
+
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
   const Long64_t nEntries = tMu->GetEntries();
@@ -735,11 +774,14 @@ int skim_Wmu(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
     if (isMC) tGen->GetEntry(ie);
 
-    const double w = has_genWeight ? (double)genWeight : 1.0;
+    // Generator weight (MC) = the SF-free base weight; the muon SFs are folded
+    // in below (`w`), once the leading muon is known.
+    const double wGen = has_genWeight ? (double)genWeight : 1.0;
 
-    // LHE member weights of this event (all families): w x ttbar_w[i]/ttbar_w[0]
+    // LHE member weights of this event (all families): wGen x ttbar_w[i]/ttbar_w[0]
+    // (rescaled by the SF below, so member 0 stays == the nominal fill weight)
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wmu");
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(wGen, lheW, mw, warnedLheOnce, "skim_Wmu");
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
@@ -816,6 +858,18 @@ int skim_Wmu(const char *fname, SampleType sample)
     if (!passMatch) continue;
     if (passIsoNominal && passPtNominal) N[8]++;
 
+    // -------- Muon efficiency SFs (MC; data: 1) --------
+    // One factor per event for the leading muon: ID x [passIso ? ISO : 1] x
+    // TRIG(y). It multiplies the weight of EVERY fill below -- the leading muon
+    // is TightID'd and trigger-matched in all of them; the ISO factor applies
+    // only where it passes the iso cut (the anti-iso sideband has no measured
+    // SF). The LHE member weights are rescaled too, so the theory variations
+    // are computed on the SF-weighted nominal.
+    const pOSF::EventSF esf = applySF ? muonSF.W(muPt->at(iLead), muEta->at(iLead), passIsoNominal)
+                                      : pOSF::EventSF::Unit();
+    const double w = wGen * esf.nom;
+    if (lheOk) pOLhe::ScaleMemberWeights(mw, esf.nom);
+
     // -------- Fill final distributions (after step 8) --------
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
     const double met = metv.Mod();
@@ -865,6 +919,8 @@ int skim_Wmu(const char *fname, SampleType sample)
 
     if (!passPtNominal) continue; // everything below keeps the nominal pT > 25 cut
 
+    if (applySF) sfStats.Add(wGen, esf); // <SF> record over the nominal W selection
+
     h_lepPt ->Fill(muPt->at(iLead),  w);
     h_lepEta->Fill(muEta->at(iLead), w);
     h_lepPhi->Fill(muPhi->at(iLead), w);
@@ -883,26 +939,68 @@ int skim_Wmu(const char *fname, SampleType sample)
     const int    ybin    = FindYBin(y, kYEdges,   kNY);
     const int    ybin_FB = FindYBin(y, kYEdgesFB, kNY);
 
-    // The LHE member twins (t_*) are filled right next to their nominal fit
-    // template with the per-event member weights (same events, same x).
+    // The LHE member twins (t_*) and the muon-SF twins (s_*) are filled right
+    // next to their nominal fit template with the same x: members with the
+    // per-event member weights, SF twins with wGen x (one source varied).
+    const double lpt = muPt->at(iLead);
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp[ybin], met, mw); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm[ybin], met, mw); }
+      if (isWp)
+      {
+        h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wp[ybin], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wp[ybin], met, wGen, esf);
+      }
+      else if (isWm)
+      {
+        h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wm[ybin], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wm[ybin], met, wGen, esf);
+      }
       if (passMtCut)
       {
-        if      (isWp) { h_leppt_mt40_Wp[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], muPt->at(iLead), mw); }
-        else if (isWm) { h_leppt_mt40_Wm[ybin]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], muPt->at(iLead), mw); }
+        if (isWp)
+        {
+          h_leppt_mt40_Wp[ybin]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp[ybin], lpt, wGen, esf);
+        }
+        else if (isWm)
+        {
+          h_leppt_mt40_Wm[ybin]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm[ybin], lpt, wGen, esf);
+        }
       }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw); }
+      if (isWp)
+      {
+        h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wp_FB[ybin_FB], met, wGen, esf);
+      }
+      else if (isWm)
+      {
+        h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wm_FB[ybin_FB], met, wGen, esf);
+      }
       if (passMtCut)
       {
-        if      (isWp) { h_leppt_mt40_Wp_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], muPt->at(iLead), mw); }
-        else if (isWm) { h_leppt_mt40_Wm_FB[ybin_FB]->Fill(muPt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], muPt->at(iLead), mw); }
+        if (isWp)
+        {
+          h_leppt_mt40_Wp_FB[ybin_FB]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp_FB[ybin_FB], lpt, wGen, esf);
+        }
+        else if (isWm)
+        {
+          h_leppt_mt40_Wm_FB[ybin_FB]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm_FB[ybin_FB], lpt, wGen, esf);
+        }
       }
     }
   }
@@ -938,6 +1036,16 @@ int skim_Wmu(const char *fname, SampleType sample)
   }
   // LHE member twins of the fit templates (MC only; the vector is empty for data)
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
+  // Muon-SF twins (MC only): the per-source <h>_muID/muIso/muTrigUp|Down and the
+  // combined <h>_muSFUp|Down (built here from the three) + the <SF> record of this job
+  if (applySF)
+  {
+    sfStats.Print(std::cout, "skim_Wmu nominal W selection (pT>25, iso-pass, matched)");
+    muonSF.PrintCounters(std::cout, "skim_Wmu");
+    const int nSF = pOSF::FinalizeAndWriteSFTwins(sfTwinSets);
+    std::cout << "[INFO] muon-SF twins written: " << nSF << " (" << sfTwinSets.size()
+              << " fit templates x [3 sources + combined " << pOSF::kMuonSFCombinedName << "] x Up/Down)\n";
+  }
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_muPlus [b]->Write("", TObject::kOverwrite);
@@ -1082,6 +1190,22 @@ int skim_Wel(const char *fname, SampleType sample)
   tEle->SetBranchAddress("eleCutIdWP80", &eleCutIdWP80);
   tEle->SetBranchAddress("eleCutIdWP90", &eleCutIdWP90);
   tEle->SetBranchAddress("eleCutIdWP95", &eleCutIdWP95);
+
+  // -------- ECAL-gap veto input (2026-09-14): supercluster eta --------
+  // Every ID'd-electron definition below uses eleIDNoGap = eleMVAIdWP95 AND
+  // !InEcalGap(eleSCEta) (skim_common.h). Mandatory: a file without the
+  // branch would silently get a different selection.
+  std::vector<float> *eleSCEta = nullptr;
+  if (!HasBranch(tEle, "eleSCEta"))
+  {
+    std::cerr << "[FATAL] skim_Wel: no eleSCEta branch in " << fname
+              << " -- the ECAL-gap veto (1.4442 < |eta_SC| < 1.566) cannot be applied\n";
+    f->Close();
+    return 2;
+  }
+  tEle->SetBranchStatus("eleSCEta", 1);
+  tEle->SetBranchAddress("eleSCEta", &eleSCEta);
+  std::vector<int> eleIDNoGap; // rebuilt per event
 
   // -------- Electron iso (PF + WP) --------
   if (HasBranch(tEle, "elePFChIso"))  tEle->SetBranchStatus("elePFChIso", 1);
@@ -1451,7 +1575,13 @@ int skim_Wel(const char *fname, SampleType sample)
 
     N[0]++;
 
-    if (!elePt || !eleEta || !elePhi || !eleCharge) continue;
+    if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta || !eleMVAIdWP95) continue;
+
+    // Effective electron ID for this event: eleMVAIdWP95 AND not in the ECAL
+    // crack (2026-09-14). Used by the DY veto, the tight-ID gate and the
+    // leading-electron pick below, so a crack electron is never a W candidate
+    // nor a veto leg.
+    BuildEleIDNoGap(nEle, eleMVAIdWP95, eleSCEta, eleIDNoGap);
 
     // Precut relaxed to the (pT, mT)-scan floor (pT > 20) so the scan planes
     // h_pt_mt[_antiiso]_* reach below the nominal cut. The cutflow keeps its
@@ -1477,16 +1607,18 @@ int skim_Wel(const char *fname, SampleType sample)
     // ALL isolation gates are the continuous PF relIso < isoMax (0.095, ~optimal):
     // the leading electron AND (since 2026-07-02) the DY-veto legs, which
     // previously used the integer eleMVAIsoWP95 WP.
+    // Since 2026-09-14 the ID passed here is eleIDNoGap (MVA WP95 AND
+    // 1.4442 < |eta_SC| < 1.566 excluded), see BuildEleIDNoGap above.
     if (!PassDYVeto_Wel(dyElePtMin, isoMax, dyMassMin, dyMassMax,
                         nEle, elePt, eleEta, elePhi, eleCharge,
-                        eleMVAIdWP95, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso))
+                        &eleIDNoGap, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso))
       continue;
     if (hasPF25) N[4]++;
 
-    if (!ExistsTightElectron_W(nEle, eleMVAIdWP95)) continue;
+    if (!ExistsTightElectron_W(nEle, &eleIDNoGap)) continue;
     if (hasPF25) N[5]++;
 
-    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, eleMVAIdWP95);
+    const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, &eleIDNoGap);
     if (iLead < 0) continue;
 
     if (isMC)
@@ -1708,7 +1840,11 @@ int skim_Zmm(const char *fname, SampleType sample)
   const bool   applyHiBin     = false;
   const int    hiBinMin       = 0;
   const int    hiBinMax       = 200;
-  const double isoMax         = 0.2;
+  // 0.2 -> 0.15 (2026-09-14): harmonized with the W channel's cut so the ONE
+  // POG Tight-PF-iso SF (relIso < 0.15 | TightID, skim/muon_sf.h) serves both
+  // the W and the Z legs; 0.20 was the Medium WP, for which the pp file has no
+  // TightID-denominator table. correction/njet_WZ.C replicates this value.
+  const double isoMax         = 0.15;
 
   std::string outPrefix = "ZToMuMu_pO2025";
 
@@ -1809,6 +1945,26 @@ int skim_Zmm(const char *fname, SampleType sample)
   pOLhe::Twins       t_mass; // booked with hMass below
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
+
+  // -------- Muon efficiency scale factors (MC only; muon_sf.h) --------
+  // Both legs: ID x [iso ? ISO : 1] per leg (the same Tight-iso SF as the W --
+  // the iso cut is 0.15 in both channels since 2026-09-14), times the per-event
+  // trigger factor built from the per-lepton path-fired efficiencies (this
+  // selection requires the trigger bit, no matching). Twins of hMass (the
+  // Z_incl signal template): hMass_muID/muIso/muTrigUp|Down. Missing inputs
+  // are FATAL; PO_MUON_SF=off disables on purpose.
+  pOSF::MuonSF muonSF;
+  const bool   applySF = isMC && pOSF::MuonSFEnabled();
+  if (applySF && !muonSF.Load(std::cout))
+  {
+    std::cerr << "[FATAL] skim_Zmm: muon SF inputs missing/unreadable (see the [SF] ERR line above)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applySF) std::cout << "[WARN] skim_Zmm: PO_MUON_SF=off -> MC filled WITHOUT muon scale factors\n";
+  std::vector<pOSF::SFTwins> sfTwinSets; // the hMass twin set (finalized + written at the end)
+  pOSF::SFTwins              s_mass;     // booked with hMass below
+  pOSF::SFStats              sfStats;
 
   // -------- PF iso --------
   std::vector<float> *muPFChIso = nullptr, *muPFNeuIso = nullptr, *muPFPhoIso = nullptr;
@@ -1922,7 +2078,8 @@ int skim_Zmm(const char *fname, SampleType sample)
       Form("%s; m_{#mu#mu} [GeV]; Events", outPrefix.c_str()),
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
-  if (hasLhe) t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
+  if (hasLhe)  t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
+  if (applySF) s_mass = pOSF::BookSFTwins(hMass, sfTwinSets); // muon-SF twins of the Z-peak template
 
   // -------- Kinematics of the dimuon (Z) system and its muons --------
   // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
@@ -2040,21 +2197,39 @@ int skim_Zmm(const char *fname, SampleType sample)
         const double isosub = RelIsoPF(j, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
         if (isosub >= isoMax) passIsosec = false;
 
+        // Muon efficiency SFs of this pair (MC; data: 1): ID for both legs, ISO
+        // only for the legs passing the iso cut, the two-leg trigger factor.
+        // `w` stays the SF-free event weight (the base of the SF twins).
+        const pOSF::EventSF esf = applySF ? muonSF.Z(muPt->at(i), muEta->at(i), passIsolead,
+                                                     muPt->at(j), muEta->at(j), passIsosec)
+                                          : pOSF::EventSF::Unit();
+        const double wPair = w * esf.nom;
+
         if (passIsolead && passIsosec)
         {
-          hMass_extended->Fill(m, w);
+          hMass_extended->Fill(m, wPair);
           if (!(m < 60 || m > 120))
           {
-            hMass->Fill(m, w);
-            if (lheOk) pOLhe::FillTwins(t_mass, m, mw); // LHE member twins (per pair, per-event weights)
+            hMass->Fill(m, wPair);
+            if (lheOk) // LHE member twins (per pair; member weights rescaled by the pair's SF)
+            {
+              pOLhe::MemberWeights mwPair = mw;
+              pOLhe::ScaleMemberWeights(mwPair, esf.nom);
+              pOLhe::FillTwins(t_mass, m, mwPair);
+            }
+            if (applySF) // muon-SF twins + the <SF> record
+            {
+              pOSF::FillSFTwins(s_mass, m, w, esf);
+              sfStats.Add(w, esf);
+            }
             const TLorentzVector ll = v1 + v2;
-            h_Zpt ->Fill(ll.Pt(),  w);
-            h_Zeta->Fill(ll.Eta(), w);
-            h_Zy  ->Fill(ll.Rapidity(), w);
-            h_Zphi->Fill(ll.Phi(), w);
-            h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
-            h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
-            h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+            h_Zpt ->Fill(ll.Pt(),  wPair);
+            h_Zeta->Fill(ll.Eta(), wPair);
+            h_Zy  ->Fill(ll.Rapidity(), wPair);
+            h_Zphi->Fill(ll.Phi(), wPair);
+            h_lepPt ->Fill(v1.Pt(),  wPair); h_lepPt ->Fill(v2.Pt(),  wPair);
+            h_lepEta->Fill(v1.Eta(), wPair); h_lepEta->Fill(v2.Eta(), wPair);
+            h_lepPhi->Fill(v1.Phi(), wPair); h_lepPhi->Fill(v2.Phi(), wPair);
 
             // Hadronic recoil: u = -MET - q_T, with q_T = the dimuon (ll).
             // u_par is along q_T (should peak near -q_T), u_perp is transverse.
@@ -2069,10 +2244,10 @@ int skim_Zmm(const char *fname, SampleType sample)
                 const double cphi = ll.Px() / qT, sphi = ll.Py() / qT;
                 const double uPar  =  ux * cphi + uy * sphi;
                 const double uPerp = -ux * sphi + uy * cphi;
-                h_uPar    ->Fill(uPar,  w);
-                h_uPerp   ->Fill(uPerp, w);
-                h_uPar_qT ->Fill(qT, uPar,  w);
-                h_uPerp_qT->Fill(qT, uPerp, w);
+                h_uPar    ->Fill(uPar,  wPair);
+                h_uPerp   ->Fill(uPerp, wPair);
+                h_uPar_qT ->Fill(qT, uPar,  wPair);
+                h_uPerp_qT->Fill(qT, uPerp, wPair);
               }
             }
           }
@@ -2081,8 +2256,11 @@ int skim_Zmm(const char *fname, SampleType sample)
         if (m < 60 || m > 120) continue;
         if (lead < 20 || sub < 20) continue;
 
-        // Tighter pT cut, no iso requirement.
-        hMass_vipul->Fill(m, w);
+        // Tighter pT cut, no iso requirement -> ID x trigger only (no ISO factor).
+        const double wPairNoIso = applySF ? w * muonSF.Z(muPt->at(i), muEta->at(i), false,
+                                                          muPt->at(j), muEta->at(j), false).nom
+                                          : w;
+        hMass_vipul->Fill(m, wPairNoIso);
         nPassPair++;
       }
     }
@@ -2093,6 +2271,13 @@ int skim_Zmm(const char *fname, SampleType sample)
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
               << "; events without usable ttbar_w: " << nLheSkipped << "\n";
+  if (applySF) // the <SF> record of this job
+  {
+    sfStats.Print(std::cout, "skim_Zmm selected pairs (Z peak, both legs iso-pass)");
+    muonSF.PrintCounters(std::cout, "skim_Zmm");
+    std::cout << "[INFO] muon-SF twin sets booked: " << sfTwinSets.size()
+              << " (hMass: 3 sources + combined " << pOSF::kMuonSFCombinedName << ", x Up/Down)\n";
+  }
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
@@ -2100,6 +2285,7 @@ int skim_Zmm(const char *fname, SampleType sample)
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite); // LHE member twins of hMass (MC only)
+  if (applySF) pOSF::FinalizeAndWriteSFTwins(sfTwinSets);      // muon-SF twins of hMass (MC only; combined built here)
   h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   h_uPar->Write("", 2); h_uPerp->Write("", 2);
@@ -2123,7 +2309,8 @@ int skim_Zee(const char *fname, SampleType sample)
   int    nBins   = 120;
   double ptMin1  = 15.0;
   double ptMin2  = 10.0;
-  const double etaMax         = 2.4;   // FIXME: ECAL is 2.5 with 1.4442-1.566 gap
+  const double etaMax         = 2.4;   // common mu/e fiducial edge (ECAL would allow 2.5); the
+                                       // 1.4442-1.566 crack is vetoed per leg on eleSCEta (2026-09-14)
   const bool   requireOS      = true;
   const bool   requireTightID = true;  // active gate: eleMVAIdWP95 (switched from eleCutIdWP95 2026-07-02, matching skim_Wel + the iso/ID study)
   const bool   applyVz        = true;
@@ -2190,6 +2377,18 @@ int skim_Zee(const char *fname, SampleType sample)
   tEle->SetBranchAddress("eleEta",    &eleEta);
   tEle->SetBranchAddress("elePhi",    &elePhi);
   tEle->SetBranchAddress("eleCharge", &eleCharge);
+
+  // -------- ECAL-gap veto input (2026-09-14): supercluster eta, both legs --------
+  std::vector<float> *eleSCEta = nullptr;
+  if (!HasBranch(tEle, "eleSCEta"))
+  {
+    std::cerr << "[FATAL] skim_Zee: no eleSCEta branch in " << fname
+              << " -- the ECAL-gap veto (1.4442 < |eta_SC| < 1.566) cannot be applied\n";
+    f->Close();
+    return 2;
+  }
+  tEle->SetBranchStatus("eleSCEta", 1);
+  tEle->SetBranchAddress("eleSCEta", &eleSCEta);
 
   // -------- Electron IDs (kept around; active gate uses eleMVAIdWP95) --------
   std::vector<int> *eleMVAIdWP80 = nullptr, *eleMVAIdWP85 = nullptr;
@@ -2437,9 +2636,10 @@ int skim_Zee(const char *fname, SampleType sample)
     {
       bool passIsolead = true;
 
-      if (!elePt || !eleEta || !elePhi || !eleCharge) continue;
+      if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta) continue;
       if (elePt->at(i) < ptMin2) continue;
       if (TMath::Abs(eleEta->at(i)) > etaMax) continue;
+      if (InEcalGap(eleSCEta->at(i))) continue; // ECAL crack veto, leg 1 (2026-09-14)
 
       if (requireTightID && has_eleID && eleMVAIdWP95->at(i) == 0) continue;
 
@@ -2456,6 +2656,7 @@ int skim_Zee(const char *fname, SampleType sample)
 
         if (elePt->at(j) < ptMin2) continue;
         if (TMath::Abs(eleEta->at(j)) > etaMax) continue;
+        if (InEcalGap(eleSCEta->at(j))) continue; // ECAL crack veto, leg 2 (2026-09-14)
         if (requireTightID && has_eleID && eleMVAIdWP95->at(j) == 0) continue;
 
         if (requireOS && eleCharge->at(i) * eleCharge->at(j) >= 0) continue;

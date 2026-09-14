@@ -1,13 +1,17 @@
 // =============================================================================
-// syst_shapes.C -- diagnostics of the LHE shape systematics carried by the
-// Combine inputs (2026-09-07): nPDF / qcdScale / alphaS, <process>_<syst>Up/Down
-// next to every MC template (written by mtandmet.C / dileptonpeak.C from the
-// skim twins, see CLAUDE.md "Structured inputs").
+// syst_shapes.C -- diagnostics of the shape systematics carried by the
+// Combine inputs: the LHE families nPDF / qcdScale / alphaS (2026-09-07) and,
+// in the muon channel, the combined lepton-SF nuisance muSF (2026-09-14,
+// skim/muon_sf.h: ID, ISO and trigger shifts added in quadrature per bin),
+// <process>_<syst>Up/Down next to every MC template (written by mtandmet.C /
+// dileptonpeak.C from the skim twins, see CLAUDE.md "Structured inputs"). The
+// list per flavour = gSystNames below (the LHE names first, so the [INCL]
+// theory block can address them by position).
 //
 //   (1) PER-REGION SHAPE PLOTS  plots[/Elec]/syst_shapes/<disc>/perbin/<region>_<process>
-//       Up/nominal and Down/nominal bin by bin for the three systematics on one
+//       Up/nominal and Down/nominal bin by bin for every systematic on one
 //       canvas (solid = Up, dashed = Down; nPDF red, qcdScale blue, alphaS
-//       green), info box = integral shifts + the 68% range of the per-bin
+//       green, muSF magenta), info box = integral shifts + the 68% range of the per-bin
 //       ratios + the number of one-sided bins (Up and Down on the same side of
 //       the nominal -- Combine only warns about those; alphaS can have some
 //       because its two members are used as they are).
@@ -27,7 +31,12 @@
 //           Hessian and the envelope (triangle inequality: sum of per-bin
 //           combinations vs combination of the sum); the ratio (b)/(a) is the
 //           inflation of the inclusive uncertainty caused by collapsing the
-//           eigen-directions into one nuisance;
+//           eigen-directions into one nuisance. SINCE 2026-09-14 the stored
+//           Up/Down are area-normalized per region (lhe_updown.py --norm reco:
+//           the theory-cross-section change is divided out, only the shape
+//           reaches the fit), so (b) is the shape-only residual (~0.3-0.5%)
+//           and (a) the normalization that was removed; (b)/(a) is then not an
+//           inflation factor (a note is printed);
 //       (c) the ALL-EVENTS reference of skim/output/lhe_weights.txt (per-index
 //           S_i/S_0-1 of the mu-flavour files): nuclear Hessian (idx 111-158),
 //           scale envelope (idx 1-8), alpha_s (idx 105/104) -- compared with (a)
@@ -38,7 +47,9 @@
 //   (4) LHAPDF-vs-pOLhe::Hessian CLOSURE ([CLOSURE] lines): the stored
 //       <h>_nPDFUp/Down (written by lhe_updown.py with LHAPDF) recomputed bin by
 //       bin from the _epps21 twin with pOLhe::Hessian -- max |difference| over
-//       every template and file must be ~0 (two implementations, same data).
+//       every template and file must be ~0 (two implementations, same data;
+//       the recompute applies the per-member area normalization when the
+//       stored titles say the templates were built that way).
 //   (5) MEMBER OVERLAYS  plots[/Elec]/syst_shapes/<disc>/members/<region>_signal
 //       (2026-09-08): one canvas per W fit region (charge x lab/fb x y0..11) with
 //       the nominal `signal` template (black) and ALL 106 EPPS21 member templates
@@ -54,6 +65,7 @@
 #include "plotting_helper.C"
 #include "disc_variants.h"
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames, kNMembers, Block, Hessian()
+#include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames (muon channel only)
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> k_s per sample
 
 #include "TBox.h"
@@ -84,8 +96,16 @@
 
 namespace {
 
-const int kNSyst = pOLhe::kNLheSysts;
-const int kColor[3] = {kRed + 1, kBlue + 1, kGreen + 2};
+// The systematics diagnosed: the LHE families (both flavours) + the lepton-SF
+// families of the flavour being processed (assigned per flavour in
+// syst_shapes()). LHE names first: indices 0..2 are nPDF / qcdScale / alphaS
+// wherever the [INCL] theory block addresses them by position.
+std::vector<std::string> gSystNames;
+int SystColor(int is)
+{
+    static const int col[6] = {kRed + 1, kBlue + 1, kGreen + 2, kMagenta + 1, kOrange + 7, kCyan + 2};
+    return col[is % 6];
+}
 
 struct Shift { double up = 0, dn = 0; bool ok = false; }; // relative integral shifts
 
@@ -176,7 +196,8 @@ void DrawRatioSet(const TH1 *nom, const std::vector<TH1 *> &ups, const std::vect
 
     std::vector<TH1D *> rat;
     double ymin = 1.0, ymax = 1.0;
-    for (int is = 0; is < kNSyst; ++is)
+    const int ns = (int)ups.size();
+    for (int is = 0; is < ns; ++is)
     {
         if (!ups[is] || !dns[is]) { rat.push_back(nullptr); rat.push_back(nullptr); continue; }
         TH1D *ru = Ratio(ups[is], nom, Form("r_up_%d", is));
@@ -188,10 +209,13 @@ void DrawRatioSet(const TH1 *nom, const std::vector<TH1 *> &ups, const std::vect
         }
         rat.push_back(ru); rat.push_back(rd);
     }
+    // legend / info box grow with the number of systematics (2 lines each)
+    const bool many = ns > 3;
+    if (many) { ps.boxTextSize = 0.021; ps.boxY2 = std::min(0.62, 0.14 + 0.036 * 2 * ns); }
     double pad = std::max(0.02, 0.30 * (ymax - ymin));
     ymin = std::max(0.0, ymin - pad);
-    ymax = ymax + 2.2 * pad;             // top: header + legend
-    ymin -= 0.8 * (ymax - ymin);         // bottom: the info box
+    ymax = ymax + 2.2 * pad;                       // top: header + legend
+    ymin -= (many ? 1.6 : 0.8) * (ymax - ymin);    // bottom: the info box
     if (ymin < 0) ymin = 0;
 
     TH1D *frame = (TH1D *)nom->Clone("frame_syst");
@@ -211,28 +235,30 @@ void DrawRatioSet(const TH1 *nom, const std::vector<TH1 *> &ups, const std::vect
     one->SetLineColor(kGray + 2); one->SetLineStyle(2); one->SetLineWidth(2);
     one->Draw();
 
-    TLegend *leg = new TLegend(0.66, 0.15, 0.93, 0.41); // lower right, beside the info box
-    leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(ps.font); leg->SetTextSize(0.028);
+    // lower right, beside the info box; taller when there are more than 3 systematics
+    TLegend *leg = new TLegend(0.66, 0.15, 0.93, many ? std::min(0.66, 0.15 + 0.036 * 2 * ns) : 0.41);
+    leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(ps.font); leg->SetTextSize(many ? 0.022 : 0.028);
     std::vector<std::string> box;
-    for (int is = 0; is < kNSyst; ++is)
+    for (int is = 0; is < ns; ++is)
     {
         TH1D *ru = rat[2 * is], *rd = rat[2 * is + 1];
         if (!ru) continue;
-        ru->SetLineColor(kColor[is]); ru->SetLineWidth(2); ru->SetLineStyle(1);
-        rd->SetLineColor(kColor[is]); rd->SetLineWidth(2); rd->SetLineStyle(2);
+        const char *sname = gSystNames[is].c_str();
+        ru->SetLineColor(SystColor(is)); ru->SetLineWidth(2); ru->SetLineStyle(1);
+        rd->SetLineColor(SystColor(is)); rd->SetLineWidth(2); rd->SetLineStyle(2);
         ru->Draw("hist same"); rd->Draw("hist same");
-        leg->AddEntry(ru, Form("%s Up", pOLhe::kLheSystNames[is]), "l");
-        leg->AddEntry(rd, Form("%s Down", pOLhe::kLheSystNames[is]), "l");
+        leg->AddEntry(ru, Form("%s Up", sname), "l");
+        leg->AddEntry(rd, Form("%s Down", sname), "l");
         const Shift s = IntegralShift(nom, ups[is], dns[is]);
         double med, lo, hi;
         RatioSpread(nom, ups[is], dns[is], b1, b2, med, lo, hi);
         const int nos = OneSided(nom, ups[is], dns[is], b1, b2);
-        box.push_back(Form("%s: integral %+.2f%% / %+.2f%%", pOLhe::kLheSystNames[is], 100 * s.up, 100 * s.dn));
+        box.push_back(Form("%s: integral %+.2f%% / %+.2f%%", sname, 100 * s.up, 100 * s.dn));
         box.push_back(Form("   bins: med %.3f, 68%% [%.3f, %.3f]%s", med, lo, hi,
                            nos ? Form(", %d one-sided", nos) : ""));
     }
     leg->Draw();
-    DrawHeader(ps, head, sub1, "LHE shape systematics");
+    DrawHeader(ps, head, sub1, "shape systematics");
     DrawInfoBox(ps, box);
     CMS_lumi(c, 13, 10);
     c->SaveAs((outNoExt + ".png").c_str());
@@ -587,7 +613,12 @@ bool AddMembers(TFile *f, const TString &name, std::vector<double> &acc, int nme
     return true;
 }
 
-// (4): max |LHAPDF Up/Down - Hessian Up/Down| / nominal over the bins of one template
+// (4): max |LHAPDF Up/Down - Hessian Up/Down| / nominal over the bins of one template.
+// Since 2026-09-14 lhe_updown.py area-normalizes every member to the nominal
+// integral over the fit bins before combining (its Up/Down titles carry
+// "area-normalized"); the recompute applies the same per-member factors, so
+// the closure stays a test of the combination, not of the normalization choice.
+static bool gStoredNormed = false; // set from the stored titles; steers the [INCL] wording below
 double ClosureOne(TFile *f, const TString &stem)
 {
     TH1D *nom = (TH1D *)f->Get(stem);
@@ -595,11 +626,24 @@ double ClosureOne(TFile *f, const TString &stem)
     TH1D *up  = (TH1D *)f->Get(stem + "_nPDFUp");
     TH1D *dn  = (TH1D *)f->Get(stem + "_nPDFDown");
     if (!nom || !tw || !up || !dn) return -1.0;
+    const bool normed = TString(up->GetTitle()).Contains("area-normalized");
+    gStoredNormed = gStoredNormed || normed;
+    std::vector<double> fac(107, 1.0);
+    if (normed)
+    {
+        const int nx = nom->GetNbinsX();
+        const double i0 = tw->Integral(1, nx, 1, 1);
+        for (int m = 0; m < 107; ++m)
+        {
+            const double im = tw->Integral(1, nx, m + 1, m + 1);
+            fac[m] = (i0 > 0 && im > 0) ? im / i0 : 1.0;
+        }
+    }
     double worst = 0.0;
     std::vector<double> I(107);
     for (int ix = 1; ix <= nom->GetNbinsX(); ++ix)
     {
-        for (int m = 0; m < 107; ++m) I[m] = tw->GetBinContent(ix, m + 1);
+        for (int m = 0; m < 107; ++m) I[m] = tw->GetBinContent(ix, m + 1) / fac[m];
         if (I[0] <= 0) continue;
         double hu, hd;
         HessOn(I, 1, 106, hu, hd);
@@ -676,6 +720,11 @@ void syst_shapes(const char *disc = "leppt_mt40")
     for (int fl = 0; fl < 2; ++fl)
     {
         const bool isElec = (fl == 1);
+        // the systematics of this flavour's inputs (same rule as mtandmet.C / dileptonpeak.C)
+        gSystNames.assign(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
+        if (!isElec)
+            gSystNames.insert(gSystNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
+        const int nSyst = (int)gSystNames.size();
         const std::string plotsBase = isElec ? "./plots/Elec" : "./plots";
         const std::string outDir = plotsBase + "/syst_shapes/" + disc;
         gSystem->mkdir((outDir + "/perbin").c_str(), kTRUE);
@@ -694,7 +743,8 @@ void syst_shapes(const char *disc = "leppt_mt40")
             {plotsBase + "/combine_input_Z.root", headZ, "m_{ll} (GeV)", 0.0, -1.0, true}};
         std::map<std::string, std::vector<Shift>> sigShift; // key "lab|fb_Wp_<syst>" -> 12
         // (b) sum of the per-bin Up/Down over the 24 lab SR regions, per process
-        std::map<std::string, double> sumNom, sumUp[3], sumDn[3];
+        std::map<std::string, double> sumNom;
+        std::vector<std::map<std::string, double>> sumUp(nSyst), sumDn(nSyst);
 
         for (const Input &in : inputs)
         {
@@ -737,28 +787,27 @@ void syst_shapes(const char *disc = "leppt_mt40")
                     TH1 *nom = (TH1 *)d->Get(p.c_str());
                     if (!nom) continue;
                     std::vector<TH1 *> ups, dns;
-                    for (int is = 0; is < kNSyst; ++is)
+                    for (int is = 0; is < nSyst; ++is)
                     {
-                        ups.push_back((TH1 *)d->Get(Form("%s_%sUp", p.c_str(), pOLhe::kLheSystNames[is])));
-                        dns.push_back((TH1 *)d->Get(Form("%s_%sDown", p.c_str(), pOLhe::kLheSystNames[is])));
+                        ups.push_back((TH1 *)d->Get(Form("%s_%sUp", p.c_str(), gSystNames[is].c_str())));
+                        dns.push_back((TH1 *)d->Get(Form("%s_%sDown", p.c_str(), gSystNames[is].c_str())));
                     }
                     const int b1 = (in.hi > in.lo) ? nom->GetXaxis()->FindBin(in.lo + 1e-6) : 1;
                     const int b2 = (in.hi > in.lo) ? nom->GetXaxis()->FindBin(in.hi - 1e-6) : nom->GetNbinsX();
                     ++nTemplates;
                     std::string line = Form("[SHAPE] %-4s %-14s %-7s nominal %10.2f", flav, region.Data(), p.c_str(), Integ(nom));
-                    for (int is = 0; is < kNSyst; ++is)
+                    for (int is = 0; is < nSyst; ++is)
                     {
                         if (!ups[is] || !dns[is]) continue;
+                        const char *sname = gSystNames[is].c_str();
                         const Shift s = IntegralShift(nom, ups[is], dns[is]);
                         const int nos = OneSided(nom, ups[is], dns[is], b1, b2);
                         nOneSided += nos;
-                        line += Form("  %s %+.2f/%+.2f%%%s", pOLhe::kLheSystNames[is], 100 * s.up, 100 * s.dn,
+                        line += Form("  %s %+.2f/%+.2f%%%s", sname, 100 * s.up, 100 * s.dn,
                                      nos ? Form(" (%d 1-sided)", nos) : "");
                         if (isSR && iy >= 0 && p == "signal")
-                            sigShift[Form("%s_%s_%s", isLab ? "lab" : "fb", ic == 0 ? "Wp" : "Wm",
-                                          pOLhe::kLheSystNames[is])].resize(12),
-                            sigShift[Form("%s_%s_%s", isLab ? "lab" : "fb", ic == 0 ? "Wp" : "Wm",
-                                          pOLhe::kLheSystNames[is])][iy] = s;
+                            sigShift[Form("%s_%s_%s", isLab ? "lab" : "fb", ic == 0 ? "Wp" : "Wm", sname)].resize(12),
+                            sigShift[Form("%s_%s_%s", isLab ? "lab" : "fb", ic == 0 ? "Wp" : "Wm", sname)][iy] = s;
                         if (isSR && isLab)
                         {
                             sumUp[is][p] += Integ(ups[is]);
@@ -776,16 +825,16 @@ void syst_shapes(const char *disc = "leppt_mt40")
         }
 
         // (2) summaries: signal vs y bin
-        for (int is = 0; is < kNSyst; ++is)
+        for (int is = 0; is < nSyst; ++is)
             for (int ib = 0; ib < 2; ++ib)
             {
                 const char *B = ib == 0 ? "lab" : "fb";
+                const char *sname = gSystNames[is].c_str();
                 std::vector<Shift> sh[2];
-                sh[0] = sigShift[Form("%s_Wp_%s", B, pOLhe::kLheSystNames[is])];
-                sh[1] = sigShift[Form("%s_Wm_%s", B, pOLhe::kLheSystNames[is])];
+                sh[0] = sigShift[Form("%s_Wp_%s", B, sname)];
+                sh[1] = sigShift[Form("%s_Wm_%s", B, sname)];
                 if (sh[0].size() != 12 || sh[1].size() != 12) continue;
-                DrawSummary(sh, outDir + "/summary_" + pOLhe::kLheSystNames[is] + "_" + B,
-                            pOLhe::kLheSystNames[is], B, headW);
+                DrawSummary(sh, outDir + "/summary_" + sname + "_" + B, sname, B, headW);
                 ++nPlots;
             }
 
@@ -899,6 +948,10 @@ void syst_shapes(const char *disc = "leppt_mt40")
         std::cout << "[INCL] " << flav << " " << disc << ": per Combine process (24 lab SR regions): (a) combination of the"
                   << " summed members = the true inclusive uncertainty; (b) sum of the per-bin Up/Down templates ="
                   << " what ONE collapsed nuisance implies; (b)/(a) = the collapse inflation\n";
+        if (gStoredNormed)
+            std::cout << "[INCL]   NB the stored Up/Down are AREA-NORMALIZED per region since 2026-09-14 (lhe_updown.py"
+                      << " --norm reco): (b) is the shape-only residual that reaches the fit, (a) the inclusive theory"
+                      << " normalization that was divided out -- (b)/(a) is NOT an inflation factor here\n";
         for (const char *p : {"signal", "z", "ztau", "wtau"})
         {
             if (!procE.count(p) || !sumNom.count(p) || sumNom[p] <= 0) continue;
@@ -910,6 +963,12 @@ void syst_shapes(const char *disc = "leppt_mt40")
                               100 * (sumUp[0][p] / n0 - 1), 100 * (sumDn[0][p] / n0 - 1),
                               100 * (sumUp[1][p] / n0 - 1), 100 * (sumDn[1][p] / n0 - 1),
                               100 * (sumUp[2][p] / n0 - 1), 100 * (sumDn[2][p] / n0 - 1)) << "\n";
+            // lepton-SF families (muon channel): (b) IS their inclusive shift -- one
+            // coherent variation of a normalization factor, nothing divided out
+            for (int is = 3; is < nSyst; ++is)
+                std::cout << "[INCL]   " << "        (b) "
+                          << Form("%-8s %+.2f/%+.2f%%  (lepton SF, coherent +-1 sigma over the 24 lab templates)",
+                                  gSystNames[is].c_str(), 100 * (sumUp[is][p] / n0 - 1), 100 * (sumDn[is][p] / n0 - 1)) << "\n";
             if (a.ok && a.tot_up > 0 && a.tot_dn > 0)
                 std::cout << "[INCL]   " << "        (b)/(a): nPDF up " << Form("%.2f", (sumUp[0][p] / n0 - 1) / a.tot_up)
                           << ", down " << Form("%.2f", (1 - sumDn[0][p] / n0) / a.tot_dn)

@@ -312,6 +312,14 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   tLep->SetBranchStatus(bNeu, 1); tLep->SetBranchAddress(bNeu, &neuIso);
   tLep->SetBranchStatus(bPho, 1); tLep->SetBranchAddress(bPho, &phoIso);
 
+  // ECAL-gap veto input (electrons only, 2026-09-14) -- tracks the skim's eleIDNoGap
+  std::vector<float> *scEta = nullptr;
+  if (!isMu)
+  {
+    if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunTrig: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+  }
+
   const bool has_puIso = HasBranch(tLep, bPU);
   if (has_puIso) { tLep->SetBranchStatus(bPU, 1); tLep->SetBranchAddress(bPU, &puIso); }
   else std::cout << "[WARN] RunTrig: no " << bPU << " branch; relIso uncorrected (no Delta-beta).\n";
@@ -441,6 +449,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
       {
         if (lepPt->at(i) <= dyPtMin) continue;
         if (lepID->at(i) == 0) continue;
+        if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
         if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
         if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
         cand.push_back(i);
@@ -466,6 +475,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
     for (int i = 0; i < nLep; ++i)
     {
       if (lepID->at(i) == 0) continue;
+      if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
       if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
       if (lepPt->at(i) > bestPt) { bestPt = lepPt->at(i); iLead = i; }
     }

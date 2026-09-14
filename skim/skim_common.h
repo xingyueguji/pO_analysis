@@ -434,6 +434,46 @@ inline bool IsMC(SampleType sample) { return sample != kData; }
 inline constexpr double kPtScanFloor = 20.0;
 
 // ============================================================
+// ECAL barrel-endcap transition ("crack") veto for electrons (2026-09-14)
+// ============================================================
+// 1.4442 < |eta_SC| < 1.566 (CMS EGamma convention), evaluated on the
+// SUPERCLUSTER eta (eleSCEta = the calorimeter position seen from the
+// origin). eleEta is the track direction at the vertex and differs by
+// ~z_vtx/(R_ECAL cosh eta) ~ 0.02 at |eta| 1.5 -- comparable to the crack
+// half-width, so the veto must use the SC position.
+// RECO level only, data and MC alike, on EVERY electron that enters an
+// ID'd-electron definition: the W leading electron, the DY-veto legs, both
+// Z legs, and the macros replicating the selection (njet_WZ, charge_flip,
+// trig_eff_mb, isolation_ele). The gen fiducial stays |eta| < 2.4, common
+// with the muon channel: the crack is an acceptance hole inside the fiducial
+// (0.122 of each 0.4-wide |eta| in [1.2,1.6] bin), filled by the MC's
+// intra-bin rapidity shape. Why veto at all: the crack efficiency (A.eps
+// ~0.62 there) cannot be measured with tag-and-probe, which excludes the
+// crack as well -- removing the electrons turns an unmeasurable efficiency
+// into a small, smooth acceptance extrapolation.
+inline constexpr double kEcalGapLo = 1.4442;
+inline constexpr double kEcalGapHi = 1.566;
+inline bool InEcalGap(double scEta)
+{
+  const double a = scEta < 0 ? -scEta : scEta;
+  return a > kEcalGapLo && a < kEcalGapHi;
+}
+// The effective electron ID used by the W skim helpers: the MVA WP AND not
+// in the crack. Built once per event; passed wherever eleMVAIdWP95 used to
+// go (DY-veto legs, tight-ID gate, leading-electron pick) -- so the veto
+// lives in one place and the helpers' signatures stay unchanged.
+inline void BuildEleIDNoGap(int nEle,
+                            const std::vector<int>   *eleID,
+                            const std::vector<float> *eleSCEta,
+                            std::vector<int>         &out)
+{
+  out.assign(nEle > 0 ? nEle : 0, 0);
+  if (!eleID || !eleSCEta) return;
+  for (int i = 0; i < nEle; ++i)
+    out[i] = (eleID->at(i) != 0 && !InEcalGap(eleSCEta->at(i))) ? 1 : 0;
+}
+
+// ============================================================
 // Rapidity binning (W macros)
 // ============================================================
 

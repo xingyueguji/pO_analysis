@@ -114,13 +114,16 @@ static bool passSoftMuon(int i, const std::vector<int> *muIDSoft,
 
 static bool passEleID(int i, const std::vector<int> *eleID,
                       const std::vector<float> *elePt,
-                      const std::vector<float> *eleEta)
+                      const std::vector<float> *eleEta,
+                      const std::vector<float> *eleSCEta)
 {
-    if (!eleID || !elePt || !eleEta)
+    if (!eleID || !elePt || !eleEta || !eleSCEta)
         return false;
     if (elePt->at(i) < 15.0)
         return false;
     if (std::abs(eleEta->at(i)) > 2.4)
+        return false;
+    if (pOSkim::InEcalGap(eleSCEta->at(i))) // ECAL crack veto on the SC eta (2026-09-14), as in the skim
         return false;
     return (eleID->at(i) != 0);
 }
@@ -253,6 +256,16 @@ void isolation_ele(const char *fname = pOSkim::kDefaultDataFile)
     tEle->SetBranchAddress("elePhi", &elePhi);
     tEle->SetBranchStatus("eleCharge", 1);
     tEle->SetBranchAddress("eleCharge", &eleCharge);
+
+    // ECAL-gap veto input (2026-09-14): supercluster eta, applied in passEleID like the skim
+    std::vector<float> *eleSCEta = nullptr;
+    if (!pOSkim::HasBranch(tEle, "eleSCEta"))
+    {
+        std::cerr << "[FATAL] isolation_ele: no eleSCEta branch in " << fname << " -- the ECAL-gap veto cannot be applied\n";
+        return;
+    }
+    tEle->SetBranchStatus("eleSCEta", 1);
+    tEle->SetBranchAddress("eleSCEta", &eleSCEta);
 
     tEle->SetBranchStatus("eleMVAIdWP80", 1);
     tEle->SetBranchStatus("eleMVAIdWP85", 1);
@@ -400,21 +413,21 @@ void isolation_ele(const char *fname = pOSkim::kDefaultDataFile)
 
         for (int i = 0; i < nEle; i++)
         {
-            if (passEleID(i, eleMVAIdWP80, elePt, eleEta))
+            if (passEleID(i, eleMVAIdWP80, elePt, eleEta, eleSCEta))
                 idx_eleMVAIdWP80.push_back(i);
-            if (passEleID(i, eleMVAIdWP85, elePt, eleEta))
+            if (passEleID(i, eleMVAIdWP85, elePt, eleEta, eleSCEta))
                 idx_eleMVAIdWP85.push_back(i);
-            if (passEleID(i, eleMVAIdWP90, elePt, eleEta))
+            if (passEleID(i, eleMVAIdWP90, elePt, eleEta, eleSCEta))
                 idx_eleMVAIdWP90.push_back(i);
-            if (passEleID(i, eleMVAIdWP95, elePt, eleEta))
+            if (passEleID(i, eleMVAIdWP95, elePt, eleEta, eleSCEta))
                 idx_eleMVAIdWP95.push_back(i);
-            if (passEleID(i, eleCutIdWP70, elePt, eleEta))
+            if (passEleID(i, eleCutIdWP70, elePt, eleEta, eleSCEta))
                 idx_eleCutIdWP70.push_back(i);
-            if (passEleID(i, eleCutIdWP80, elePt, eleEta))
+            if (passEleID(i, eleCutIdWP80, elePt, eleEta, eleSCEta))
                 idx_eleCutIdWP80.push_back(i);
-            if (passEleID(i, eleCutIdWP90, elePt, eleEta))
+            if (passEleID(i, eleCutIdWP90, elePt, eleEta, eleSCEta))
                 idx_eleCutIdWP90.push_back(i);
-            if (passEleID(i, eleCutIdWP95, elePt, eleEta))
+            if (passEleID(i, eleCutIdWP95, elePt, eleEta, eleSCEta))
                 idx_eleCutIdWP95.push_back(i);
         }
 

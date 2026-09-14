@@ -8,7 +8,9 @@
 #include "plotting_helper.C"
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the <hist>_<syst>Up/Down twins written by skim/lhe_updown.py
+#include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames: the <hist>_mu{ID,Iso,Trig}Up/Down twins written by skim.C (muon MC only)
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <set>
@@ -461,11 +463,12 @@ void mtandmet(bool isElec = 1)
         // (same shape, total = A0). NSDMI required -- accumulate()/W_incl
         // construct RegionTemplates without makeRegion.
         TH1D *qcdAbcd = nullptr;
-        // LHE shape systematics (2026-09-07): "<process>_<syst>Up|Down" -> the
-        // absolute varied template, process in {signal, z, ztau, wtau}, syst in
-        // pOLhe::kLheSystNames (nPDF, qcdScale, alphaS), built by attachSysts()
-        // from the <hist>_<syst>Up/Down twins skim/lhe_updown.py wrote into
-        // every MC skim file. data_obs and the data-driven qcd/qcd_abcd have none.
+        // Shape systematics (2026-09-07 LHE, 2026-09-14 muon SFs): "<process>_<syst>Up|Down"
+        // -> the absolute varied template, process in {signal, z, ztau, wtau},
+        // syst in `systNames` below (nPDF, qcdScale, alphaS from skim/lhe_updown.py;
+        // muID, muIso, muTrig from skim.C, muon channel only), built by
+        // attachSysts() from the <hist>_<syst>Up/Down twins in every MC skim
+        // file. data_obs and the data-driven qcd/qcd_abcd have none.
         std::map<std::string, TH1D *> syst;
     };
     std::vector<RegionTemplates> regions;          // PF MET (the nominal fit input)
@@ -528,23 +531,32 @@ void mtandmet(bool isElec = 1)
         return h;
     };
 
-    // LHE shape systematics for one region (2026-09-07). For every syst in
-    // pOLhe::kLheSystNames and direction Up/Down, read the per-sample
-    // "<baseName>_<syst><dir>" twins (written by skim/lhe_updown.py into the MC
-    // skim files), scale each by its own k_s and combine them EXACTLY like the
-    // nominal templates: signal = W+ sample + W- sample reconstructed with this
-    // region's charge, wtau = both tau samples, z / ztau single samples. A syst
-    // is attached only when all six inputs exist in BOTH directions (otherwise
-    // [WARN] once per syst and skipped); the sidecar written next to each
-    // Combine input lists what every region carries, and the fork's card
-    // generator must not reference more. Each varied name is Get()'d exactly
-    // once per file (region names are unique), so the in-place Scale is safe.
+    // The shape systematics this channel's MC skim files carry: the LHE families
+    // (both flavours; skim/lhe_updown.py) + the lepton-SF families of THIS
+    // flavour (muon: skim/muon_sf.h, written by skim.C; electron: none yet).
+    // Single list for attachSysts() and the sidecar below.
+    std::vector<std::string> systNames(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
+    if (!isElec)
+        systNames.insert(systNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
+
+    // Shape systematics for one region (2026-09-07). For every syst in
+    // `systNames` and direction Up/Down, read the per-sample
+    // "<baseName>_<syst><dir>" twins (skim/lhe_updown.py for the LHE families,
+    // skim.C for the muon SFs) from the MC skim files, scale each by its own
+    // k_s and combine them EXACTLY like the nominal templates: signal = W+
+    // sample + W- sample reconstructed with this region's charge, wtau = both
+    // tau samples, z / ztau single samples. A syst is attached only when all
+    // six inputs exist in BOTH directions (otherwise [WARN] once per syst and
+    // skipped); the sidecar written next to each Combine input lists what
+    // every region carries, and the fork's card generator must not reference
+    // more. Each varied name is Get()'d exactly once per file (region names
+    // are unique), so the in-place Scale is safe.
     std::set<std::string> lheWarned;
     auto attachSysts = [&](RegionTemplates &r, const std::string &tag, const char *baseName)
     {
-        for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+        for (const std::string &systStr : systNames)
         {
-            const char *syst = pOLhe::kLheSystNames[is];
+            const char *syst = systStr.c_str();
             std::map<std::string, TH1D *> got;
             bool complete = true;
             for (const char *dir : {"Up", "Down"})
@@ -567,9 +579,9 @@ void mtandmet(bool isElec = 1)
             if (!complete)
             {
                 if (lheWarned.insert(syst).second)
-                    std::cerr << "[WARN] LHE syst " << syst << ": " << baseName << "_" << syst
+                    std::cerr << "[WARN] shape syst " << syst << ": " << baseName << "_" << syst
                               << "Up/Down missing in at least one MC skim file -> not attached"
-                              << " (run skim/run_lhe_updown.sh after the skim)\n";
+                              << " (LHE families: run skim/run_lhe_updown.sh after the skim; muon SFs: re-skim)\n";
                 continue;
             }
             r.syst.insert(got.begin(), got.end());
@@ -1623,21 +1635,29 @@ void mtandmet(bool isElec = 1)
                       << " per-(charge,y) regions + Wp_incl/Wm_incl/W_incl"
                       << (nCR ? Form(" + %d CR dirs", nCR) : "") << ")\n";
 
-            // --- LHE shape-systematics sidecar (read by the fork's card generator) ---
+            // --- shape-systematics sidecar (read by the fork's card generator) ---
             // <combineOut minus .root>_systs.txt: one line per systematic that is
             // COMPLETE (signal/z/ztau/wtau x Up/Down) in EVERY per-(charge,y)
             // region, followed by the processes carrying it. An incomplete syst
             // is warned about and left out, so a card can never reference a
-            // shape that is missing somewhere.
+            // shape that is missing somewhere. Flavour-specific systematics (the
+            // muon SFs) appear only in that flavour's sidecar -- the generator
+            // puts them on that flavour's channels alone.
             {
                 const std::string side = combineOut.substr(0, combineOut.size() - 5) + "_systs.txt";
                 std::ofstream sf(side.c_str());
-                sf << "# LHE shape systematics in " << combineOut << " (plotting/mtandmet.C)\n"
+                sf << "# Shape systematics in " << combineOut << " (plotting/mtandmet.C)\n"
                    << "# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>\n";
+                // directive for the fork's card generator, only when a separate muTrig
+                // nuisance is shipped (today the three sources go in as ONE combined
+                // `muSF`, so this is dormant): its correlation model follows the
+                // trigger-SF binning chosen in skim/muon_sf.h (inclusive -> coherent)
+                if (std::find(systNames.begin(), systNames.end(), std::string("muTrig")) != systNames.end())
+                    sf << "#! muTrig corr " << pOSF::kMuTrigCorr << "\n";
                 int nListed = 0;
-                for (int is = 0; is < pOLhe::kNLheSysts; ++is)
+                for (const std::string &systStr : systNames)
                 {
-                    const char *syst = pOLhe::kLheSystNames[is];
+                    const char *syst = systStr.c_str();
                     int nFull = 0;
                     for (auto &r : regs)
                     {
@@ -1649,10 +1669,10 @@ void mtandmet(bool isElec = 1)
                     }
                     if (nFull > 0 && nFull == (int)regs.size()) { sf << syst << " signal z ztau wtau\n"; ++nListed; }
                     else if (nFull > 0)
-                        std::cerr << "[WARN] " << combineOut << ": LHE syst " << syst << " complete in only "
+                        std::cerr << "[WARN] " << combineOut << ": shape syst " << syst << " complete in only "
                                   << nFull << "/" << regs.size() << " regions -> NOT listed in " << side << "\n";
                 }
-                std::cout << "[INFO] LHE shape systematics in " << combineOut << ": " << nListed
+                std::cout << "[INFO] shape systematics in " << combineOut << ": " << nListed
                           << " listed in " << side << "\n";
             }
         };

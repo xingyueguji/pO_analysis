@@ -1,5 +1,6 @@
-# LHE shape systematics in ./plots/combine_input_W.root (plotting/mtandmet.C)
+# Shape systematics in ./plots/combine_input_W.root (plotting/mtandmet.C)
 # <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>
 nPDF signal z ztau wtau
 qcdScale signal z ztau wtau
 alphaS signal z ztau wtau
+muSF signal z ztau wtau

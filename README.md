@@ -30,7 +30,8 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 
 ```bash
 # ---- pO_analysis (plain ROOT) ----
-cd skim        && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims + nPDF Up/Down + N_gen
+cd correction  && ./run_trig_eff_mb.sh mu                                    # 0 muon trigger SF (the muon MC skim reads its rootfile since 2026-09-14)
+cd ../skim     && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims (muon MC weighted by ID x ISO x TRIG SFs) + nPDF Up/Down + N_gen
 cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
 cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
                           'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
@@ -90,7 +91,8 @@ cd skim/
 grep '^DATA_FILE=' run_all.sh           # 2.1 sanity-check the input path
 ./run_all.sh Wmu Data                   # 2.2 smoke-test one channel×sample
 ./run_all.sh all                        # 2.3 everything (Zmm Zee Wmu Wel × 7 samples)
-./run_lhe_updown.sh                     # 2.4 nPDF Up/Down templates from the LHE weights (MC files; needs lhe_env.sh)
+./run_lhe_updown.sh                     # 2.4 nPDF/qcdScale/alphaS Up/Down templates from the LHE weights (MC files; needs lhe_env.sh;
+                                        #     members area-normalized before combining since 2026-09-14 -- see skim/lhe_updown.py)
 ```
 CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples…]` (samples ⊂
 `Data DY Wp Wm DYtau Wptau Wmtau`).
@@ -113,6 +115,25 @@ same files: `<h>_nPDFUp/Down` (LHAPDF's `PDFSet.uncertainty()` per bin),
 (LHAPDF 6.5.6 built under `~/local/lhapdf` for the PyROOT python; recipe in the
 file). Re-skim regression: `./compare_reskim.sh <backup-dir>` checks every
 pre-existing histogram for bit-identity (`compare_hists.C`).
+
+**2.5 — muon efficiency SFs (2026-09-14).** The muon MC skims (`Wmu`, `Zmm`)
+multiply the event weight by ID × ISO × trigger scale factors
+(`skim/muon_sf.h`; data untouched): the Muon POG pp-2025 `TightID` and
+`TightPFIso` SFs from the committed reduced JSON
+`skim/sf/muon_sf_2025_TightID_PFIso_schemaV2.json` (regenerate from the POG
+file with `python3 skim/sf/extract_muon_sf.py <file>`; the Z→μμ iso cut was
+harmonized to the W's 0.15 the same day so ONE iso SF serves both) and the
+MB-derived trigger SF, inclusive in rapidity, from
+`correction/rootfile/trig_eff_mb_mu.root` (run `correction/run_trig_eff_mb.sh mu`
+FIRST — a missing input is FATAL, never a silent SF = 1;
+`PO_MUON_SF=off ./run_all.sh Wmu` disables it for checks). Each MC job logs an
+`[SF]` block (inputs + provenance, the inclusive trigger SF and the per-y
+consistency check, ⟨SF⟩ per source, Up/Down totals). The fit templates get
+per-source twins `<h>_{muID,muIso,muTrig}Up/Down` (one source at ±1σ;
+diagnostics) and the combined `<h>_muSFUp/Down` (the three added in
+quadrature per bin), which is carried into the muon Combine inputs and cards
+as ONE nuisance, exactly like nPDF/qcdScale/alphaS (+0.35/−0.38% on the W
+templates, ±0.52% on the Z peak). Electron SFs: not yet.
 
 ## Module 2b — MC normalization (`skim/run_ngen.sh` + `skim/mc_norm.h`) — DONE
 
@@ -173,7 +194,9 @@ lose the report.
 (`data_obs/signal/w/wtau/ztau`, mass peak). **Since 2026-09-07 every MC
 process of every region also carries the LHE shape systematics
 `<process>_{nPDF,qcdScale,alphaS}Up/Down`** (from the skim's Up/Down twins,
-Module 2.4; not in the dropped plain `leppt` file), and a sidecar
+Module 2.4; not in the dropped plain `leppt` file) **and, in the muon inputs,
+the combined SF systematic `<process>_muSFUp/Down` (Module 2.5,
+2026-09-14)**, and a sidecar
 `<input>_systs.txt` next to each file lists what was written — the fork's
 card generator reads it for its `shape` rows. Diagnostics of those templates
 (per-region Up/Down-over-nominal plots, per-region overlays of the nominal

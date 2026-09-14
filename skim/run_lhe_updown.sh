@@ -6,8 +6,11 @@
 # For every MC skim file of the channel, lhe_updown.py turns the member twins
 # written by skim.C into Up/Down templates written back into the same file:
 #   <hist>_epps21 -> <hist>_nPDFUp/Down      (LHAPDF PDFSet.uncertainty())
-#   <hist>_scale  -> <hist>_qcdScaleUp/Down  (muR/muF envelope over all 9 points, per-bin max/min)
-#   <hist>_alphas -> <hist>_alphaSUp/Down    (the 0.119 / 0.117 member templates)
+#   <hist>_scale  -> <hist>_qcdScaleUp/Down  (muR/muF envelope over the 6 non-antagonistic points + nominal, per-bin max/min)
+#   <hist>_alphas -> <hist>_alphaSUp/Down    (nominal +/- (N[0.119] - N[0.117])/2, symmetrized)
+# Since 2026-09-14 every member is first area-normalized to the nominal integral
+# (--norm reco, the script's default): the theory-cross-section change is
+# divided out, only the shape variation reaches the fit. See lhe_updown.py.
 # Must be re-run after every re-skim (the skim RECREATEs its output files).
 # Log: logs/lhe_updown_<channel>.log (the record of the integral shifts).
 # bash-3.2 safe (macOS /bin/bash).
