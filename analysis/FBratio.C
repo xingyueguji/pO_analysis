@@ -112,10 +112,28 @@ void FBratio(
     if (hcov)
         std::cout << "[INFO] simfit covariance found -> R_FB errors include all "
                      "cross terms (within F, within B, and cov(F, B))\n";
+
+    // STATISTICAL component (2026-09-15): the same matrix with the constrained
+    // nuisances conditioned out (h_cov_yield_FB_stat, fork
+    // extract_pO_simfit.C::ComputeStatCov). Present it and every graph below is
+    // built TWICE -- once with the total matrix (the primary g_RFB_*) and once
+    // with the stat one (g_RFB_*_stat) -- so observables.C can draw statistical
+    // bars with the systematic, sqrt(tot^2 - stat^2), as a box per point.
+    // Absent -> only the total graphs are written, exactly as before.
+    TH2D *hcovS = (TH2D *)f->Get("h_cov_yield_FB_stat");
+    if (hcovS && hcovS->GetNbinsX() != 2 * NY)
+    {
+        std::cerr << "[WARN] h_cov_yield_FB_stat has " << hcovS->GetNbinsX()
+                  << " rows, expected " << 2 * NY << " -> stat component ignored\n";
+        hcovS = nullptr;
+    }
+    if (hcovS)
+        std::cout << "[INFO] stat-only covariance found -> also writing g_RFB_*_stat\n";
+
     // covariance-matrix index of one yield: Wp_yi -> iy, Wm_yi -> NY + iy
     auto covIdx = [&](int iy, bool wantWp) { return (wantWp ? 0 : NY) + iy; };
-    auto covEl = [&](int a, int b) -> double {
-        return hcov ? hcov->GetBinContent(a + 1, b + 1) : 0.0;
+    auto covEl = [&](const TH2D *M, int a, int b) -> double {
+        return M ? M->GetBinContent(a + 1, b + 1) : 0.0;
     };
 
     auto get_yield = [&](int iy, bool wantWp) -> Yield
@@ -138,8 +156,12 @@ void FBratio(
     };
 
     // Make graphs (combined and/or separated)
+    // M = the yield covariance the errors are taken from: hcov for the primary
+    // (TOTAL) graphs, hcovS for the statistical twins. Null -> the legacy
+    // independent-yield errors straight out of the histograms.
     auto build_graph = [&](const char *gname, const char *gtitle,
-                           bool useWp, bool useWm, bool sumCharges) -> TGraphErrors *
+                           bool useWp, bool useWm, bool sumCharges,
+                           const TH2D *M) -> TGraphErrors *
     {
         std::vector<double> yv(Nabs, 0.0), ey(Nabs, 0.0);
 
@@ -183,13 +205,13 @@ void FBratio(
             // adds the 2*cov(Wp,Wm) term the Yield operator+ cannot know), and
             // build cov(F, B) for the ratio. Without hcov everything is 0/kept.
             double covFB = 0.0;
-            if (hcov)
+            if (M)
             {
                 auto setVar = [&](Yield &Y, const std::vector<int> &idx) {
                     double var = 0.0;
                     for (int a : idx)
                         for (int b : idx)
-                            var += covEl(a, b);
+                            var += covEl(M, a, b);
                     if (var > 0.0)
                         Y.error = std::sqrt(var);
                 };
@@ -197,7 +219,7 @@ void FBratio(
                 setVar(BB, idxB);
                 for (int a : idxF)
                     for (int b : idxB)
-                        covFB += covEl(a, b);
+                        covFB += covEl(M, a, b);
             }
 
             if (FB.value > 0.0 && BB.value > 0.0)
@@ -211,9 +233,10 @@ void FBratio(
                 ey[iabs] = 0.0;
             }
 
-            std::cout << "[INFO] |y|bin=" << iabs
-                      << "  F=" << FB.value << "  B=" << BB.value
-                      << "  R_FB=" << yv[iabs] << " +/- " << ey[iabs] << "\n";
+            if (M == hcov) // the stat pass repeats the same values: report once
+                std::cout << "[INFO] |y|bin=" << iabs
+                          << "  F=" << FB.value << "  B=" << BB.value
+                          << "  R_FB=" << yv[iabs] << " +/- " << ey[iabs] << "\n";
         }
 
         TGraphErrors *g = new TGraphErrors(Nabs, x.data(), yv.data(), ex.data(), ey.data());
@@ -223,7 +246,17 @@ void FBratio(
     };
 
     // Build requested graphs
-    std::vector<TGraphErrors *> graphs;
+    std::vector<TGraphErrors *> graphs;     // primary, TOTAL error
+    std::vector<TGraphErrors *> graphsStat; // statistical twins, "<name>_stat"
+
+    // one call -> the total graph plus (when the stat matrix exists) its twin
+    auto addGraph = [&](const TString &gname, const TString &gtitle,
+                        bool useWp, bool useWm, bool sumCharges) {
+        graphs.push_back(build_graph(gname.Data(), gtitle.Data(), useWp, useWm, sumCharges, hcov));
+        if (hcovS)
+            graphsStat.push_back(build_graph((gname + "_stat").Data(), gtitle.Data(),
+                                             useWp, useWm, sumCharges, hcovS));
+    };
 
     if (combineCharges)
     {
@@ -232,7 +265,7 @@ void FBratio(
                              ? "R_{FB} (sum charges) from m_{T} yields; |y| bin; R_{FB}"
                              : "R_{FB} (sum charges) from MET yields; |y| bin; R_{FB}";
         cout << "[INFO] " << " Now producing Sum " << endl;
-        graphs.push_back(build_graph(gname, gtitle, false, false, true));
+        addGraph(gname, gtitle, false, false, true);
 
         if (alsoWriteChargeSeparated)
         {
@@ -241,14 +274,14 @@ void FBratio(
                                   ? "R_{FB} (W^{+}) from m_{T} yields; |y| bin; R_{FB}"
                                   : "R_{FB} (W^{+}) from MET yields; |y| bin; R_{FB}";
             cout << "[INFO] " << " Now producing + " << endl;
-            graphs.push_back(build_graph(gnameP, gtitleP, true, false, false));
+            addGraph(gnameP, gtitleP, true, false, false);
 
             TString gnameM = "g_RFB_Wm";   // legacy alias: g_RFB_mt_Wm / g_RFB_met_Wm (written too)
             TString gtitleM = useMT
                                   ? "R_{FB} (W^{-}) from m_{T} yields; |y| bin; R_{FB}"
                                   : "R_{FB} (W^{-}) from MET yields; |y| bin; R_{FB}";
             cout << "[INFO] " << " Now producing - " << endl;
-            graphs.push_back(build_graph(gnameM, gtitleM, false, true, false));
+            addGraph(gnameM, gtitleM, false, true, false);
         }
     }
     else
@@ -258,13 +291,13 @@ void FBratio(
         TString gtitleP = useMT
                               ? "R_{FB} (W^{+}) from m_{T} yields; |y| bin; R_{FB}"
                               : "R_{FB} (W^{+}) from MET yields; |y| bin; R_{FB}";
-        graphs.push_back(build_graph(gnameP, gtitleP, true, false, false));
+        addGraph(gnameP, gtitleP, true, false, false);
 
         TString gnameM = "g_RFB_Wm";   // legacy alias: g_RFB_mt_Wm / g_RFB_met_Wm (written too)
         TString gtitleM = useMT
                               ? "R_{FB} (W^{-}) from m_{T} yields; |y| bin; R_{FB}"
                               : "R_{FB} (W^{-}) from MET yields; |y| bin; R_{FB}";
-        graphs.push_back(build_graph(gnameM, gtitleM, false, true, false));
+        addGraph(gnameM, gtitleM, false, true, false);
     }
 
     // Write out
@@ -291,13 +324,33 @@ void FBratio(
         legacy.ReplaceAll("g_RFB_", useMT ? "g_RFB_mt_" : "g_RFB_met_");
         g->Write(legacy, TObject::kOverwrite);
     }
+    // statistical twins: primary name only (they are new, nothing reads an alias)
+    for (auto *g : graphsStat)
+        g->Write("", TObject::kOverwrite);
+
+    // stat / syst breakdown, so the console record carries the split too
+    for (size_t k = 0; k < graphsStat.size() && k < graphs.size(); ++k)
+    {
+        const TGraphErrors *gt = graphs[k], *gs = graphsStat[k];
+        for (int i = 0; i < gt->GetN() && i < gs->GetN(); ++i)
+        {
+            const double et = gt->GetErrorY(i), es = gs->GetErrorY(i);
+            printf("[INFO] %-12s |y|bin=%d  R_FB = %.5f +/- %.5f (stat) +/- %.5f (syst)  [total %.5f]\n",
+                   gt->GetName(), i, gt->GetPointY(i), es,
+                   std::sqrt(std::max(0.0, et * et - es * es)), et);
+        }
+    }
 
     fout->Close();
     delete fout;
     f->Close();
     delete f;
 
-    std::cout << "[OK] Wrote " << graphs.size() << " R_FB graph(s) into " << outFile << "\n";
+    std::cout << "[OK] Wrote " << graphs.size() << " R_FB graph(s)"
+              << (graphsStat.empty() ? "" : Form(" + %d stat twin(s)", (int)graphsStat.size()))
+              << " into " << outFile << "\n";
     for (auto *g : graphs)
+        delete g;
+    for (auto *g : graphsStat)
         delete g;
 }

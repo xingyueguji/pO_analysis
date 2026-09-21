@@ -233,6 +233,23 @@ static void observables_run(const char *chan, const char *lepSym,
     auto *g_RFB_Wp = GetGraph(fFB, "g_RFB_Wp", "g_RFB_mt_Wp");
     auto *g_RFB_Wm = GetGraph(fFB, "g_RFB_Wm", "g_RFB_mt_Wm");
 
+    // Statistical twins (2026-09-15): same points, statistical error only,
+    // written by charge_asym.C / FBratio.C whenever the fitted-yields file
+    // carries the conditioned covariance h_cov_yield[_FB]_stat. When present,
+    // the plotted error bars become the STATISTICAL ones and the systematic --
+    // sqrt(total^2 - stat^2) -- is drawn as a TBox per point. Absent (raw
+    // skim, legacy per-flavour fits, pre-2026-09-14 extractions) -> a single
+    // total-error bar, exactly as before.
+    auto *g_charge_stat = (TGraphErrors *)fCharge->Get("g_chargeAsym_stat");
+    auto *g_RFB_sum_stat = (TGraphErrors *)fFB->Get("g_RFB_sum_stat");
+    auto *g_RFB_Wp_stat = (TGraphErrors *)fFB->Get("g_RFB_Wp_stat");
+    auto *g_RFB_Wm_stat = (TGraphErrors *)fFB->Get("g_RFB_Wm_stat");
+    if (!g_charge_stat && !g_RFB_sum_stat)
+        std::cerr << "[WARN] no *_stat graphs in " << sCharge << " / " << sFB
+                  << "\n        -> single total-error bars (no systematic boxes)."
+                  << "\n        Re-run the fork extraction (run_pO_fits.sh --extract-only)"
+                  << " so comb_fitted_yields.root carries h_cov_yield[_FB]_stat.\n";
+
     // theory graphs (boson-level -> same for e and mu)
     TGraphErrors *thWp[4], *thWm[4];
     readTheoryCharge(fFB_theory, "WPlus", thWp);
@@ -256,7 +273,8 @@ static void observables_run(const char *chan, const char *lepSym,
         SaveNiceGraph(g_charge, outChargeDir + "/chargeAsym",
                       Form("#eta^{%s}_{CM}", lepSym), "A_{ch}", "",
                       Form("W #rightarrow %s #nu", lepSym), sub2,
-                      {}, ps, tuneChargeTag);
+                      {}, ps, tuneChargeTag,
+                      nullptr, nullptr, nullptr, nullptr, g_charge_stat);
 
     // ---- sum-channel theory (count-weighted by the fitted yields) ----
     std::vector<TGraphErrors *> sumTheory(4, nullptr);
@@ -281,18 +299,19 @@ static void observables_run(const char *chan, const char *lepSym,
     }
 
     // ---- R_FB plots (sum, W+, W-) with all-4-model bands ----
-    auto plotRFB = [&](TGraphErrors *g, const std::string &tag, const std::string &subtitle,
+    auto plotRFB = [&](TGraphErrors *g, TGraphErrors *gStat,
+                       const std::string &tag, const std::string &subtitle,
                        TGraphErrors *t1, TGraphErrors *t2, TGraphErrors *t3, TGraphErrors *t4) {
         if (!g) return;
         SaveNiceGraph_ErrorBand(g, outFBDir + "/" + tag, Form("#eta^{%s}_{CM}", lepSym), "R_{FB}",
-                                "", subtitle, sub2, {}, ps, tuneRFBTag, t1, t2, t3, t4);
+                                "", subtitle, sub2, {}, ps, tuneRFBTag, t1, t2, t3, t4, gStat);
     };
 
-    plotRFB(g_RFB_sum, "RFB_sum", Form("W #rightarrow %s #nu", lepSym),
+    plotRFB(g_RFB_sum, g_RFB_sum_stat, "RFB_sum", Form("W #rightarrow %s #nu", lepSym),
             sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
-    plotRFB(g_RFB_Wp, "RFB_Wp", Form("W^{+} #rightarrow %s^{+} #nu", lepSym),
+    plotRFB(g_RFB_Wp, g_RFB_Wp_stat, "RFB_Wp", Form("W^{+} #rightarrow %s^{+} #nu", lepSym),
             thWp[0], thWp[1], thWp[2], thWp[3]);
-    plotRFB(g_RFB_Wm, "RFB_Wm", Form("W^{-} #rightarrow %s^{-} #bar{#nu}", lepSym),
+    plotRFB(g_RFB_Wm, g_RFB_Wm_stat, "RFB_Wm", Form("W^{-} #rightarrow %s^{-} #bar{#nu}", lepSym),
             thWm[0], thWm[1], thWm[2], thWm[3]);
 
     fCharge->Close(); fFB->Close(); delete fCharge; delete fFB;

@@ -110,6 +110,11 @@ run_one() {
     (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_comb(\"$disc\"); xsec_fiducial_diag(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_fiducial.png" "xsec_fiducial_comb produced no plot"
     require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_xsec_diag_mu.png" "xsec_fiducial_diag produced no plot"
+    # (sigma_W, sigma_Z) confidence ellipse from the 25x25 POI covariance -- the
+    # plane for comparing nPDF sets. Needs h_cov_poi (fork extractor, 2026-09-15)
+    # and h_gen_sig_Z (skim/gen_xsec.C); the macro says so and bails if absent,
+    # which is why this is not gated by require_file on a pre-09-15 tree.
+    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_contour.C+\"); xsec_contour_WZ(\"$disc\");") || exit 1
     # rapidity-INCLUSIVE postfit stacks (per flavour, Wp/Wm/W; exact because the
     # simfit parameters are pure normalizations -- see postfit_incl.C header)
     (cd "$HERE/../plotting" && root -l -b -q "postfit_incl.C+(\"$disc\")") || exit 1

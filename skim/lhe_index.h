@@ -299,13 +299,45 @@ inline std::string FamilyTitle(Family f)
   }
 }
 
+// ---------------------------------------------------------------------------
+// Outlier guard on the per-event reweighting factor rho = ttbar_w[k]/ttbar_w[0]
+//
+// POWHEG generates UNWEIGHTED events: |ttbar_w[0]| is a single number per file
+// (5538.8 in the July-29 samples), its SIGN the sign of Bbar = B + V + int R.
+// A variation weight is the same event re-evaluated, ttbar_w[k] = ttbar_w[0] *
+// Bbar_k/Bbar_0, so an event sitting on a near-cancellation of Bbar_0 gets a
+// huge ratio -- and gets it in EVERY member at once, since they all divide by
+// that same denominator. Unweighting erased Bbar_0, so the instability is
+// invisible in the nominal weight and shows only in the ratios. Measured on the
+// worst such event (July_29_MC_Wm_mu entry 70485, w0 = -5538.8): muF x 2 gives
+// rho = 228, the nPDF baseline product 261, and alpha_s +- 0.001 gives 11.5 --
+// which no physical variation can do, and which is the proof that the fault is
+// the shared denominator rather than any one member.
+//
+// Such an event keeps its full NOMINAL weight (nothing is dropped from any
+// nominal histogram) but its VARIATIONS are meaningless, so they are neutralized
+// (rho -> 1 in every member). Per-event, not per-member: the cause is common to
+// all members, and varying some but not others would distort the member-to-
+// member correlations that the envelope and the Hessian both rely on.
+//
+// Calibration over the 8 July-29 MC files: a uniform 17-25 events per file
+// (0.0015-0.0021%) exceed 10, and neutralizing them shifts the inclusive sum of
+// any of the 114 used members by <= 0.06% (mean 0.005%). Without the guard, the
+// single rho = 261 event above supplied 45% of the qcdScale integral shift of
+// the leppt_mt40 W- y5(fb)/y6(lab) signal template (+1.26% instead of +0.37%).
+inline constexpr double kMaxMemberRatio = 10.0;
+
 // The per-event member weights of all families (computed once per event).
 struct MemberWeights { double w[kNFamilies][kNMaxMembers]; };
 
 // false (and nothing usable in `out`) when the vector is absent / not 217 long
 // (warned once per job) or when ttbar_w[0] == 0 (the nominal adds 0 anyway).
+// `nNeutralized`, when given, counts the events whose variations the
+// kMaxMemberRatio guard above flattened to the nominal (returns true for those:
+// the member weights ARE usable, they just carry no variation).
 inline bool ComputeMemberWeights(double w, const std::vector<float> *ww, MemberWeights &out,
-                                 bool &warnedOnce, const char *who)
+                                 bool &warnedOnce, const char *who,
+                                 unsigned long long *nNeutralized = nullptr)
 {
   if (!ww || (int)ww->size() != kNW)
   {
@@ -319,6 +351,7 @@ inline bool ComputeMemberWeights(double w, const std::vector<float> *ww, MemberW
   }
   const double w0 = (*ww)[0];
   if (w0 == 0.0) return false;
+  double worst = 0.0; // max |rho| over every member this job stores
   for (int f = 0; f < kNFamilies; ++f)
   {
     const std::vector<MemberDef> &tab = MemberTable((Family)f);
@@ -326,8 +359,15 @@ inline bool ComputeMemberWeights(double w, const std::vector<float> *ww, MemberW
     {
       double r = (*ww)[tab[m].a] / w0;
       if (tab[m].b >= 0) r *= (*ww)[tab[m].b] / w0;
+      if (std::fabs(r) > worst) worst = std::fabs(r);
       out.w[f][m] = w * r;
     }
+  }
+  if (worst > kMaxMemberRatio) // unstable reweighting: keep w, drop the variations
+  {
+    for (int f = 0; f < kNFamilies; ++f)
+      for (int m = 0; m < kNMembers[f]; ++m) out.w[f][m] = w;
+    if (nNeutralized) ++*nNeutralized;
   }
   return true;
 }

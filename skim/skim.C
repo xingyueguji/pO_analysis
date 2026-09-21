@@ -459,6 +459,7 @@ int skim_Wmu(const char *fname, SampleType sample)
   pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
+  unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
   // -------- Muon efficiency scale factors (MC only; muon_sf.h) --------
   // ID (TightID | TrackerMuons) x ISO (TightPFIso | TightID) from the Muon POG
@@ -781,7 +782,7 @@ int skim_Wmu(const char *fname, SampleType sample)
     // LHE member weights of this event (all families): wGen x ttbar_w[i]/ttbar_w[0]
     // (rescaled by the SF below, so member 0 stays == the nominal fill weight)
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(wGen, lheW, mw, warnedLheOnce, "skim_Wmu");
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(wGen, lheW, mw, warnedLheOnce, "skim_Wmu", &nLheCapped);
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
@@ -1011,7 +1012,9 @@ int skim_Wmu(const char *fname, SampleType sample)
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
               << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
-              << " members per template); events without usable ttbar_w: " << nLheSkipped << "\n";
+              << " members per template); events without usable ttbar_w: " << nLheSkipped
+              << "; events with |rho| > " << pOLhe::kMaxMemberRatio
+              << " neutralized (nominal kept, variations dropped): " << nLheCapped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
@@ -1317,6 +1320,7 @@ int skim_Wel(const char *fname, SampleType sample)
   pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
+  unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
   // -------- PF tree (MET) --------
   Int_t nPF = 0;
@@ -1570,7 +1574,7 @@ int skim_Wel(const char *fname, SampleType sample)
 
     // LHE member weights of this event (all families): w x ttbar_w[i]/ttbar_w[0]
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wel");
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wel", &nLheCapped);
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
@@ -1759,7 +1763,9 @@ int skim_Wel(const char *fname, SampleType sample)
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
               << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
-              << " members per template); events without usable ttbar_w: " << nLheSkipped << "\n";
+              << " members per template); events without usable ttbar_w: " << nLheSkipped
+              << "; events with |rho| > " << pOLhe::kMaxMemberRatio
+              << " neutralized (nominal kept, variations dropped): " << nLheCapped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_hist.root").c_str(), "RECREATE");
@@ -1945,6 +1951,7 @@ int skim_Zmm(const char *fname, SampleType sample)
   pOLhe::Twins       t_mass; // booked with hMass below
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
+  unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
   // -------- Muon efficiency scale factors (MC only; muon_sf.h) --------
   // Both legs: ID x [iso ? ISO : 1] per leg (the same Tight-iso SF as the W --
@@ -2135,7 +2142,7 @@ int skim_Zmm(const char *fname, SampleType sample)
 
     // LHE member weights of this event (per EVENT; hMass is filled per OS pair below)
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zmm");
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zmm", &nLheCapped);
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
@@ -2270,7 +2277,9 @@ int skim_Zmm(const char *fname, SampleType sample)
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
-              << "; events without usable ttbar_w: " << nLheSkipped << "\n";
+              << "; events without usable ttbar_w: " << nLheSkipped
+              << "; events with |rho| > " << pOLhe::kMaxMemberRatio
+              << " neutralized (nominal kept, variations dropped): " << nLheCapped << "\n";
   if (applySF) // the <SF> record of this job
   {
     sfStats.Print(std::cout, "skim_Zmm selected pairs (Z peak, both legs iso-pass)");
@@ -2461,6 +2470,7 @@ int skim_Zee(const char *fname, SampleType sample)
   pOLhe::Twins       t_mass; // booked with hMass below
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
+  unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
   // -------- HLT objects --------
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEG10_v");
@@ -2615,7 +2625,7 @@ int skim_Zee(const char *fname, SampleType sample)
 
     // LHE member weights of this event (per EVENT; hMass is filled per OS pair below)
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zee");
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Zee", &nLheCapped);
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     if (applyVz && has_vz && TMath::Abs(vz) > vzMax) continue;
@@ -2731,7 +2741,9 @@ int skim_Zee(const char *fname, SampleType sample)
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
-              << "; events without usable ttbar_w: " << nLheSkipped << "\n";
+              << "; events without usable ttbar_w: " << nLheSkipped
+              << "; events with |rho| > " << pOLhe::kMaxMemberRatio
+              << " neutralized (nominal kept, variations dropped): " << nLheCapped << "\n";
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");

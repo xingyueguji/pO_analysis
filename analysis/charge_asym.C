@@ -71,7 +71,31 @@ void charge_asym(
         std::cout << "[INFO] simfit covariance found -> A errors include the "
                      "cov(N+, N-) cross term\n";
 
-    std::vector<double> x(NY), ex(NY), y(NY), ey(NY);
+    // STATISTICAL component (2026-09-15): the same matrix with the constrained
+    // nuisances conditioned out (h_cov_yield_stat, written by the fork's
+    // extract_pO_simfit.C::ComputeStatCov -- the Gaussian-exact equivalent of
+    // refitting with every nuisance frozen at its post-fit value). Present it
+    // and this macro writes a SECOND graph g_chargeAsym_stat carrying the
+    // statistical error only; observables.C then draws the bars from that one
+    // and the systematic -- the quadratic difference -- as a box per point.
+    // Absent (raw skim, legacy per-flavour fits, any pre-2026-09-14 extraction)
+    // -> only the total-error graph is written, exactly as before.
+    //
+    // NB the errors stored in h_yield_* are the TOTAL ones (= sqrt of the
+    // h_cov_yield diagonal), so the statistical A must take BOTH its diagonal
+    // terms and its cross term from the stat matrix -- not the histograms.
+    TH2D *hcovS = (TH2D *)f->Get("h_cov_yield_stat");
+    if (hcovS && hcovS->GetNbinsX() != 2 * NY)
+    {
+        std::cerr << "[WARN] h_cov_yield_stat has " << hcovS->GetNbinsX()
+                  << " rows, expected " << 2 * NY << " -> stat component ignored\n";
+        hcovS = nullptr;
+    }
+    if (hcovS)
+        std::cout << "[INFO] stat-only covariance found -> also writing "
+                     "g_chargeAsym_stat (stat. error; syst = sqrt(tot^2 - stat^2))\n";
+
+    std::vector<double> x(NY), ex(NY), y(NY), ey(NY), eyStat(NY, 0.0);
 
     for (int iy = 0; iy < NY; ++iy)
     {
@@ -109,6 +133,7 @@ void charge_asym(
         const double S = Np.value + Nm.value;
         double A = 0.0;
         double sA = 0.0;
+        double sAstat = 0.0;
 
         if (S > 0.0)
         {
@@ -116,6 +141,18 @@ void charge_asym(
             // cov(Wp_yi, Wm_yi): matrix order is [Wp_y0..11, Wm_y0..11]
             const double cov = hcov ? hcov->GetBinContent(iy + 1, NY + iy + 1) : 0.0;
             sA = AsymErr(Np, Nm, cov);
+
+            // statistical A: same values, all three second moments from the
+            // conditioned matrix. Note the 3% luminosity nuisance is fully
+            // correlated across every channel, so it rescales N+ and N-
+            // coherently and cancels in A -- expect sAstat ~ sA here (it is
+            // the cross section, not the asymmetry, that lumi dominates).
+            if (hcovS)
+            {
+                const pOAnalysis::Yield NpS(Np.value, std::sqrt(std::max(0.0, hcovS->GetBinContent(iy + 1, iy + 1))));
+                const pOAnalysis::Yield NmS(Nm.value, std::sqrt(std::max(0.0, hcovS->GetBinContent(NY + iy + 1, NY + iy + 1))));
+                sAstat = AsymErr(NpS, NmS, hcovS->GetBinContent(iy + 1, NY + iy + 1));
+            }
         }
 
         // x-axis: y-bin center
@@ -132,10 +169,15 @@ void charge_asym(
 
         y[iy] = A;
         ey[iy] = sA;
+        eyStat[iy] = sAstat;
 
         std::cout << "[INFO] iy=" << iy
                   << "  Np=" << Np.value << " Nm=" << Nm.value
-                  << "  A=" << A << " +/- " << sA << "\n";
+                  << "  A=" << A << " +/- " << sA;
+        if (hcovS)
+            std::cout << " (total)  = +/- " << sAstat << " (stat) +/- "
+                      << std::sqrt(std::max(0.0, sA * sA - sAstat * sAstat)) << " (syst)";
+        std::cout << "\n";
     }
 
     // Build graph
@@ -165,6 +207,17 @@ void charge_asym(
     fout->cd();
     g->Write("", TObject::kOverwrite);
     g->Write(gnameLegacy, TObject::kOverwrite); // deprecated alias
+
+    // the statistical-error twin (same points, stat-only bars); observables.C
+    // picks it up by name and turns the difference into the systematic boxes
+    if (hcovS)
+    {
+        TGraphErrors *gs = new TGraphErrors(NY, x.data(), y.data(), ex.data(), eyStat.data());
+        gs->SetName(gname + "_stat");
+        gs->SetTitle(gtitle);
+        gs->Write("", TObject::kOverwrite);
+        delete gs;
+    }
 
     fout->Close();
     delete fout;

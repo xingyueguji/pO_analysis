@@ -20,6 +20,34 @@
 #include "../skim/mc_norm.h"           // pONorm::kLumi_invnb (single-source data lumi)
 #include "disc_variants.h"             // pODisc::Spec/GraphFile (W-discriminant tags)
 
+// -----------------------------------------------------------------------------
+// Charge-series markers (2026-09-15) -- one place, so the W / W+ / W- glyphs
+// stay consistent across every plot in this macro.
+//
+// TWO rules, both from a pixel measurement of ROOT's rasterizer (markers drawn
+// on top of a width-2 line, glyph centre vs line centre, sizes 1.1-2.0):
+//
+//  (1) POINT-SYMMETRIC GLYPHS ONLY -- no triangles. A triangle's visual centre
+//      sits ~1/3 of the height above its base, so the eye reads the data point
+//      systematically low, and style 22 additionally rasterizes +0.5..+1.0 px
+//      off in y (the open triangle 26 is worse: +1.0..+1.5 px). Circle (20/24)
+//      and diamond (33/27) are symmetric under a half-turn, so their centre is
+//      unambiguous whatever the size.
+//
+//  (2) SIZES THAT RASTERIZE CENTRED. ROOT draws each glyph as an integer pixel
+//      block; when that block comes out an even number of pixels wide it cannot
+//      straddle the error bar exactly, and the marker lands up to 1.5 px off.
+//      Measured offsets (dx, dy in px): circle 20 = (+0.5, 0.0) at ANY size;
+//      square 21 = (-1.0, -1.5) at 1.3 but (0.0, -0.5) at 1.5; diamond 33 =
+//      (-0.5, 0.0) at 2.0 (width 11 px, matching the other two).
+//      The square at 1.3 is what made the W+ point look shifted in the legend,
+//      where a long horizontal line runs through the glyph and makes a 1.5 px
+//      offset obvious. Re-measure before changing a size.
+// -----------------------------------------------------------------------------
+static const int    kMkW  = 20, kMkWp = 21, kMkWm = 33;  // filled: circle / square / diamond
+static const double kMkWSz = 1.3, kMkWpSz = 1.5, kMkWmSz = 2.0;
+static const int    kMkWOpen = 24, kMkWmOpen = 27;       // open circle / open diamond
+
 // =============================================================================
 // xsec_fiducial.C -- fiducial W cross sections (W+, W-, W inclusive) from the
 // fitted signal yields in the Combine summary CSVs, muon and electron overlaid.
@@ -279,9 +307,9 @@ void xsec_fiducial_diff(bool isElec = false,
     fr->SetMaximum(1.55 * ymax);
     fr->Draw();
 
-    gI->SetMarkerStyle(20); gI->SetMarkerSize(1.3); gI->SetMarkerColor(kBlack);    gI->SetLineColor(kBlack);    gI->SetLineWidth(2);
-    gP->SetMarkerStyle(21); gP->SetMarkerSize(1.3); gP->SetMarkerColor(kAzure + 2); gP->SetLineColor(kAzure + 2); gP->SetLineWidth(2);
-    gM->SetMarkerStyle(22); gM->SetMarkerSize(1.4); gM->SetMarkerColor(kRed + 1);   gM->SetLineColor(kRed + 1);   gM->SetLineWidth(2);
+    gI->SetMarkerStyle(kMkW);  gI->SetMarkerSize(kMkWSz);  gI->SetMarkerColor(kBlack);     gI->SetLineColor(kBlack);     gI->SetLineWidth(2);
+    gP->SetMarkerStyle(kMkWp); gP->SetMarkerSize(kMkWpSz); gP->SetMarkerColor(kAzure + 2); gP->SetLineColor(kAzure + 2); gP->SetLineWidth(2);
+    gM->SetMarkerStyle(kMkWm); gM->SetMarkerSize(kMkWmSz); gM->SetMarkerColor(kRed + 1);   gM->SetLineColor(kRed + 1);   gM->SetLineWidth(2);
     gI->Draw("P SAME"); gP->Draw("P SAME"); gM->Draw("P SAME");
 
     DrawHeader(ps, "", Form("W #rightarrow %s #nu", lepSym), "fiducial cross section");
@@ -374,10 +402,15 @@ static bool readCombSum(const char *csv, const char *fit, const char *param,
 // -----------------------------------------------------------------------------
 // per-bin fitted signal strength r +/- rErr (cols r/rErr of comb_W_yields.csv)
 // -- the POIs of the grand simultaneous fit; sigma_meas,i = r_i x sigma_gen-fid,i.
+// es (optional) = the STATISTICAL r error (19th column rErr_stat, 2026-09-14/15:
+// the fit covariance conditioned on the constrained nuisances = the frozen-
+// nuisance error without a refit, fork extract_pO_simfit.C); -1 when the
+// column is absent. rErr itself is the TOTAL (profiled) error since the
+// 2026-08-17 nuisances.
 static bool readBinR(const char *csv, const char *charge, const char *binning,
-                     double r[12], double e[12])
+                     double r[12], double e[12], double es[12] = nullptr)
 {
-    for (int i = 0; i < 12; ++i) { r[i] = 0; e[i] = 0; }
+    for (int i = 0; i < 12; ++i) { r[i] = 0; e[i] = 0; if (es) es[i] = -1.0; }
     std::ifstream in(csv);
     if (!in) { std::cerr << "[ERROR] cannot open CSV: " << csv << "\n"; return false; }
     std::string line;
@@ -393,7 +426,11 @@ static bool readBinR(const char *csv, const char *charge, const char *binning,
         if (c[1] == charge && c[2] == binning)
         {
             int iy = std::atoi(c[3].c_str());
-            if (iy >= 0 && iy < 12) { r[iy] = std::atof(c[4].c_str()); e[iy] = std::atof(c[5].c_str()); ++found; }
+            if (iy >= 0 && iy < 12)
+            {
+                r[iy] = std::atof(c[4].c_str()); e[iy] = std::atof(c[5].c_str()); ++found;
+                if (es) es[iy] = (c.size() >= 19) ? std::atof(c[18].c_str()) : -1.0;
+            }
         }
     }
     return found > 0;
@@ -404,11 +441,16 @@ static bool readBinR(const char *csv, const char *charge, const char *binning,
 // h_cov_yield order [Wp_y0..11, Wm_y0..11]:
 //   G    = gen FIDUCIAL sigma per bin, PER FLAVOUR (nb)  <- skim/gen_xsec.C
 //   S    = prefit signal template integral, mu+e summed  <- comb_W_yields.csv
-//   R,ER = fitted signal strength r and its error        <- comb_W_yields.csv
+//   R,ER = fitted signal strength r and its TOTAL error  <- comb_W_yields.csv
 //   covr = r covariance = cov_Y_ij/(S_i S_j)             <- h_cov_yield
+//   ERs, covrS = the STATISTICAL part of the same (rErr_stat column,
+//          h_cov_yield_stat; 2026-09-14/15) -- haveStat false when absent, then
+//          ERs/covrS just mirror the total ones and the plots draw one bar.
 struct CombIngredients
 {
     double G[24], S[24], R[24], ER[24], covr[24][24];
+    double ERs[24], covrS[24][24];
+    bool   haveStat = false;
 };
 
 static bool loadCombIngredients(const char *binsCsv, const char *yieldsRoot,
@@ -425,57 +467,84 @@ static bool loadCombIngredients(const char *binsCsv, const char *yieldsRoot,
         return false;
     }
 
-    double rP[12], erP[12], rM[12], erM[12], sp[12], sm[12];
-    if (!readBinR(binsCsv, "Wp", "lab", rP, erP) || !readBinR(binsCsv, "Wm", "lab", rM, erM))
+    double rP[12], erP[12], rM[12], erM[12], sp[12], sm[12], esP[12], esM[12];
+    if (!readBinR(binsCsv, "Wp", "lab", rP, erP, esP) || !readBinR(binsCsv, "Wm", "lab", rM, erM, esM))
     {
         std::cerr << "[ERROR] could not read per-bin r from " << binsCsv << "\n";
         fG->Close(); delete fG; return false;
     }
     const bool haveS = readBinPrefit(binsCsv, "Wp", "lab", sp) &&
                        readBinPrefit(binsCsv, "Wm", "lab", sm);
+    in.haveStat = true;
     for (int i = 0; i < 12; ++i)
     {
         in.G[i] = hGp->GetBinContent(i + 1);  in.G[12 + i] = hGm->GetBinContent(i + 1);
         in.S[i] = haveS ? sp[i] : 0;          in.S[12 + i] = haveS ? sm[i] : 0;
         in.R[i] = rP[i]; in.ER[i] = erP[i];   in.R[12 + i] = rM[i]; in.ER[12 + i] = erM[i];
+        in.ERs[i] = esP[i];                   in.ERs[12 + i] = esM[i];
+        if (esP[i] < 0 || esM[i] < 0) in.haveStat = false;
+    }
+    if (!in.haveStat)
+    {
+        std::cerr << "[WARN] no stat-only r errors (rErr_stat column) in " << binsCsv
+                  << " -> plots draw ONE bar = the total (profiled) fit uncertainty\n";
+        for (int i = 0; i < 24; ++i) in.ERs[i] = in.ER[i];
     }
     fG->Close(); delete fG;
 
     // r covariance from the yield covariance; fallback = diagonal rErr^2
-    // (sums then lose the cross terms).
+    // (sums then lose the cross terms). Same for the stat-only matrix.
     TFile *fY = TFile::Open(yieldsRoot, "READ");
-    TH2D *hcov = (fY && !fY->IsZombie()) ? (TH2D *)fY->Get("h_cov_yield") : nullptr;
+    TH2D *hcov  = (fY && !fY->IsZombie()) ? (TH2D *)fY->Get("h_cov_yield") : nullptr;
+    TH2D *hcovS = (fY && !fY->IsZombie() && in.haveStat) ? (TH2D *)fY->Get("h_cov_yield_stat") : nullptr;
     if (hcov && hcov->GetNbinsX() != 24) hcov = nullptr;
+    if (hcovS && hcovS->GetNbinsX() != 24) hcovS = nullptr;
     if (!hcov || !haveS)
     {
-        hcov = nullptr;
+        hcov = nullptr; hcovS = nullptr;
         std::cerr << "[WARN] no usable h_cov_yield in " << yieldsRoot
                   << (haveS ? "" : " (and/or no signal_prefit columns)")
                   << " -> r-covariance falls back to DIAGONAL rErr^2\n";
     }
+    else if (in.haveStat && !hcovS)
+        std::cerr << "[WARN] no h_cov_yield_stat in " << yieldsRoot
+                  << " -> stat-only r-covariance falls back to DIAGONAL rErr_stat^2\n";
     for (int i = 0; i < 24; ++i)
         for (int j = 0; j < 24; ++j)
+        {
             in.covr[i][j] = (hcov && in.S[i] > 0 && in.S[j] > 0)
                                 ? hcov->GetBinContent(i + 1, j + 1) / (in.S[i] * in.S[j])
                                 : (i == j ? in.ER[i] * in.ER[i] : 0.0);
+            in.covrS[i][j] = !in.haveStat ? in.covr[i][j]
+                             : (hcovS && in.S[i] > 0 && in.S[j] > 0)
+                                   ? hcovS->GetBinContent(i + 1, j + 1) / (in.S[i] * in.S[j])
+                                   : (i == j ? in.ERs[i] * in.ERs[i] : 0.0);
+        }
     if (fY) { fY->Close(); delete fY; }
     return true;
 }
 
 // Sum_i w_i r_i over bins [lo, hi) with Var = Sum_ij w_i w_j cov_r,ij -- the
 // one place the r-covariance is propagated (w = sigma_gen for the measurement,
-// w = per-flavour prefit S for the count-based version).
+// w = per-flavour prefit S for the count-based version). stat = true uses the
+// stat-only covariance (identical to the total when no companion fit exists).
 static void sumWithCov(const CombIngredients &in, const double *w, int lo, int hi,
-                       double &val, double &err)
+                       double &val, double &err, bool stat = false)
 {
     val = 0;
     double var = 0;
     for (int i = lo; i < hi; ++i)
     {
         val += w[i] * in.R[i];
-        for (int j = lo; j < hi; ++j) var += w[i] * w[j] * in.covr[i][j];
+        for (int j = lo; j < hi; ++j) var += w[i] * w[j] * (stat ? in.covrS[i][j] : in.covr[i][j]);
     }
     err = std::sqrt(std::max(0.0, var));
+}
+
+// syst = sqrt(total^2 - stat^2) (0 when no stat-only companion exists)
+static double systFrom(double tot, double stat, bool haveStat)
+{
+    return haveStat ? std::sqrt(std::max(0.0, tot * tot - stat * stat)) : 0.0;
 }
 
 // =============================================================================
@@ -504,6 +573,17 @@ static void sumWithCov(const CombIngredients &in, const double *w, int lo, int h
 // table plots/comb/xsec/<disc>/xsec_comb.csv (per-bin + inclusive).
 // Outputs: plots/comb/xsec/<disc>/{W_fiducial, W_dsigma_deta_comb}.{png,pdf}
 //          + xsec_comb.csv
+//
+// UNCERTAINTIES (2026-09-14/15): the fitted rErr is the TOTAL profiled error
+// (stat (+) every nuisance in the fit: QCD lnN, lumi 3%, the theory shapes,
+// the lepton SFs). The fork's extractor also writes the STATISTICAL part
+// (CSV column rErr_stat + h_cov_yield_stat: the post-fit covariance
+// conditioned on the constrained nuisances -- what a refit with them frozen
+// at their post-fit values gives, without the refit); the plots then draw an
+// inner thick bar = stat and an outer thin bar = total, and xsec_comb.csv
+// splits the error into sigma_meas_stat_nb / sigma_meas_syst_nb (syst =
+// sqrt(total^2 - stat^2)); without the column a single (total) bar is drawn
+// and labelled as such.
 //
 //   root -l -q -e 'gROOT->LoadMacro("xsec_fiducial.C+"); xsec_fiducial_comb("met");'
 // =============================================================================
@@ -536,15 +616,22 @@ void xsec_fiducial_comb(const char *disc = "met",
     auto &covr = in.covr;
 
     // ---- 1) inclusive W+/W-/W: sigma = Sum_i r_i sigma_gen,i (cov-propagated)
+    // ev = TOTAL (profiled) uncertainty, evS = statistical (stat-only companion
+    // fit), syst = sqrt(total^2 - stat^2)
     const char *xlab[3] = {"W^{+}", "W^{-}", "W"};
-    double yv[3] = {0, 0, 0}, ev[3] = {0, 0, 0}, genTot[3] = {0, 0, 0};
+    double yv[3] = {0, 0, 0}, ev[3] = {0, 0, 0}, evS[3] = {0, 0, 0}, genTot[3] = {0, 0, 0};
     const int klo[3] = {0, 12, 0}, khi[3] = {12, 24, 24};
     for (int k = 0; k < 3; ++k)
     {
         sumWithCov(in, G, klo[k], khi[k], yv[k], ev[k]);
+        double dummy; sumWithCov(in, G, klo[k], khi[k], dummy, evS[k], true);
         for (int i = klo[k]; i < khi[k]; ++i) genTot[k] += G[i];
-        printf("[xsec-comb] %-6s measured = %6.2f +/- %4.2f nb   (gen fid %6.2f nb, eff. r = %.3f)  [per flavour]\n",
-               xlab[k], yv[k], ev[k], genTot[k], genTot[k] > 0 ? yv[k] / genTot[k] : 0.0);
+        if (in.haveStat)
+            printf("[xsec-comb] %-6s measured = %6.2f +/- %4.2f (stat) +/- %4.2f (syst) = +/- %4.2f (total) nb   (gen fid %6.2f nb, eff. r = %.3f)  [per flavour]\n",
+                   xlab[k], yv[k], evS[k], systFrom(ev[k], evS[k], true), ev[k], genTot[k], genTot[k] > 0 ? yv[k] / genTot[k] : 0.0);
+        else
+            printf("[xsec-comb] %-6s measured = %6.2f +/- %4.2f nb (stat+syst profiled)   (gen fid %6.2f nb, eff. r = %.3f)  [per flavour]\n",
+                   xlab[k], yv[k], ev[k], genTot[k], genTot[k] > 0 ? yv[k] / genTot[k] : 0.0);
     }
 
     // console cross-check ONLY: the COUNT record (stays in the fork CSVs;
@@ -563,10 +650,14 @@ void xsec_fiducial_comb(const char *disc = "met",
     {
         double x[3] = {1, 2, 3}, ex0[3] = {0, 0, 0};
         double xg[3] = {0.86, 1.86, 2.86}, ey0[3] = {0, 0, 0};
-        TGraphErrors *g = new TGraphErrors(3, x, yv, ex0, ev);
+        TGraphErrors *g = new TGraphErrors(3, x, yv, ex0, ev);      // TOTAL error
+        TGraphErrors *gS = new TGraphErrors(3, x, yv, ex0, evS);    // STATISTICAL error
         TGraphErrors *gGen = new TGraphErrors(3, xg, genTot, ex0, ey0);
 
         PlotStyle ps; ps.logy = false;
+        // these three points sit at discrete x with no x error -> the syst
+        // boxes need an absolute half-width (in x units of the 3-bin frame)
+        ps.systBoxHalfWidthAbs = 0.13;
         TCanvas *c = new TCanvas("c_xsec_fid_comb", "", ps.w, ps.h);
         ApplyCanvasStyle(c, ps);
         c->cd();
@@ -586,18 +677,27 @@ void xsec_fiducial_comb(const char *disc = "met",
         gGen->SetMarkerStyle(27); gGen->SetMarkerSize(1.9); // open diamond = gen fid (r = 1)
         gGen->SetMarkerColor(kGreen + 2); gGen->SetLineColor(kGreen + 2); gGen->SetLineWidth(2);
         gGen->Draw("P SAME");
-        g->SetMarkerStyle(20); g->SetMarkerSize(1.5);
-        g->SetMarkerColor(kBlack); g->SetLineColor(kBlack); g->SetLineWidth(2);
-        g->Draw("P SAME");
+        // point + STATISTICAL bar, with the systematic -- the quadratic
+        // difference from the total (profiled) error -- as a TBox per point.
+        // Without the stat component (in.haveStat false) the single bar is the
+        // total and no box is drawn.
+        std::vector<TBox *> sboxes = MakeSystBoxes(g, in.haveStat ? gS : nullptr, ps);
+        for (TBox *b : sboxes) b->Draw();
+        TGraphErrors *gDraw = in.haveStat ? gS : g;
+        gDraw->SetMarkerStyle(20); gDraw->SetMarkerSize(1.5);
+        gDraw->SetMarkerColor(kBlack); gDraw->SetLineColor(kBlack); gDraw->SetLineWidth(2);
+        gDraw->Draw("P SAME");
 
         DrawHeader(ps, "", "W #rightarrow l #nu", "fiducial cross section");
         TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
         ltag.SetTextSize(ps.boxTextSize);
         ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
 
-        TLegend *leg = new TLegend(0.20, 0.56, 0.56, 0.72);
+        TLegend *leg = new TLegend(0.20, 0.54, 0.56, 0.72);
         leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.032);
-        leg->AddEntry(g, "measured, #sigma = r #times #sigma^{gen}_{fid}", "lep");
+        leg->AddEntry(gDraw, in.haveStat ? "measured, #sigma = r #times #sigma^{gen}_{fid} (bars: stat.)"
+                                         : "measured, #sigma = r #times #sigma^{gen}_{fid}", "lep");
+        if (!sboxes.empty()) leg->AddEntry(sboxes[0], "syst. (fit nuisances)", "f");
         leg->AddEntry(gGen, "#sigma^{gen}_{fid} (POWHEG, r = 1)", "p");
         leg->Draw();
 
@@ -605,7 +705,8 @@ void xsec_fiducial_comb(const char *disc = "met",
         tx.DrawLatex(0.18, 0.30,  "#mu + e combined (simfit), per lepton flavour");
         tx.DrawLatex(0.18, 0.255, "fiducial: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
         tx.DrawLatex(0.18, 0.21,  "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i}, summed with r-covariance");
-        tx.DrawLatex(0.18, 0.165, "stat. (fit) unc. only");
+        tx.DrawLatex(0.18, 0.165, in.haveStat ? "syst. = profiled fit nuisances (QCD, lumi 3%, theory, lepton SF)"
+                                              : "one bar = stat. #oplus syst. (all fit nuisances profiled)");
 
         CMS_lumi(c, 13, 10);
         c->RedrawAxis(); c->Modified(); c->Update();
@@ -630,8 +731,11 @@ void xsec_fiducial_comb(const char *disc = "met",
 
     // measured d(sigma)/d(eta): r_i * sigma_gen,i / dEta (per flavour);
     // W-inclusive per bin carries cov(r_Wp_i, r_Wm_i) from the r-covariance.
+    // (es* = total errors from covr; esS* = stat-only from covrS)
     std::vector<double> sP(NY), esP(NY), sM(NY), esM(NY), sI(NY), esI(NY);
+    std::vector<double> esSP(NY), esSM(NY), esSI(NY);
     std::vector<double> gP2(NY, 0), gM2(NY, 0), gI2(NY, 0), zeroe(NY, 0.0);
+    const auto &covrS = in.covrS;
     double ymax = 0.0;
     for (int i = 0; i < NY; ++i)
     {
@@ -640,11 +744,17 @@ void xsec_fiducial_comb(const char *disc = "met",
         const double gp = G[i], gm = G[12 + i];
         sP[i] = R[i] * gp / dEta;       esP[i] = std::sqrt(covr[i][i]) * gp / dEta;
         sM[i] = R[12 + i] * gm / dEta;  esM[i] = std::sqrt(covr[12 + i][12 + i]) * gm / dEta;
+        esSP[i] = std::sqrt(covrS[i][i]) * gp / dEta;
+        esSM[i] = std::sqrt(covrS[12 + i][12 + i]) * gm / dEta;
         double vi = gp * gp * covr[i][i] + gm * gm * covr[12 + i][12 + i]
                   + 2.0 * gp * gm * covr[i][12 + i];
+        double viS = gp * gp * covrS[i][i] + gm * gm * covrS[12 + i][12 + i]
+                   + 2.0 * gp * gm * covrS[i][12 + i];
         if (vi < 0) vi = 0;
+        if (viS < 0) viS = 0;
         sI[i]  = (R[i] * gp + R[12 + i] * gm) / dEta;
         esI[i] = std::sqrt(vi) / dEta;
+        esSI[i] = std::sqrt(viS) / dEta;
         // gen fiducial (r = 1 expectation), dashed lines
         gP2[i] = gp / dEta;
         gM2[i] = gm / dEta;
@@ -655,6 +765,11 @@ void xsec_fiducial_comb(const char *disc = "met",
     TGraphErrors *gI = new TGraphErrors(NY, xc.data(), sI.data(), exc.data(), esI.data());
     TGraphErrors *gP = new TGraphErrors(NY, xc.data(), sP.data(), exc.data(), esP.data());
     TGraphErrors *gM = new TGraphErrors(NY, xc.data(), sM.data(), exc.data(), esM.data());
+    // statistical twins: same points, stat error, and the bin-width x error kept
+    // so MakeSystBoxes can size the systematic boxes from it
+    TGraphErrors *gIS = new TGraphErrors(NY, xc.data(), sI.data(), exc.data(), esSI.data());
+    TGraphErrors *gPS = new TGraphErrors(NY, xc.data(), sP.data(), exc.data(), esSP.data());
+    TGraphErrors *gMS = new TGraphErrors(NY, xc.data(), sM.data(), exc.data(), esSM.data());
     TGraphErrors *gIg = new TGraphErrors(NY, xc.data(), gI2.data(), zeroe.data(), zeroe.data());
     TGraphErrors *gPg = new TGraphErrors(NY, xc.data(), gP2.data(), zeroe.data(), zeroe.data());
     TGraphErrors *gMg = new TGraphErrors(NY, xc.data(), gM2.data(), zeroe.data(), zeroe.data());
@@ -669,7 +784,19 @@ void xsec_fiducial_comb(const char *disc = "met",
     fr->SetStats(0);
     ApplyHistStyle(fr, ps, "#eta^{l}_{CM}", "d#sigma^{fid}_{W#rightarrowl#nu}/d#eta (nb)");
     fr->SetMinimum(0.0);
-    fr->SetMaximum(1.55 * ymax);
+    // Annotations live in the upper band of the frame (NDC y >= kAnnoY): the
+    // legend top-left and the three info lines on the right under the header.
+    // The frame maximum is raised so that every point (+ error) and gen line
+    // stays below that band -- with a fixed 1.55 x ymax the 2026-09-14 values
+    // (W incl. 22-25 nb) put the 4th legend entry on the eta_CM = -2.1 ... -1.4
+    // points, and info lines at the bottom right always collided with the W-
+    // points and the falling gen line at forward eta.
+    const double kAnnoY = 0.55;                                     // lower edge of the annotation band (NDC)
+    const double legX1 = 0.18, legY1 = kAnnoY, legX2 = 0.48, legY2 = 0.79;
+    const double fAnno = (kAnnoY - ps.bm) / (1.0 - ps.bm - ps.tm);  // that edge as a fraction of the y axis
+    double yMaxFrame = 1.55 * ymax;
+    if (fAnno > 0.05) yMaxFrame = std::max(yMaxFrame, 1.06 * ymax / fAnno);
+    fr->SetMaximum(yMaxFrame);
     fr->Draw();
 
     // gen-fiducial dashed lines first (bottom layer) = the r = 1 expectation;
@@ -679,27 +806,62 @@ void xsec_fiducial_comb(const char *disc = "met",
     gMg->SetLineStyle(2); gMg->SetLineWidth(3); gMg->SetLineColor(kRed + 1);
     gIg->Draw("L SAME"); gPg->Draw("L SAME"); gMg->Draw("L SAME");
 
-    gI->SetMarkerStyle(20); gI->SetMarkerSize(1.3); gI->SetMarkerColor(kBlack);     gI->SetLineColor(kBlack);     gI->SetLineWidth(2);
-    gP->SetMarkerStyle(21); gP->SetMarkerSize(1.3); gP->SetMarkerColor(kAzure + 2); gP->SetLineColor(kAzure + 2); gP->SetLineWidth(2);
-    gM->SetMarkerStyle(22); gM->SetMarkerSize(1.4); gM->SetMarkerColor(kRed + 1);   gM->SetLineColor(kRed + 1);   gM->SetLineWidth(2);
-    gI->Draw("P SAME"); gP->Draw("P SAME"); gM->Draw("P SAME");
+    // Point + STATISTICAL bar, systematic as a TBox per point in the series
+    // colour. The three series share the x positions but sit at different y
+    // (W ~ W+ + W-), so their boxes never overlap.
+    //
+    // MARKER CHOICE (measured 2026-09-15, see kMk* in the header comment):
+    // point-symmetric glyphs only -- a TRIANGLE (22/26) has its visual centre
+    // ~1/3 of the height above the base, so the eye reads the point low, and
+    // ROOT rasterizes it 1.0-1.5 px off the error bar. Sizes are the ones that
+    // rasterize CENTRED on the bar: square 21 at 1.3 lands 1.0 px left and
+    // 1.5 px high (this is the offset that showed up in the legend), at 1.5 it
+    // is exact in x and 0.5 px in y.
+    gI->SetMarkerStyle(kMkW);  gI->SetMarkerSize(kMkWSz);  gI->SetMarkerColor(kBlack);     gI->SetLineColor(kBlack);     gI->SetLineWidth(2);
+    gP->SetMarkerStyle(kMkWp); gP->SetMarkerSize(kMkWpSz); gP->SetMarkerColor(kAzure + 2); gP->SetLineColor(kAzure + 2); gP->SetLineWidth(2);
+    gM->SetMarkerStyle(kMkWm); gM->SetMarkerSize(kMkWmSz); gM->SetMarkerColor(kRed + 1);   gM->SetLineColor(kRed + 1);   gM->SetLineWidth(2);
+    gIS->SetMarkerStyle(kMkW);  gIS->SetMarkerSize(kMkWSz);  gIS->SetMarkerColor(kBlack);     gIS->SetLineColor(kBlack);     gIS->SetLineWidth(2);
+    gPS->SetMarkerStyle(kMkWp); gPS->SetMarkerSize(kMkWpSz); gPS->SetMarkerColor(kAzure + 2); gPS->SetLineColor(kAzure + 2); gPS->SetLineWidth(2);
+    gMS->SetMarkerStyle(kMkWm); gMS->SetMarkerSize(kMkWmSz); gMS->SetMarkerColor(kRed + 1);   gMS->SetLineColor(kRed + 1);   gMS->SetLineWidth(2);
+
+    std::vector<TBox *> boxI, boxP, boxM;
+    if (in.haveStat)
+    {
+        PlotStyle pb = ps;
+        pb.systBoxWidthFrac = 0.60;
+        pb.systBoxFillAlpha = 0.30;
+        pb.systBoxFillColor = kBlack;     pb.systBoxLineColor = kBlack;     boxI = MakeSystBoxes(gI, gIS, pb);
+        pb.systBoxFillColor = kAzure + 2; pb.systBoxLineColor = kAzure + 2; boxP = MakeSystBoxes(gP, gPS, pb);
+        pb.systBoxFillColor = kRed + 1;   pb.systBoxLineColor = kRed + 1;   boxM = MakeSystBoxes(gM, gMS, pb);
+        for (TBox *b : boxI) b->Draw();
+        for (TBox *b : boxP) b->Draw();
+        for (TBox *b : boxM) b->Draw();
+        gIS->Draw("P SAME"); gPS->Draw("P SAME"); gMS->Draw("P SAME");
+    }
+    else
+    {
+        gI->Draw("P SAME"); gP->Draw("P SAME"); gM->Draw("P SAME");
+    }
 
     DrawHeader(ps, "", "W #rightarrow l #nu", "fiducial cross section");
     TLatex ltag2; ltag2.SetNDC(); ltag2.SetTextFont(ps.font); ltag2.SetTextAlign(13);
     ltag2.SetTextSize(ps.boxTextSize);
     ltag2.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
 
-    TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.030);
-    tx.DrawLatex(0.52, 0.26,  "#mu + e combined (simfit), per flavour");
-    tx.DrawLatex(0.52, 0.215, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} (p_{T}^{l} > 25 GeV)");
-    tx.DrawLatex(0.52, 0.17,  "stat. (fit) unc. only");
+    // info lines: right column under the header, inside the annotation band
+    // (x = 0.55 keeps them clear of the legend's longest entry on the same row)
+    TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.029);
+    tx.DrawLatex(0.55, kAnnoY + 0.095, "#mu + e combined (simfit), per flavour");
+    tx.DrawLatex(0.55, kAnnoY + 0.050, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} (p_{T}^{l} > 25 GeV)");
+    tx.DrawLatex(0.55, kAnnoY + 0.005, in.haveStat ? "bars: stat.,  boxes: syst. (profiled)"
+                                                    : "one bar: stat. #oplus syst. (profiled)");
 
-    TLegend *leg = new TLegend(0.18, 0.55, 0.48, 0.79);
+    TLegend *leg = new TLegend(legX1, legY1, legX2, legY2);
     leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.031);
-    leg->AddEntry(gI, "W (incl.) measured", "lep");
-    leg->AddEntry(gP, "W^{+} measured", "lep");
-    leg->AddEntry(gM, "W^{-} measured", "lep");
-    leg->AddEntry(gIg, "#sigma^{gen}_{fid} (POWHEG, r = 1, dashed)", "l");
+    leg->AddEntry(in.haveStat ? gIS : gI, "W (incl.) measured", "lep");
+    leg->AddEntry(in.haveStat ? gPS : gP, "W^{+} measured", "lep");
+    leg->AddEntry(in.haveStat ? gMS : gM, "W^{-} measured", "lep");
+    leg->AddEntry(gIg, "#sigma^{gen}_{fid} (POWHEG, r = 1)", "l");  // dashed sample shows the style
     leg->Draw();
 
     CMS_lumi(c, 13, 10);
@@ -712,24 +874,33 @@ void xsec_fiducial_comb(const char *disc = "met",
     // ---- 3) sigma table: the r x sigma_gen record (per-bin + inclusive) ------
     // (the COUNT record stays in comb_W_yields.csv / comb_summary.csv, fork.)
     {
+        // sigma_meas_err_nb = TOTAL (profiled); the two trailing columns split
+        // it into stat (the fit covariance conditioned on the constrained
+        // nuisances) and syst = sqrt(total^2 - stat^2); both -1 when the
+        // fitted-yields file carries no h_cov_yield_stat / rErr_stat.
         const std::string csvPath = outDir + "/xsec_comb.csv";
         std::ofstream out(csvPath.c_str());
-        out << "charge,ybin,etaCM_center,etaCM_halfwidth,r,rErr,sigma_gen_fid_nb,sigma_meas_nb,sigma_meas_err_nb\n";
+        out << "charge,ybin,etaCM_center,etaCM_halfwidth,r,rErr,sigma_gen_fid_nb,sigma_meas_nb,sigma_meas_err_nb,"
+               "sigma_meas_stat_nb,sigma_meas_syst_nb\n";
         const char *cn2[2] = {"Wp", "Wm"};
         for (int q = 0; q < 2; ++q)
             for (int i = 0; i < NY; ++i)
             {
                 const int k = 12 * q + i;
-                out << Form("%s,%d,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,%.5f\n",
+                const double st = in.haveStat ? in.ERs[k] * G[k] : -1.0;
+                out << Form("%s,%d,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n",
                             cn2[q], i, xc[i], exc[i], R[k], ER[k],
-                            G[k], R[k] * G[k], ER[k] * G[k]);
+                            G[k], R[k] * G[k], ER[k] * G[k],
+                            st, in.haveStat ? systFrom(ER[k] * G[k], st, true) : -1.0);
             }
         const char *cn3[3] = {"Wp", "Wm", "W"};
         for (int k = 0; k < 3; ++k)  // r column = effective (gen-weighted mean) r
-            out << Form("%s,incl,,,%.5f,%.5f,%.5f,%.5f,%.5f\n", cn3[k],
+            out << Form("%s,incl,,,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n", cn3[k],
                         genTot[k] > 0 ? yv[k] / genTot[k] : 0.0,
                         genTot[k] > 0 ? ev[k] / genTot[k] : 0.0,
-                        genTot[k], yv[k], ev[k]);
+                        genTot[k], yv[k], ev[k],
+                        in.haveStat ? evS[k] : -1.0,
+                        in.haveStat ? systFrom(ev[k], evS[k], true) : -1.0);
         std::cout << "[OK] Wrote " << csvPath << "\n";
     }
 
@@ -915,9 +1086,9 @@ void xsec_fiducial_diag(const char *disc = "met",
         gGen->SetMarkerColor(kGreen + 2); gGen->SetLineColor(kGreen + 2); gGen->SetLineWidth(2);
         gMeas->SetMarkerStyle(20); gMeas->SetMarkerSize(1.4); // filled circle = r x gen (measured)
         gMeas->SetMarkerColor(kBlack); gMeas->SetLineColor(kBlack); gMeas->SetLineWidth(2);
-        gReco->SetMarkerStyle(25); gReco->SetMarkerSize(1.6); // open square   = reco MC, r = 1
+        gReco->SetMarkerStyle(25); gReco->SetMarkerSize(1.5); // open square   = reco MC, r = 1 (1.5 = the centred size)
         gReco->SetMarkerColor(kAzure + 2); gReco->SetLineColor(kAzure + 2); gReco->SetLineWidth(2);
-        gCnt->SetMarkerStyle(21); gCnt->SetMarkerSize(1.4);   // filled square = r x reco (counts)
+        gCnt->SetMarkerStyle(21); gCnt->SetMarkerSize(1.5);   // filled square = r x reco (counts; 1.5 = the centred size, see kMk*)
         gCnt->SetMarkerColor(kAzure + 2); gCnt->SetLineColor(kAzure + 2); gCnt->SetLineWidth(2);
         gGen->Draw("P SAME"); gReco->Draw("P SAME"); gMeas->Draw("P SAME"); gCnt->Draw("P SAME");
 
@@ -1000,7 +1171,7 @@ void xsec_fiducial_diag(const char *disc = "met",
             ggen->Draw("L SAME"); grec->Draw("L SAME");
             gmea->SetMarkerStyle(20); gmea->SetMarkerSize(1.3); gmea->SetMarkerColor(kBlack);
             gmea->SetLineColor(kBlack); gmea->SetLineWidth(2);
-            gcnt->SetMarkerStyle(21); gcnt->SetMarkerSize(1.3); gcnt->SetMarkerColor(kAzure + 2);
+            gcnt->SetMarkerStyle(21); gcnt->SetMarkerSize(1.5); gcnt->SetMarkerColor(kAzure + 2); // 1.5 = the centred square size
             gcnt->SetLineColor(kAzure + 2); gcnt->SetLineWidth(2);
             gmea->Draw("P SAME"); gcnt->Draw("P SAME");
 
@@ -1058,12 +1229,16 @@ void xsec_fiducial_diag(const char *disc = "met",
 
         TGraph *ga[2][2];
         const int col[2] = {kAzure + 2, kRed + 1};   // charge
-        const int mst[2][2] = {{20, 22}, {24, 26}};  // [flavour][charge]: mu filled, e open
+        // [flavour][charge]: mu filled, e open -- circle/diamond, no triangles
+        // (see the kMk* block at the top); diamonds need the larger size to
+        // match the circles' visual weight.
+        const int mst[2][2] = {{kMkW, kMkWm}, {kMkWOpen, kMkWmOpen}};
+        const double msz[2] = {1.4, 2.0};  // [charge]: circle, diamond
         for (int fl = 0; fl < 2; ++fl)
             for (int k = 0; k < 2; ++k)
             {
                 ga[fl][k] = new TGraph(NY, xc.data(), axeps[fl][k]);
-                ga[fl][k]->SetMarkerStyle(mst[fl][k]); ga[fl][k]->SetMarkerSize(1.4);
+                ga[fl][k]->SetMarkerStyle(mst[fl][k]); ga[fl][k]->SetMarkerSize(msz[k]);
                 ga[fl][k]->SetMarkerColor(col[k]);     ga[fl][k]->SetLineColor(col[k]);
                 ga[fl][k]->SetLineWidth(2);            ga[fl][k]->SetLineStyle(fl == 0 ? 1 : 2);
                 ga[fl][k]->Draw("PL SAME");

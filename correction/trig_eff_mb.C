@@ -5,9 +5,21 @@
 //
 // Definition (per the group's request, 2026-09-09):
 //   den = event passes the analysis W selection  &&  MB path fired
+//              [MC only, since 2026-09-15: && the leading lepton gen-matches a
+//               PROMPT W LEPTON -- see MatchGenLeptonFromW]
 //   num = den  &&  analysis single-lepton path fired
 //              &&  leading lepton matched to a trigger object (DR < 0.4)
 //   eps(pT) = num / den,   SF(pT) = eps_data / eps_MC
+//
+// The prompt-W gen match is the ONLY difference between the data and MC legs
+// (user decision 2026-09-15). It makes eps_MC "the efficiency for a real W
+// lepton" by definition instead of by sample purity -- for muons it is a ~0.04%
+// effect, since the Wp_mu/Wm_mu samples are W -> mu nu by construction and
+// correction/charge_flip.C measured only 0.001% unmatched muons in this same
+// selection, but it self-documents the definition and matters for electrons
+// (0.7% unmatched there). NB it does NOT symmetrize the two legs: the DATA
+// denominator is still a mixture, ~5% QCD fakes with m_T > 40 and ~19% without,
+// which is the real asymmetry and the reason mt40 is the nominal variant.
 //
 // "Analysis W selection" = the skim's 8-step W cutflow (skim/skim.C) WITHOUT
 // steps 3 (trigger fired) and 8 (trigger match) -- those two ARE the quantity
@@ -52,8 +64,29 @@
 //                                       combined), TEfficiency objects, SF graphs
 //   plots/trig_eff_mb_<mu|ele>/         turnon_pt_<sel>[_zoom25], eff_y_<sel>,
 //                                       eff_y_<sel>_charge, eff_pt_<sel>_charge,
-//                                       mbfrac_pt_<sel>, bit_vs_match_pt_<sel>,
+//                                       eff_absy_<sel>[_charge], mbfrac_pt_<sel>,
+//                                       bit_vs_match_pt_<sel>,
 //                                       trig_eff_<sel>.csv (per-bin table)
+//
+// BINNING OF THE APPLIED SF (2026-09-15): |y| = |eta_lab|, 6 bins of 0.4,
+// charge-inclusive -- consumed by skim/muon_sf.h via sf_absy_<sel> and the
+// h_{den,num,bit}_absy_<sel>_* histograms. Established by the likelihood-ratio
+// tests this macro prints under "BINNING DECISION" (2026-09-15, mt40 / nom):
+//   flat -> pT (2 groups, </>35)  p = 0.71  / 0.80   => NO pT dependence
+//   flat -> |y| 6 bins            p = 0.0006/ 0.0004 => the eta dependence is real
+//   |y| 3 -> |y| 6 bins           p = 0.0043/ 0.0132 => 3 coarse bins are not enough
+//   |y| 6 -> signed y 12          p = 0.39  / 0.14   => folding to |y| is justified
+//   |y|3 -> |y|3 x pT2            p = 0.68  / 0.68   => NO pT x eta interaction, 1D
+//   |y|6 -> |y|6 x charge         p = 0.13           => charge-inclusive
+// The per-bin pT scan (11 bins) gives p = 0.087 / 0.0054, but that answers a
+// different question -- "is any single pT bin anomalous?" -- and is driven
+// entirely by the [50,60) bin (SF 0.964 / 0.962 on ~150 events, the same ~2
+// sigma downward fluctuation in both selections, no trend). The decision test
+// is the coarse one above.
+// The SF runs 0.982 (|y| < 0.4) to 1.006 (|y| > 1.2), a 2.4% spread; the MC
+// itself dips at |y| < 0.4 (eps_MC 0.985 vs 0.994) = the eta ~ 0 barrel wheel
+// gap, and the data dips further (0.967), i.e. the L1 emulation under-models a
+// real, localized detector feature.
 //   stdout                              the tables -- run through
 //                                       ./run_trig_eff_mb.sh to keep the log
 //
@@ -116,7 +149,164 @@ const double kPtFoldMax = 119.9; // pT above the last edge is folded into the la
 const char *kSel[2]      = {"nom", "mt40"};
 const char *kSelLabel[2] = {"W selection (no m_{T} cut)", "W selection, m_{T} > 40 GeV"};
 
+// |y| = |eta_lab| binning -- the folded twin of kYEdges, and (since 2026-09-15)
+// THE binning in which the trigger SF is applied by skim/muon_sf.h. The signed
+// 12-bin table is kept as the asymmetry cross-check; folding is justified by the
+// likelihood-ratio test printed below (|y| 6 -> signed y 12 is not significant)
+// and doubles the data statistics per bin.
+const int    kNAbsY = 6;
+const double kAbsYEdges[kNAbsY + 1] = {0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4};
+
+// Gen matching of the MC leg (2026-09-15, user decision). Charge-blind window,
+// identical to correction/charge_flip.C's kMatchDR / kMatchDPt.
+const double kGenMatchDR  = 0.5;
+const double kGenMatchDPt = 0.5;
+
 const double kCL = 0.6827;
+
+// ============================================================
+// Gen match of the MC leg: is the selected reco lepton a prompt W lepton?
+//
+// Reads the EventTree's OWN gen block (nMC/mcPID/mcStatus/mcPt/mcEta/mcPhi/
+// mcMomPID/mcGMomPID) -- NOT HiGenParticleAna/hi, whose motherIdx is -999 for
+// every W lepton so that a W-ancestor test there is always false (measured in
+// correction/charge_flip.C). Verified on July_29_MC_Wp_mu: one |pdg| = 24 entry
+// per event, and 99.98% of gen muons with pT > 20, |eta| < 2.4 carry
+// mcMomPID = +-24 directly, all with mcStatus = 1.
+//
+// CHARGE-BLIND (the sign of mcPID is ignored) so that a charge-misidentified
+// lepton still counts as a prompt W lepton -- charge misID is not a trigger
+// inefficiency, and folding it in here would double-count correction/charge_flip.C.
+// FSR chains (l <- l <- W) are accepted via mcGMomPID.
+// Returns the gen index, or -1 if no prompt-W lepton matches.
+// ============================================================
+int MatchGenLeptonFromW(double pt, double eta, double phi, int flavPdg,
+                        const std::vector<int> *gPid, const std::vector<int> *gStatus,
+                        const std::vector<float> *gPt, const std::vector<float> *gEta,
+                        const std::vector<float> *gPhi, const std::vector<int> *gMom,
+                        const std::vector<int> *gGMom)
+{
+  if (!gPid || !gStatus || !gPt || !gEta || !gPhi || !gMom) return -1;
+  const size_t ng = std::min({gPid->size(), gStatus->size(), gPt->size(), gEta->size(),
+                              gPhi->size(), gMom->size()});
+  int    best   = -1;
+  double drBest = 1e9;
+  for (size_t i = 0; i < ng; ++i)
+  {
+    if (std::abs(gPid->at(i)) != flavPdg) continue;
+    if (gStatus->at(i) != 1) continue;
+    if (gPt->at(i) <= 0) continue;
+    const bool momW  = std::abs(gMom->at(i)) == 24;
+    const bool fsrW  = (std::abs(gMom->at(i)) == flavPdg) && gGMom && i < gGMom->size() &&
+                       std::abs(gGMom->at(i)) == 24;
+    if (!momW && !fsrW) continue;
+    const double d = DeltaR(gEta->at(i), gPhi->at(i), eta, phi);
+    if (d >= kGenMatchDR) continue;
+    if (std::fabs(gPt->at(i) - pt) / gPt->at(i) >= kGenMatchDPt) continue;
+    if (d < drBest) { drBest = d; best = (int)i; }
+  }
+  return best;
+}
+
+// ============================================================
+// Is the SF flat across a binning?  LIKELIHOOD-RATIO test.
+//
+// Model A: one common SF, eps_data,i = SF * eps_MC,i.  Model B: a free SF per
+// bin.  Data counts are binomial, k_i ~ B(n_i, SF * eps_MC,i); eps_MC is taken
+// as exact (MC denominators are ~200x the data ones, so its error is ~0.03%).
+// -2 dlnL is then chi2-distributed with (nbins - 1) dof.
+//
+// This REPLACES the Clopper-Pearson pull chi2 as the decision test. Toys under
+// a true flat null with the real denominators (2026-09-15) show the CP pull
+// chi2 gives <chi2> = 3.15 for 5 dof and rejects at only 0.3% when it should
+// reject at 5% -- it is ~16x under-powered, because CP intervals over-cover
+// badly as eps -> 1 (and 2 of the 6 |y| bins have eps_data = 1 exactly). The
+// LRT is calibrated on the same toys: <-2dlnL> = 5.48 vs 5.00, 7.2% vs 5%.
+// The old p = 0.41 "consistent with a flat SF" was an artifact of that test.
+// ============================================================
+struct FlatFit { double sf = 1; double lrt = 0; int ndf = 0; };
+
+double BinomLnL(double k, double n, double p)
+{
+  if (p <= 0) return (k > 0) ? -1e30 : 0.0;
+  if (p >= 1) return (k < n) ? -1e30 : 0.0;
+  return k * std::log(p) + (n - k) * std::log(1.0 - p);
+}
+
+// One cell of the test: data den/num and MC den/num.
+struct LrtCell { double nd = 0, kd = 0, nm = 0, km = 0; };
+
+// Cells with an empty data or MC denominator are skipped.
+FlatFit FlatnessLRT(const std::vector<LrtCell> &c)
+{
+  FlatFit r;
+  double best = -1e30;
+  for (int g = 0; g <= 20000; ++g) // scan the common SF
+  {
+    const double s = 0.80 + g * (0.40 / 20000.0);
+    double L = 0; bool ok = true;
+    for (const LrtCell &x : c)
+    {
+      if (x.nd <= 0 || x.nm <= 0) continue;
+      const double p = s * (x.km / x.nm);
+      if (p > 1) { ok = false; break; }
+      L += BinomLnL(x.kd, x.nd, p);
+    }
+    if (ok && L > best) { best = L; r.sf = s; }
+  }
+  double lFree = 0;
+  r.ndf = -1;
+  for (const LrtCell &x : c)
+  {
+    if (x.nd <= 0 || x.nm <= 0) continue;
+    lFree += BinomLnL(x.kd, x.nd, std::min(x.kd / x.nd, 1.0));
+    ++r.ndf;
+  }
+  r.lrt = 2.0 * (lFree - best);
+  if (r.ndf < 0) r.ndf = 0;
+  return r;
+}
+
+FlatFit FlatnessLRT(const TH1 *dDen, const TH1 *dNum, const TH1 *mDen, const TH1 *mNum)
+{
+  if (!dDen || !dNum || !mDen || !mNum) return FlatFit();
+  std::vector<LrtCell> c;
+  for (int i = 1; i <= dDen->GetNbinsX(); ++i)
+    c.push_back({dDen->GetBinContent(i), dNum->GetBinContent(i),
+                 mDen->GetBinContent(i), mNum->GetBinContent(i)});
+  return FlatnessLRT(c);
+}
+
+// Coarse (pT group) x (|y| group) cells from the 2D maps -- the interaction test.
+// nPtGrp = 1 pools pT; nAbsGrp = 1 pools |y|. ptSplit is the pT bin index (1-based,
+// inclusive) ending the first pT group; ptLo is the first bin of the analysis range.
+std::vector<LrtCell> Cells2D(const TH2 *dD, const TH2 *dN, const TH2 *mD, const TH2 *mN,
+                             int ptLo, int ptSplit, int nPtGrp, int nAbsGrp)
+{
+  const int nx = dD->GetNbinsX(), ny = dD->GetNbinsY();
+  std::vector<LrtCell> c(nPtGrp * nAbsGrp);
+  for (int ix = ptLo; ix <= nx; ++ix)
+  {
+    const int gp = (nPtGrp == 1) ? 0 : (ix <= ptSplit ? 0 : 1);
+    for (int iy = 1; iy <= ny; ++iy)
+    {
+      const int ay = (iy <= ny / 2) ? (ny / 2 - iy) : (iy - ny / 2 - 1); // 0..5 = |y| index
+      const int ga = (nAbsGrp == 1) ? 0 : std::min(ay * nAbsGrp / (ny / 2), nAbsGrp - 1);
+      LrtCell &x = c[gp * nAbsGrp + ga];
+      x.nd += dD->GetBinContent(ix, iy); x.kd += dN->GetBinContent(ix, iy);
+      x.nm += mD->GetBinContent(ix, iy); x.km += mN->GetBinContent(ix, iy);
+    }
+  }
+  return c;
+}
+
+void PrintFlatness(const char *label, const TH1 *dDen, const TH1 *dNum, const TH1 *mDen, const TH1 *mNum)
+{
+  const FlatFit r = FlatnessLRT(dDen, dNum, mDen, mNum);
+  std::cout << Form("  %-30s common SF %.4f   -2dlnL = %6.2f / %2d dof   p = %.4f  %s\n",
+                    label, r.sf, r.lrt, r.ndf, TMath::Prob(r.lrt, r.ndf),
+                    TMath::Prob(r.lrt, r.ndf) < 0.05 ? "<-- NOT flat" : "");
+}
 
 // ============================================================
 // Per-sample histogram set
@@ -173,6 +363,10 @@ struct TrigOut
         b1(std::string(st) + "_y_" + S, kNY, kYEdges, "y = -#eta_{lab}");          // pT > 25 only
         b1(std::string(st) + "_y_" + S + "_plus", kNY, kYEdges, "y = -#eta_{lab}");
         b1(std::string(st) + "_y_" + S + "_minus", kNY, kYEdges, "y = -#eta_{lab}");
+        // |y| = |eta_lab|, folded -- THE binning the trigger SF is applied in
+        b1(std::string(st) + "_absy_" + S, kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
+        b1(std::string(st) + "_absy_" + S + "_plus", kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
+        b1(std::string(st) + "_absy_" + S + "_minus", kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
       }
       // gen-weighted den/num (MC cross-check of the raw-count efficiency)
       b1("den_pt_" + S + "_w", kNPt, kPtEdges, "leading-lepton p_{T} [GeV]");
@@ -197,6 +391,8 @@ struct TrigOut
       {
         H1(std::string(st) + "_y_" + S)->Fill(y);
         H1(std::string(st) + "_y_" + S + qs)->Fill(y);
+        H1(std::string(st) + "_absy_" + S)->Fill(std::fabs(y));
+        H1(std::string(st) + "_absy_" + S + qs)->Fill(std::fabs(y));
       }
     };
     fill("all");
@@ -327,6 +523,34 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   const bool has_muIsPF = isMu && HasBranch(tLep, "muIsPF");
   if (has_muIsPF) { tLep->SetBranchStatus("muIsPF", 1); tLep->SetBranchAddress("muIsPF", &muIsPF); }
 
+  // -------- gen block for the MC leg's prompt-W requirement (2026-09-15) --------
+  // MANDATORY in MC: a silent fall-back to "no gen match required" would change
+  // the definition of eps_MC without any message.
+  std::vector<int>   *mcPID = nullptr, *mcStatus = nullptr, *mcMomPID = nullptr, *mcGMomPID = nullptr;
+  std::vector<float> *mcPt = nullptr, *mcEta = nullptr, *mcPhi = nullptr;
+  if (isMC)
+  {
+    for (const char *bn : {"mcPID", "mcStatus", "mcPt", "mcEta", "mcPhi", "mcMomPID"})
+      if (!HasBranch(tLep, bn))
+      {
+        std::cerr << "[FATAL] RunTrig: MC file lacks EventTree branch " << bn
+                  << " -- the prompt-W gen match of the MC leg cannot be applied.\n";
+        f->Close();
+        return 2;
+      }
+    tLep->SetBranchStatus("mcPID", 1);    tLep->SetBranchAddress("mcPID",    &mcPID);
+    tLep->SetBranchStatus("mcStatus", 1); tLep->SetBranchAddress("mcStatus", &mcStatus);
+    tLep->SetBranchStatus("mcPt", 1);     tLep->SetBranchAddress("mcPt",     &mcPt);
+    tLep->SetBranchStatus("mcEta", 1);    tLep->SetBranchAddress("mcEta",    &mcEta);
+    tLep->SetBranchStatus("mcPhi", 1);    tLep->SetBranchAddress("mcPhi",    &mcPhi);
+    tLep->SetBranchStatus("mcMomPID", 1); tLep->SetBranchAddress("mcMomPID", &mcMomPID);
+    if (HasBranch(tLep, "mcGMomPID")) { tLep->SetBranchStatus("mcGMomPID", 1); tLep->SetBranchAddress("mcGMomPID", &mcGMomPID); }
+    else std::cout << "[WARN] RunTrig: no mcGMomPID; FSR chains (l <- l <- W) will not be accepted.\n";
+    std::cout << "[CONFIG] MC leg: leading lepton required to gen-match a prompt W lepton"
+              << " (|pdg| = " << (isMu ? 13 : 11) << ", status 1, |mcMomPID| = 24 or FSR via mcGMomPID,"
+              << " charge-blind, DR < " << kGenMatchDR << ", |dpT|/pT < " << kGenMatchDPt << ")\n";
+  }
+
   // -------- HLT bits: the analysis path AND the MB path (both mandatory here) --------
   const std::string hltNeedle = isMu ? "HLT_OxyL1SingleMuOpen_v1" : "HLT_OxyL1SingleEG10_v1";
   const std::string hltName   = FindBranchContaining(tHLT, hltNeedle);
@@ -408,6 +632,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   std::cout << "Entries: " << nEntries << "\n";
   bool warnedFilters = false, warnedTrig = false;
   Long64_t nPass = 0;
+  Long64_t nGenTried = 0, nGenFail = 0, nGenFail25 = 0; // prompt-W gen match bookkeeping (MC)
 
   for (Long64_t ie = 0; ie < nEntries; ++ie)
   {
@@ -487,6 +712,23 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
     if (RelIsoPF(iLead, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
 
     // (8) trigger match -- NOT applied: numerator condition, evaluated below
+
+    // (MC only) prompt-W gen match of the selected lepton. Applied BEFORE any
+    // den/num fill, so it moves eps_MC's denominator and numerator together and
+    // makes the MC leg "the efficiency for a real W lepton" by construction
+    // rather than by sample purity. Charge-blind; see MatchGenLeptonFromW.
+    if (isMC)
+    {
+      ++nGenTried;
+      if (MatchGenLeptonFromW(lepPt->at(iLead), lepEta->at(iLead), lepPhi->at(iLead),
+                              isMu ? 13 : 11, mcPID, mcStatus, mcPt, mcEta, mcPhi,
+                              mcMomPID, mcGMomPID) < 0)
+      {
+        ++nGenFail;
+        if (lepPt->at(iLead) > kPtNominal) ++nGenFail25;
+        continue;
+      }
+    }
     ++nPass;
 
     const bool mb    = TriggerFired(mbBit);
@@ -523,6 +765,10 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   std::cout << Form("[INFO] %s: %lld events pass the trigger-free W selection (pT > %.0f); pT > %.0f: sel %.0f, MB %.0f, num %.0f  |  mt40: sel %.0f, MB %.0f, num %.0f\n",
                     out.tag.c_str(), nPass, kPtFloor, kPtNominal,
                     out.nSel[0], out.nMB[0], out.nNum[0], out.nSel[1], out.nMB[1], out.nNum[1]);
+  if (isMC)
+    std::cout << Form("[GENMATCH] %s: %lld selected, %lld fail the prompt-W match (%.3f%%; pT > %.0f: %lld)\n",
+                      out.tag.c_str(), nGenTried, nGenFail,
+                      nGenTried > 0 ? 100.0 * nGenFail / nGenTried : 0.0, kPtNominal, nGenFail25);
   return 0;
 }
 
@@ -781,8 +1027,10 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
       {
         const std::string kpt = std::string(st) + "_pt_" + S + suf;
         const std::string ky  = std::string(st) + "_y_" + S + suf;
+        const std::string ka  = std::string(st) + "_absy_" + S + suf;
         M[kpt] = SumH1(mcs, kpt, "h_" + kpt + "_mc");
         M[ky]  = SumH1(mcs, ky, "h_" + ky + "_mc");
+        M[ka]  = SumH1(mcs, ka, "h_" + ka + "_mc");
       }
     M["den_pt_" + S + "_w"] = SumH1(mcs, "den_pt_" + S + "_w", "h_den_pt_" + S + "_w_mc");
     M["num_pt_" + S + "_w"] = SumH1(mcs, "num_pt_" + S + "_w", "h_num_pt_" + S + "_w_mc");
@@ -820,10 +1068,21 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
     TEfficiency *e2D_D  = MakeEff(oData.H2("num_2d_" + S), oData.H2("den_2d_" + S), "eff_2d_" + S + "_data");
     TEfficiency *e2D_M  = MakeEff(mNum2, mDen2, "eff_2d_" + S + "_mc");
 
+    // |y|-folded twins -- THE binning skim/muon_sf.h applies (2026-09-15)
+    TEfficiency *eD_ay  = effD("num_absy_" + S, "den_absy_" + S, "eff_absy_" + S + "_data");
+    TEfficiency *eM_ay  = effM("num_absy_" + S, "den_absy_" + S, "eff_absy_" + S + "_mc");
+    TEfficiency *eD_ayP = effD("num_absy_" + S + "_plus",  "den_absy_" + S + "_plus",  "eff_absy_" + S + "_plus_data");
+    TEfficiency *eD_ayM = effD("num_absy_" + S + "_minus", "den_absy_" + S + "_minus", "eff_absy_" + S + "_minus_data");
+    TEfficiency *eM_ayP = effM("num_absy_" + S + "_plus",  "den_absy_" + S + "_plus",  "eff_absy_" + S + "_plus_mc");
+    TEfficiency *eM_ayM = effM("num_absy_" + S + "_minus", "den_absy_" + S + "_minus", "eff_absy_" + S + "_minus_mc");
+
     TGraphAsymmErrors *sf_pt = RatioGraph(eD_pt, eM_pt, "sf_pt_" + S);
     TGraphAsymmErrors *sf_y  = RatioGraph(eD_y, eM_y, "sf_y_" + S);
     TGraphAsymmErrors *sf_yP = RatioGraph(eD_yP, eM_yP, "sf_y_" + S + "_plus");
     TGraphAsymmErrors *sf_yM = RatioGraph(eD_yM, eM_yM, "sf_y_" + S + "_minus");
+    TGraphAsymmErrors *sf_ay  = RatioGraph(eD_ay, eM_ay, "sf_absy_" + S);
+    TGraphAsymmErrors *sf_ayP = RatioGraph(eD_ayP, eM_ayP, "sf_absy_" + S + "_plus");
+    TGraphAsymmErrors *sf_ayM = RatioGraph(eD_ayM, eM_ayM, "sf_absy_" + S + "_minus");
 
     // ---- per-bin table (pT) ----
     std::cout << Form("%-12s | %9s %9s %-24s | %9s %9s %-24s | %-22s | %s\n",
@@ -871,6 +1130,92 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
                         kYEdges[i - 1], kYEdges[i],
                         oData.H1("den_y_" + S)->GetBinContent(i), oData.H1("num_y_" + S)->GetBinContent(i), FmtEff(eD_y, i).c_str(),
                         M["den_y_" + S]->GetBinContent(i), M["num_y_" + S]->GetBinContent(i), FmtEff(eM_y, i).c_str(), sfStr.c_str());
+    }
+
+    // ---- per-bin table (|y|, pT > 25) -- THE binning the SF is applied in ----
+    std::cout << Form("\n%-14s | %9s %9s %-24s | %9s %9s %-24s | %-22s\n",
+                      "|y| bin (pT>25)", "data den", "data num", "eff_data", "MC den", "MC num", "eff_MC", "SF = data/MC  <-- APPLIED");
+    for (int i = 1; i <= kNAbsY; ++i)
+    {
+      std::string sfStr = "        --          ";
+      if (sf_ay && i - 1 < sf_ay->GetN())
+        sfStr = Form("%.4f -%.4f +%.4f", sf_ay->GetY()[i - 1], sf_ay->GetEYlow()[i - 1], sf_ay->GetEYhigh()[i - 1]);
+      std::cout << Form("%5.2f..%-6.2f | %9.0f %9.0f %-24s | %9.0f %9.0f %-24s | %-22s\n",
+                        kAbsYEdges[i - 1], kAbsYEdges[i],
+                        oData.H1("den_absy_" + S)->GetBinContent(i), oData.H1("num_absy_" + S)->GetBinContent(i), FmtEff(eD_ay, i).c_str(),
+                        M["den_absy_" + S]->GetBinContent(i), M["num_absy_" + S]->GetBinContent(i), FmtEff(eM_ay, i).c_str(), sfStr.c_str());
+    }
+
+    // ---- BINNING DECISION: likelihood-ratio flatness tests (see FlatnessLRT) ----
+    std::cout << "\n  BINNING DECISION (likelihood-ratio tests vs one flat SF; pT bins restricted to the pT > 25 analysis range)\n";
+    {
+      // pT: restrict both legs to bins at/above the 25 GeV edge by zeroing the rest
+      auto above25 = [&](const TH1 *h, const char *nm)
+      {
+        TH1D *c = (TH1D *)h->Clone(Form("%s_a25_%s", nm, S.c_str()));
+        c->SetDirectory(nullptr);
+        for (int i = 1; i <= c->GetNbinsX(); ++i)
+          if (c->GetXaxis()->GetBinLowEdge(i) < kPtNominal - 1e-6) c->SetBinContent(i, 0);
+        return c;
+      };
+      TH1D *dDp = above25(oData.H1("den_pt_" + S), "dd"), *dNp = above25(oData.H1("num_pt_" + S), "dn");
+      TH1D *mDp = above25(M["den_pt_" + S], "md"),        *mNp = above25(M["num_pt_" + S], "mn");
+      PrintFlatness("SF vs pT (11 bins, pT>25)", dDp, dNp, mDp, mNp);
+      delete dDp; delete dNp; delete mDp; delete mNp;
+
+      // Coarse pT (< 35 vs > 35) -- THE decision-relevant pT test. The 11-bin
+      // scan above answers a different question ("is any single pT bin
+      // anomalous?") and is driven by the [50,60) bin alone, a ~2 sigma
+      // downward fluctuation on ~150 events present in both selections.
+      const TH2 *dD2 = oData.H2("den_2d_" + S), *dN2 = oData.H2("num_2d_" + S);
+      int ptLo = 1;
+      while (ptLo <= dD2->GetNbinsX() && dD2->GetXaxis()->GetBinLowEdge(ptLo) < kPtNominal - 1e-6) ++ptLo;
+      int ptSplit = ptLo;
+      while (ptSplit <= dD2->GetNbinsX() && dD2->GetXaxis()->GetBinUpEdge(ptSplit) < 35.0 - 1e-6) ++ptSplit;
+      const FlatFit fPt2 = FlatnessLRT(Cells2D(dD2, dN2, mDen2, mNum2, ptLo, ptSplit, 2, 1));
+      std::cout << Form("  %-30s common SF %.4f   -2dlnL = %6.2f / %2d dof   p = %.4f  %s\n",
+                        "SF vs pT (2 groups, </> 35)", fPt2.sf, fPt2.lrt, fPt2.ndf,
+                        TMath::Prob(fPt2.lrt, fPt2.ndf),
+                        TMath::Prob(fPt2.lrt, fPt2.ndf) < 0.05 ? "<-- NOT flat" : "(no pT dependence)");
+      // Granularity: are 3 coarse |y| bins enough, or is the 6-bin structure real?
+      const FlatFit fA3 = FlatnessLRT(Cells2D(dD2, dN2, mDen2, mNum2, ptLo, ptSplit, 1, 3));
+      const FlatFit fA6 = FlatnessLRT(Cells2D(dD2, dN2, mDen2, mNum2, ptLo, ptSplit, 1, 6));
+      {
+        const double d = fA6.lrt - fA3.lrt;
+        const int    nd = std::max(fA6.ndf - fA3.ndf, 1);
+        std::cout << Form("  %-30s %35s -2dlnL = %6.2f / %2d dof   p = %.4f  %s\n",
+                          "|y| 3 -> |y| 6 bins", "", d, nd, TMath::Prob(std::max(d, 0.0), nd),
+                          TMath::Prob(std::max(d, 0.0), nd) < 0.05 ? "<-- 3 bins NOT enough" : "(3 bins would do)");
+      }
+      // Interaction: does |y| structure depend on pT?  |y|3 -> |y|3 x pT2
+      const FlatFit fA3P2 = FlatnessLRT(Cells2D(dD2, dN2, mDen2, mNum2, ptLo, ptSplit, 2, 3));
+      const double dI = fA3P2.lrt - fA3.lrt;
+      const int    nI = std::max(fA3P2.ndf - fA3.ndf, 1);
+      std::cout << Form("  %-30s %35s -2dlnL = %6.2f / %2d dof   p = %.4f  %s\n",
+                        "|y|3 -> |y|3 x pT2 (2D)", "", dI, nI, TMath::Prob(std::max(dI, 0.0), nI),
+                        TMath::Prob(std::max(dI, 0.0), nI) < 0.05 ? "<-- 2D needed" : "(1D in |y| suffices)");
+    }
+    PrintFlatness("SF vs |y| (6 bins)  <-- APPLIED", oData.H1("den_absy_" + S), oData.H1("num_absy_" + S),
+                  M["den_absy_" + S], M["num_absy_" + S]);
+    PrintFlatness("SF vs signed y (12 bins)", oData.H1("den_y_" + S), oData.H1("num_y_" + S),
+                  M["den_y_" + S], M["num_y_" + S]);
+    {
+      // left/right asymmetry: is the signed-y structure more than the folded one?
+      const FlatFit f6 = FlatnessLRT(oData.H1("den_absy_" + S), oData.H1("num_absy_" + S), M["den_absy_" + S], M["num_absy_" + S]);
+      const FlatFit f12 = FlatnessLRT(oData.H1("den_y_" + S), oData.H1("num_y_" + S), M["den_y_" + S], M["num_y_" + S]);
+      const double d = f12.lrt - f6.lrt;
+      const int    nd = f12.ndf - f6.ndf;
+      std::cout << Form("  %-30s %35s -2dlnL = %6.2f / %2d dof   p = %.4f  %s\n",
+                        "|y| 6 -> signed y 12", "", d, nd, TMath::Prob(std::max(d, 0.0), std::max(nd, 1)),
+                        TMath::Prob(std::max(d, 0.0), std::max(nd, 1)) < 0.05 ? "<-- folding NOT justified" : "(folding justified)");
+      // charge: same test on the per-charge |y| tables
+      const FlatFit fp = FlatnessLRT(oData.H1("den_absy_" + S + "_plus"), oData.H1("num_absy_" + S + "_plus"),
+                                     M["den_absy_" + S + "_plus"], M["num_absy_" + S + "_plus"]);
+      const FlatFit fm = FlatnessLRT(oData.H1("den_absy_" + S + "_minus"), oData.H1("num_absy_" + S + "_minus"),
+                                     M["den_absy_" + S + "_minus"], M["num_absy_" + S + "_minus"]);
+      const char *lp = isMu ? "mu" : "e ";
+      std::cout << Form("  %-30s SF(%s+) %.4f  SF(%s-) %.4f  (charge-inclusive SF applied; see the charge split above)\n",
+                        "per-charge |y| common SFs", lp, fp.sf, lp, fm.sf);
     }
 
     // ---- inclusive pT > 25 ----
@@ -921,9 +1266,10 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
     for (auto &p : M) p.second->Write("", TObject::kOverwrite);
     mDen2->Write("", TObject::kOverwrite); mNum2->Write("", TObject::kOverwrite);
     for (TEfficiency *e : {eD_pt, eM_pt, eWp_pt, eWm_pt, eD_ptP, eD_ptM, eM_ptP, eM_ptM, eD_y, eM_y, eD_yP, eD_yM, eM_yP, eM_yM,
+                           eD_ay, eM_ay, eD_ayP, eD_ayM, eM_ayP, eM_ayM,
                            eD_bit, eM_bit, fD_all, fD_trg, fM_all, fM_trg, e2D_D, e2D_M})
       if (e) e->Write("", TObject::kOverwrite);
-    for (TGraphAsymmErrors *g : {sf_pt, sf_y, sf_yP, sf_yM})
+    for (TGraphAsymmErrors *g : {sf_pt, sf_y, sf_yP, sf_yM, sf_ay, sf_ayP, sf_ayM})
       if (g) g->Write("", TObject::kOverwrite);
 
     // ---- plots ----
@@ -961,6 +1307,17 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
                  {{0, 2, "Data / MC, " + lepSym + "^{+}", kBlack, 20}, {1, 3, "Data / MC, " + lepSym + "^{-}", kBlue + 1, 21}},
                  outDir + "/eff_y_" + S + "_charge", "y = -#eta_{lab}", "Data / MC",
                  hdr, sub1 + ", p_{T} > 25 GeV", sub2, {}, kYEdges[0], kYEdges[kNY], 0.6, 1.25, 0.85, 1.15, kNoLine, "Trigger efficiency", 0.16);
+    // vs |y| (pT > 25) -- THE applied binning; the ratio pad IS the applied SF
+    DrawEffRatio({{eD_ay, "Data (MB-triggered)", kBlack, 20}, {eM_ay, "W signal MC", kRed + 1, 24}},
+                 {{0, 1, "Data / MC = SF", kBlack, 20}},
+                 outDir + "/eff_absy_" + S, "|y| = |#eta_{lab}|", "Data / MC = SF",
+                 hdr, sub1 + ", p_{T} > 25 GeV", "the SF applied by skim/muon_sf.h", box,
+                 kAbsYEdges[0], kAbsYEdges[kNAbsY], 0.6, 1.25, 0.90, 1.10);
+    DrawEffRatio({{eD_ayP, "Data " + lepSym + "^{+}", kBlack, 20}, {eD_ayM, "Data " + lepSym + "^{-}", kBlue + 1, 21},
+                  {eM_ayP, "MC " + lepSym + "^{+}", kRed + 1, 24}, {eM_ayM, "MC " + lepSym + "^{-}", kOrange + 7, 25}},
+                 {{0, 2, "Data / MC, " + lepSym + "^{+}", kBlack, 20}, {1, 3, "Data / MC, " + lepSym + "^{-}", kBlue + 1, 21}},
+                 outDir + "/eff_absy_" + S + "_charge", "|y| = |#eta_{lab}|", "Data / MC",
+                 hdr, sub1 + ", p_{T} > 25 GeV", sub2, {}, kAbsYEdges[0], kAbsYEdges[kNAbsY], 0.6, 1.25, 0.85, 1.15, kNoLine, "Trigger efficiency", 0.16);
     // HLT bit vs bit+match
     DrawEffRatio({{eD_bit, "Data: path fired", kGray + 2, 20}, {eD_pt, "Data: path fired + matched", kBlack, 21},
                   {eM_bit, "MC: path fired", kRed - 7, 24}, {eM_pt, "MC: path fired + matched", kRed + 1, 25}},

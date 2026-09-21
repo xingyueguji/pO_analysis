@@ -23,25 +23,58 @@
 //          matched within dR<0.4 = skim step 8), measured by correction/trig_eff_mb.C
 //          from the minimum-bias-triggered data vs the W signal MC, pT > 25. The
 //          `mt40` selection variant is the nominal (the purer W sample: ~5% fakes
-//          vs ~19% in the plain selection; 0.9971 vs 0.9962 inclusive). Applied
-//          INCLUSIVELY in rapidity (kTrigBinning = kTrigInclusive, user decision
-//          2026-09-14): the study's 12 per-y values rest on 170-245 data events
-//          each (+-0.8-1.9% per bin vs +-0.2% inclusive) and are consistent with
-//          one flat SF -- chi2/ndf = 11.5/11 (p = 0.41) for mt40, the |y| < 0.4 dip
-//          is a 1.7 sigma effect -- so a per-y SF would only inject its own
-//          statistical noise into the per-bin r's. The per-y table and the chi2
-//          are still loaded and printed by every job as the standing check;
-//          kTrigPerY switches back (the fork then decorrelates muTrig per y bin --
-//          the correlation model travels in the sidecar directive `#! muTrig corr`,
-//          see kMuTrigCorr). Errors = Clopper-Pearson 68% on the data count (pure
-//          statistics; the MC error is negligible) -> slightly ASYMMETRIC. Read
-//          from the study's rootfile (h_num/h_den_y_mt40 summed for the inclusive,
-//          sf_y_mt40 for the per-y check) -- run correction/run_trig_eff_mb.sh mu
-//          first.
+//          vs ~19% in the plain selection; 0.9971 vs 0.9962 inclusive).
+//
+//          ** Applied in 6 bins of |y| = |eta_lab| since 2026-09-15 **
+//          (kTrigBinning = kTrigPerAbsY; was kTrigInclusive). Charge-inclusive,
+//          no pT dependence. The binning is DECIDED by the likelihood-ratio tests
+//          printed under "BINNING DECISION" in the study's log (mt40 / nom):
+//            flat -> pT (2 groups)     p = 0.71  / 0.80    no pT dependence
+//            flat -> |y| 6 bins        p = 0.0006/ 0.0004  the eta dependence is real
+//            |y| 3 -> |y| 6            p = 0.0043/ 0.0132  3 coarse bins are not enough
+//            |y| 6 -> signed y 12      p = 0.39  / 0.14    folding to |y| is justified
+//            |y|3 -> |y|3 x pT2        p = 0.68  / 0.68    no pT x eta interaction
+//            |y|6 -> |y|6 x charge     p = 0.13            charge-inclusive
+//          SF runs 0.982 (|y| < 0.4) to 1.006 (|y| > 1.2) = a 2.4% spread, with
+//          MC itself dipping at |y| < 0.4 (eps_MC 0.985 vs 0.994 = the eta ~ 0
+//          barrel wheel gap) and data dipping further (0.967).
+//
+//          NB this SUPERSEDES the 2026-09-14 "consistent with one flat SF,
+//          chi2/ndf = 11.5/11, p = 0.41" decision. That chi2 used Clopper-Pearson
+//          errors, which over-cover badly as eps -> 1: toys under a true flat null
+//          with the real denominators give <chi2> = 3.15 for 5 dof and a 0.3%
+//          rejection rate at a nominal 5%, i.e. ~16x under-powered. It could not
+//          have rejected flatness. Two other things hid the structure: the 12
+//          SIGNED bins halve the per-bin statistics, and the effect is symmetric
+//          in |y|, so signed binning dilutes it. Folding is what makes the
+//          correction worth applying -- 6 folded bins hold 379-462 data events
+//          (+-0.4-0.9%) against a 2.4% structure, where 12 signed bins held
+//          +-0.8-1.9% against the same structure (the noise-injection argument
+//          that motivated going inclusive, and which does not survive folding).
+//
+//          Errors = Clopper-Pearson 68% on the data count (pure statistics; the
+//          MC error is negligible), SYMMETRIZED to half the interval width --
+//          2 of the 6 bins have eps_data = 1 exactly, so the raw CP upper error
+//          is 0 and the Up template would equal the nominal. kTrigInclusive /
+//          kTrigPerY switch back to the older behaviors. Read from the study's
+//          rootfile (h_num/h_den_absy_mt40 + sf_absy_mt40; the inclusive value
+//          is still the h_num/h_den sum and is kept as the record) -- run
+//          correction/run_trig_eff_mb.sh mu first.
 //
 // HOW IT ENTERS (skim.C):
+//   *** ETA CONVENTION -- read before touching a call site. ***
+//   W() / Z() take the RAW DETECTOR eta (muEta). The analysis bins histograms in
+//   y = -eta_lab so that the p-going (-Z) side is "forward", but that flip is a
+//   BINNING convention and must NEVER reach the POG lookup: the POG tables are
+//   in signed detector eta and are genuinely asymmetric (ID x ISO differs by up
+//   to 1.06% between +eta and -eta), so passing y would mirror the ID/ISO
+//   correction with no error message -- the same class of bug that hit
+//   gen_xsec.C in 2026-08. The trigger term is immune, it folds to |y| = |eta|.
+//   Verified by unit test 2026-09-15; the parameters are named etaLab so the
+//   convention is visible at the call site.
+//
 //   W -> mu nu : one factor per event for the LEADING muon after step 8,
-//                SF = ID(pt,eta) x [passIso ? ISO(pt,eta) : 1] x TRIG(y).
+//                SF = ID(eta,pt) x [passIso ? ISO(eta,pt) : 1] x TRIG(|y|).
 //                Folded into the weight of EVERY fill (all regions of the ABCD
 //                planes have the leading muon TightID'd + matched; the anti-iso
 //                sideband has no measured SF -> 1, its EWK content is a few %).
@@ -130,14 +163,26 @@ inline const char *kTrigCandidates[] = {
     "correction/rootfile/trig_eff_mb_mu.root",
     nullptr};
 inline const char *kTrigSel = "mt40"; // trig_eff_mb.C selection variant: nom | mt40
-// Rapidity binning of the trigger SF (header comment): inclusive by decision.
-enum TrigBinning { kTrigInclusive = 0, kTrigPerY = 1 };
-inline constexpr TrigBinning kTrigBinning = kTrigInclusive;
+// Binning of the trigger SF (header comment). kTrigPerAbsY since 2026-09-15:
+// |y| = |eta_lab| in 6 bins of 0.4, charge-inclusive, no pT dependence -- the
+// binning established by the likelihood-ratio tests in trig_eff_mb.C's
+// "BINNING DECISION" block. kTrigInclusive reproduces the 2026-09-14 behavior.
+enum TrigBinning { kTrigInclusive = 0, kTrigPerY = 1, kTrigPerAbsY = 2 };
+inline constexpr TrigBinning kTrigBinning = kTrigPerAbsY;
 // The correlation model the fork must use for the muTrig nuisance, written into
 // the Combine-input sidecars as `#! muTrig corr <coherent|perbin>` by
 // plotting/mtandmet.C and dileptonpeak.C: one inclusive factor = one coherent
 // nuisance; a per-y factor = per-y-bin nuisances (pure-statistics errors).
-inline constexpr const char *kMuTrigCorr = (kTrigBinning == kTrigInclusive) ? "coherent" : "perbin";
+// The correlation model shipped to the fork. COHERENT by user decision
+// (2026-09-15), including for kTrigPerAbsY: one Gaussian nuisance moves all six
+// |y| SFs to their own +-1 sigma together. NB the six errors are statistically
+// INDEPENDENT (disjoint event samples), so a coherent nuisance is conservative
+// on the inclusive normalization (it adds the per-bin shifts linearly rather
+// than in quadrature, ~sqrt(6) too large) and gives ZERO trigger uncertainty on
+// rapidity-shape observables (dsigma/deta, R_FB, charge asymmetry), where a
+// coherent rescaling cancels. Switch to "perbin" to decorrelate; the fork then
+// splits muTrig via `nuisance edit rename` (see the header note on kMuTrigCorr).
+inline constexpr const char *kMuTrigCorr = "coherent";
 
 enum Source { kID = 0, kIso = 1, kTrig = 2, kNSources = 3 };
 // Per-SOURCE twins in the MC skim files: <hist>_<name>Up/Down (diagnostics +
@@ -428,16 +473,24 @@ struct Table2D
 // ============================================================================
 struct TrigTable
 {
-  std::vector<double> yEdges;            // kNY + 1
-  std::vector<double> sf, sfUp, sfDn;    // per-y W factor (fired && matched), asymmetric errors applied
-  std::vector<double> effD, effDUp, effDDn, effM; // per-y per-lepton path-fired eff (Z formula)
+  // The APPLIED binning: edges in the variable kTrigBinning selects -- signed
+  // y = -eta_lab for kTrigPerY, |y| = |eta_lab| for kTrigPerAbsY (the default).
+  // Bin() folds to |y| in the latter case, so callers always pass signed y.
+  std::vector<double> edges;             // NBins + 1
+  std::vector<double> sf, sfUp, sfDn;    // per-bin W factor (fired && matched)
+  std::vector<double> effD, effDUp, effDDn, effM; // per-bin per-lepton path-fired eff (Z formula)
   double sfI = 1, sfIUp = 1, sfIDn = 1;           // the INCLUSIVE W factor (pT > 25, all y)
   double effDI = 1, effDIUp = 1, effDIDn = 1, effMI = 1; // inclusive per-lepton path-fired eff
-  double chi2 = 0; int ndf = 0;                   // per-y SF vs the inclusive one (the standing check)
-  std::string         source;
+  double chi2 = 0; int ndf = 0;                   // per-bin SF vs the inclusive one (the standing check)
+  // The signed-y table, kept for the record even when |y| is applied: its
+  // left/right consistency is what justifies folding (see trig_eff_mb.C).
+  std::vector<double> yEdges, sfSigned, sfSignedUp, sfSignedDn;
+  std::string         source, binLabel;
 
   int NBins() const { return (int)sf.size(); }
-  int Bin(double y, unsigned long long &clamped) const { return FindEdgeBin(yEdges, y, clamped); }
+  bool Folded() const { return kTrigBinning == kTrigPerAbsY; }
+  int Bin(double y, unsigned long long &clamped) const
+  { return FindEdgeBin(edges, Folded() ? std::fabs(y) : y, clamped); }
   // what the skim applies, by kTrigBinning
   double SF(int b) const    { return kTrigBinning == kTrigInclusive ? sfI    : sf[b]; }
   double SFUp(int b) const  { return kTrigBinning == kTrigInclusive ? sfIUp  : sfUp[b]; }
@@ -503,14 +556,29 @@ public:
   }
 
   // ---- W -> mu nu: the leading muon (TightID, matched); ISO only if it passes the cut
-  EventSF W(double pt, double eta, bool passIso) const
+  //
+  // *** etaLab IS THE RAW DETECTOR eta (muEta), NOT the analysis rapidity. ***
+  // The analysis flips the sign, y = -eta_lab, so that the p-going (-Z) side is
+  // "forward" (skim.C:835,1497). That flip belongs to the HISTOGRAM BINNING only.
+  // The Muon POG tables are binned in SIGNED DETECTOR eta and are genuinely
+  // asymmetric -- ID x ISO differs by up to 1.06% between +eta and -eta -- so
+  // passing y here instead of eta would MIRROR the ID/ISO correction with no
+  // error message. (Exactly the failure that hit gen_xsec.C in 2026-08: it
+  // filled raw +eta while the skim binned in -eta, mirroring gen against reco.)
+  // Verified 2026-09-15 by unit test: id.Eval() receives the actual eta.
+  // The trigger term negates its own argument and then folds to |y| = |eta|,
+  // so it is insensitive to the convention either way.
+  EventSF W(double pt, double etaLab, bool passIso) const
   {
+    const double eta = etaLab; // detector eta -> the POG tables (NOT y = -eta)
     const double fID  = id.Eval(eta, pt, 0, cntID),   fIDu = id.Eval(eta, pt, +1, cntID),   fIDd = id.Eval(eta, pt, -1, cntID);
     const double fIso = passIso ? iso.Eval(eta, pt, 0, cntIso) : 1.0;
     const double fIsou = passIso ? iso.Eval(eta, pt, +1, cntIso) : 1.0;
     const double fIsod = passIso ? iso.Eval(eta, pt, -1, cntIso) : 1.0;
-    const int    b    = trig.Bin(-eta, cntTrig.etaClamped); ++cntTrig.calls; // y = -eta_lab (skim convention)
-    const double fT = trig.SF(b), fTu = trig.SFUp(b), fTd = trig.SFDn(b);    // inclusive or per-y (kTrigBinning)
+    // y = -eta_lab (skim convention); Bin() folds to |y| under kTrigPerAbsY, so
+    // the sign is immaterial there but the argument stays signed for kTrigPerY.
+    const int    b    = trig.Bin(-eta, cntTrig.etaClamped); ++cntTrig.calls;
+    const double fT = trig.SF(b), fTu = trig.SFUp(b), fTd = trig.SFDn(b);    // inclusive / per-y / per-|y|
     EventSF e;
     e.part[kID] = fID; e.part[kIso] = fIso; e.part[kTrig] = fT;
     e.nom = fID * fIso * fT;
@@ -521,10 +589,28 @@ public:
   }
 
   // ---- Z -> mu mu: two TightID legs; the same Tight ISO table as the W per leg,
-  // only if that leg passes the (0.15) cut; trigger = per-event path-fired
-  // probability from the per-lepton efficiencies (inclusive or per-y, kTrigBinning)
-  EventSF Z(double pt1, double eta1, bool iso1, double pt2, double eta2, bool iso2) const
+  // only if that leg passes the (0.15) cut; trigger = the STANDARD OR formula for
+  // a single-lepton path with two legs,
+  //     SF = [1 - prod_i (1 - eps_data,i)] / [1 - prod_i (1 - eps_MC,i)],
+  // built from the per-lepton PATH-FIRED efficiencies (skim_Zmm requires the bit
+  // and does no trigger matching, so `bit` -- not `num` -- is the right input).
+  //
+  // Two notes now that the legs can land in DIFFERENT |y| bins (kTrigPerAbsY):
+  //  * eDu/eDd move BOTH legs to their own +-1 sigma at once. That is exactly
+  //    right under the COHERENT correlation model this analysis ships (one muSF
+  //    nuisance, kMuTrigCorr = "coherent"): theta = +1 means every |y| bin sits
+  //    at its own +1 sigma simultaneously. If muTrig is ever decorrelated per
+  //    |y| bin, this must become a per-bin-independent (quadrature) propagation.
+  //  * the per-lepton efficiencies are measured at pT > 25 only (trig_eff_mb.C
+  //    gates its y histograms on the analysis cut) while Z legs reach down to
+  //    ptMin2 = 10 GeV. Verified harmless FOR MUONS: the path-fired efficiency is
+  //    flat from 10 GeV in both data and MC (eps_MC = 0.9925 in every pT bin --
+  //    L1 open muon has no threshold). It will NOT be harmless for electrons,
+  //    where EG10 turns on at 10-16 GeV.
+  // eta1/eta2 are RAW DETECTOR eta (muEta), not the flipped analysis y -- see W().
+  EventSF Z(double pt1, double etaLab1, bool iso1, double pt2, double etaLab2, bool iso2) const
   {
+    const double eta1 = etaLab1, eta2 = etaLab2; // detector eta -> the POG tables
     const double a = id.Eval(eta1, pt1, 0, cntID),  au = id.Eval(eta1, pt1, +1, cntID),  ad = id.Eval(eta1, pt1, -1, cntID);
     const double b = id.Eval(eta2, pt2, 0, cntID),  bu = id.Eval(eta2, pt2, +1, cntID),  bd = id.Eval(eta2, pt2, -1, cntID);
     const double c = iso1 ? iso.Eval(eta1, pt1, 0, cntIso) : 1, cu = iso1 ? iso.Eval(eta1, pt1, +1, cntIso) : 1, cd = iso1 ? iso.Eval(eta1, pt1, -1, cntIso) : 1;
@@ -566,29 +652,36 @@ private:
     TFile *f = TFile::Open(path, "READ");
     if (!f || f->IsZombie()) { log << "[SF] ERR cannot open " << path << "\n"; return false; }
     const std::string sel = kTrigSel;
-    TGraphAsymmErrors *g = (TGraphAsymmErrors *)f->Get(("sf_y_" + sel).c_str());
-    TH1 *dDen = (TH1 *)f->Get(("h_den_y_" + sel + "_data_mu").c_str());
-    TH1 *dBit = (TH1 *)f->Get(("h_bit_y_" + sel + "_data_mu").c_str());
-    TH1 *pDen = (TH1 *)f->Get(("h_den_y_" + sel + "_Wp_mu").c_str());
-    TH1 *pBit = (TH1 *)f->Get(("h_bit_y_" + sel + "_Wp_mu").c_str());
-    TH1 *mDen = (TH1 *)f->Get(("h_den_y_" + sel + "_Wm_mu").c_str());
-    TH1 *mBit = (TH1 *)f->Get(("h_bit_y_" + sel + "_Wm_mu").c_str());
+    // The variable the SF is binned in: "absy" (|eta_lab|, the default since
+    // 2026-09-15) or "y" (signed). The signed table is read either way, as the
+    // left/right record.
+    const std::string var = (kTrigBinning == kTrigPerAbsY) ? "absy" : "y";
+    TGraphAsymmErrors *g = (TGraphAsymmErrors *)f->Get(("sf_" + var + "_" + sel).c_str());
+    TH1 *dDen = (TH1 *)f->Get(("h_den_" + var + "_" + sel + "_data_mu").c_str());
+    TH1 *dBit = (TH1 *)f->Get(("h_bit_" + var + "_" + sel + "_data_mu").c_str());
+    TH1 *pDen = (TH1 *)f->Get(("h_den_" + var + "_" + sel + "_Wp_mu").c_str());
+    TH1 *pBit = (TH1 *)f->Get(("h_bit_" + var + "_" + sel + "_Wp_mu").c_str());
+    TH1 *mDen = (TH1 *)f->Get(("h_den_" + var + "_" + sel + "_Wm_mu").c_str());
+    TH1 *mBit = (TH1 *)f->Get(("h_bit_" + var + "_" + sel + "_Wm_mu").c_str());
     if (!g || !dDen || !dBit || !pDen || !pBit || !mDen || !mBit)
     {
-      log << "[SF] ERR " << path << " lacks sf_y_" << sel << " and/or the h_{den,bit}_y_" << sel
+      log << "[SF] ERR " << path << " lacks sf_" << var << "_" << sel << " and/or the h_{den,bit}_" << var << "_" << sel
           << "_{data,Wp,Wm}_mu histograms (re-run correction/run_trig_eff_mb.sh mu)\n";
       f->Close(); delete f; return false;
     }
     const int n = g->GetN();
     if (n != dDen->GetNbinsX()) { log << "[SF] ERR sf_y graph and den histogram disagree on the y binning\n"; f->Close(); delete f; return false; }
-    trig = TrigTable();
-    trig.source = std::string(path) + " : h_num/h_den_y_" + sel + " summed (inclusive W), h_bit/h_den_y_" + sel
-                  + " summed (Z per-lepton); sf_y_" + sel + " = the per-y check";
-    TH1 *dNum = (TH1 *)f->Get(("h_num_y_" + sel + "_data_mu").c_str());
-    TH1 *pNum = (TH1 *)f->Get(("h_num_y_" + sel + "_Wp_mu").c_str());
-    TH1 *mNum = (TH1 *)f->Get(("h_num_y_" + sel + "_Wm_mu").c_str());
+    trig = TrigTable(); // NB resets every field -- set binLabel/source AFTER this
+    trig.binLabel = (kTrigBinning == kTrigInclusive) ? "INCLUSIVE"
+                    : (kTrigBinning == kTrigPerAbsY) ? "PER |y| BIN (|eta_lab|, 6 folded bins)"
+                                                     : "PER SIGNED y BIN";
+    trig.source = std::string(path) + " : sf_" + var + "_" + sel + " (applied), h_num/h_den_" + var + "_" + sel
+                  + " (W), h_bit/h_den_" + var + "_" + sel + " (Z per-lepton); the inclusive value = the same sums over all bins";
+    TH1 *dNum = (TH1 *)f->Get(("h_num_" + var + "_" + sel + "_data_mu").c_str());
+    TH1 *pNum = (TH1 *)f->Get(("h_num_" + var + "_" + sel + "_Wp_mu").c_str());
+    TH1 *mNum = (TH1 *)f->Get(("h_num_" + var + "_" + sel + "_Wm_mu").c_str());
     if (!dNum || !pNum || !mNum)
-    { log << "[SF] ERR " << path << " lacks the h_num_y_" << sel << "_{data,Wp,Wm}_mu histograms\n"; f->Close(); delete f; return false; }
+    { log << "[SF] ERR " << path << " lacks the h_num_" << var << "_" << sel << "_{data,Wp,Wm}_mu histograms\n"; f->Close(); delete f; return false; }
     double sDd = 0, sDn = 0, sMd = 0, sMn = 0, sDb = 0, sMb = 0; // summed den / num(matched) / bit(fired), data and MC
     for (int i = 0; i < n; ++i)
     {
@@ -611,34 +704,71 @@ private:
     for (int i = 0; i < n; ++i)
     {
       const double x = g->GetX()[i];
-      trig.yEdges.push_back(x - g->GetEXlow()[i]);
-      if (i == n - 1) trig.yEdges.push_back(x + g->GetEXhigh()[i]);
+      trig.edges.push_back(x - g->GetEXlow()[i]);
+      if (i == n - 1) trig.edges.push_back(x + g->GetEXhigh()[i]);
+      // SYMMETRIZED error = the LARGER of the two Clopper-Pearson one-sided
+      // errors, mirrored. The raw CP error is one-sided where eps_data = 1
+      // exactly (2 of the 6 |y| bins): the upper error is then 0, so a raw Up
+      // template would equal the nominal -- a one-sided shape Combine warns
+      // about and interpolates asymmetrically. Mirroring the larger (here: the
+      // only informative) side never understates; halving the interval width
+      // would, because at eps = 1 the central value sits ON the interval edge,
+      // not at its midpoint. Slightly conservative for two-sided bins, and it
+      // can put Up just above the ceiling 1/eps_MC, harmless for a nuisance
+      // direction.
+      const double err = std::max(g->GetEYhigh()[i], g->GetEYlow()[i]);
       trig.sf.push_back(g->GetY()[i]);
-      trig.sfUp.push_back(g->GetY()[i] + g->GetEYhigh()[i]);
-      trig.sfDn.push_back(g->GetY()[i] - g->GetEYlow()[i]);
+      trig.sfUp.push_back(g->GetY()[i] + err);
+      trig.sfDn.push_back(g->GetY()[i] - err);
       // per-lepton path-fired efficiencies (Clopper-Pearson 68% on the data count)
       const double nd = dDen->GetBinContent(i + 1), kd = dBit->GetBinContent(i + 1);
       const double nm = pDen->GetBinContent(i + 1) + mDen->GetBinContent(i + 1);
       const double km = pBit->GetBinContent(i + 1) + mBit->GetBinContent(i + 1);
       const double ed = nd > 0 ? kd / nd : 1.0, em = nm > 0 ? km / nm : 1.0;
+      const double eUp = nd > 0 ? TEfficiency::ClopperPearson((int)nd, (int)kd, 0.683, true)  : 1.0;
+      const double eDn = nd > 0 ? TEfficiency::ClopperPearson((int)nd, (int)kd, 0.683, false) : 1.0;
+      // symmetrized as above; the Up side is still capped at 1 because an
+      // efficiency above 1 is meaningless inside 1 - prod(1 - eps). For the two
+      // eps = 1 bins that makes the Z trigger Up variation degenerate with the
+      // nominal -- numerically irrelevant, the whole Z factor is 1 +- 1e-4.
+      const double eErr = std::max(eUp - ed, ed - eDn);
       trig.effD.push_back(ed);
       trig.effM.push_back(em);
-      trig.effDUp.push_back(nd > 0 ? TEfficiency::ClopperPearson((int)nd, (int)kd, 0.683, true)  : 1.0);
-      trig.effDDn.push_back(nd > 0 ? TEfficiency::ClopperPearson((int)nd, (int)kd, 0.683, false) : 1.0);
+      trig.effDUp.push_back(std::min(ed + eErr, 1.0));
+      trig.effDDn.push_back(std::max(ed - eErr, 0.0));
     }
     // bin-edge consistency between the graph (x +- ex) and the histogram axis
     for (int i = 0; i <= n; ++i)
     {
       const double hEdge = (i < n) ? dDen->GetXaxis()->GetBinLowEdge(i + 1) : dDen->GetXaxis()->GetBinUpEdge(n);
-      if (std::fabs(trig.yEdges[i] - hEdge) > 1e-6)
-      { log << "[SF] ERR trigger y edges inconsistent between graph and histogram at edge " << i << "\n"; f->Close(); delete f; return false; }
+      if (std::fabs(trig.edges[i] - hEdge) > 1e-6)
+      { log << "[SF] ERR trigger SF edges inconsistent between graph and histogram at edge " << i << "\n"; f->Close(); delete f; return false; }
     }
-    // the standing check: are the per-y SFs consistent with one flat (inclusive) SF?
-    // (pull per bin with the asymmetric error on the side facing the inclusive value)
+    // Folded mode: the applied axis must start at 0 and stay non-negative, or
+    // Bin() would map |y| onto a signed table and silently mis-assign every muon.
+    if (kTrigBinning == kTrigPerAbsY && (trig.edges.front() < -1e-6 || trig.edges.front() > 1e-6))
+    { log << "[SF] ERR kTrigPerAbsY but sf_absy_" << sel << " does not start at |y| = 0 (first edge "
+          << trig.edges.front() << ")\n"; f->Close(); delete f; return false; }
+    // the signed-y table, for the record (its left/right consistency is what
+    // justifies folding; the LRT that decides lives in trig_eff_mb.C's log)
+    if (TGraphAsymmErrors *gy = (TGraphAsymmErrors *)f->Get(("sf_y_" + sel).c_str()))
+      for (int i = 0; i < gy->GetN(); ++i)
+      {
+        trig.yEdges.push_back(gy->GetX()[i] - gy->GetEXlow()[i]);
+        if (i == gy->GetN() - 1) trig.yEdges.push_back(gy->GetX()[i] + gy->GetEXhigh()[i]);
+        trig.sfSigned.push_back(gy->GetY()[i]);
+        trig.sfSignedUp.push_back(gy->GetY()[i] + gy->GetEYhigh()[i]);
+        trig.sfSignedDn.push_back(gy->GetY()[i] - gy->GetEYlow()[i]);
+      }
+    // the standing check: are the per-bin SFs consistent with one flat (inclusive) SF?
+    // NB this is a Gaussian pull chi2 on symmetrized CP errors; it is NOT the test
+    // that decided the binning -- see the note above kTrigBinning and the
+    // likelihood-ratio block "BINNING DECISION" in correction/trig_eff_mb.C's log
+    // (CP-based chi2 tests are badly under-powered near eps = 1).
     trig.chi2 = 0.0; trig.ndf = n - 1;
     for (int i = 0; i < n; ++i)
     {
-      const double s = (trig.sfI < trig.sf[i]) ? (trig.sf[i] - trig.sfDn[i]) : (trig.sfUp[i] - trig.sf[i]);
+      const double s = trig.sfUp[i] - trig.sf[i];
       if (s > 0) trig.chi2 += std::pow((trig.sf[i] - trig.sfI) / s, 2);
     }
     f->Close(); delete f;
@@ -656,22 +786,31 @@ private:
         << "[SF]   ISO   : " << iso.name << "  (relIso < 0.15 in W and Z; nominal range at pT>25: "
         << Form("%.4f..%.4f", rIso.first, rIso.second) << ", at pT>10 (Z legs): " << Form("%.4f..%.4f", rIsoZ.first, rIsoZ.second) << ")\n"
         << "[SF]   TRIG  : " << trig.source << "\n"
-        << "[SF]           APPLIED " << (kTrigBinning == kTrigInclusive ? "INCLUSIVE" : "PER y BIN")
+        << "[SF]           APPLIED " << trig.binLabel
         << " (kTrigBinning); muTrig nuisance correlation for the fork: " << kMuTrigCorr << "\n"
         << "[SF]           inclusive SF(W: fired&&matched) = " << Form("%.4f (+%.4f -%.4f)", trig.sfI, trig.sfIUp - trig.sfI, trig.sfI - trig.sfIDn)
         << ";  per-lepton eps(fired) data " << Form("%.4f (+%.4f -%.4f)", trig.effDI, trig.effDIUp - trig.effDI, trig.effDI - trig.effDIDn)
         << ", MC " << Form("%.4f", trig.effMI) << "\n"
-        << "[SF]           per-y check (" << (kTrigBinning == kTrigInclusive ? "NOT applied" : "applied") << "):  y bin        SF(W)                    eps_data(fired)          eps_MC   pull\n";
+        << "[SF]           " << (kTrigBinning == kTrigInclusive ? "per-bin table (NOT applied)" : "THE APPLIED TABLE")
+        << ":  " << (trig.Folded() ? "|y| bin" : " y bin ")
+        << "       SF(W) +- (symm)          eps_data(fired)          eps_MC   pull\n";
     for (int i = 0; i < trig.NBins(); ++i)
+      log << "[SF]                                       " << Form("[%5.2f,%5.2f]  %.4f +-%.4f            %.4f +-%.4f            %.4f   %+.2f",
+                                       trig.edges[i], trig.edges[i + 1], trig.sf[i], trig.sfUp[i] - trig.sf[i],
+                                       trig.effD[i], trig.effDUp[i] - trig.effD[i],
+                                       trig.effM[i],
+                                       (trig.sfUp[i] - trig.sf[i]) > 0 ? (trig.sf[i] - trig.sfI) / (trig.sfUp[i] - trig.sf[i]) : 0.0) << "\n";
+    log << "[SF]           per-bin SFs vs the inclusive one: chi2/ndf = " << Form("%.1f / %d (p = %.2f)", trig.chi2, trig.ndf, TMath::Prob(trig.chi2, trig.ndf))
+        << "  (a CP-based chi2, UNDER-POWERED near eps = 1 -- the binning was decided by the\n"
+        << "[SF]           likelihood-ratio tests in correction/trig_eff_mb.C's 'BINNING DECISION' block, not by this number)\n";
+    if (!trig.sfSigned.empty())
     {
-      const double s = (trig.sfI < trig.sf[i]) ? (trig.sf[i] - trig.sfDn[i]) : (trig.sfUp[i] - trig.sf[i]);
-      log << "[SF]                                       " << Form("[%5.2f,%5.2f]  %.4f (+%.4f -%.4f)   %.4f (+%.4f -%.4f)   %.4f   %+.2f",
-                                       trig.yEdges[i], trig.yEdges[i + 1], trig.sf[i], trig.sfUp[i] - trig.sf[i],
-                                       trig.sf[i] - trig.sfDn[i], trig.effD[i], trig.effDUp[i] - trig.effD[i],
-                                       trig.effD[i] - trig.effDDn[i], trig.effM[i], s > 0 ? (trig.sf[i] - trig.sfI) / s : 0.0) << "\n";
+      log << "[SF]           signed-y record (folding cross-check, NOT applied):";
+      for (size_t i = 0; i < trig.sfSigned.size(); ++i)
+        log << Form("%s%.4f", i % 6 == 0 ? "\n[SF]             " : "  ", trig.sfSigned[i]);
+      log << "\n";
     }
-    log << "[SF]           per-y SFs vs the inclusive one: chi2/ndf = " << Form("%.1f / %d (p = %.2f)", trig.chi2, trig.ndf, TMath::Prob(trig.chi2, trig.ndf))
-        << " -> " << (TMath::Prob(trig.chi2, trig.ndf) > 0.05 ? "consistent with one flat SF" : "TENSION with a flat SF (revisit kTrigBinning)") << "\n"
+    log
         << "[SF]   per-source twins <hist>_" << kMuonSFSourceNames[0] << "/" << kMuonSFSourceNames[1] << "/"
         << kMuonSFSourceNames[2] << "Up|Down (one source at +-1 sigma, others nominal) + the COMBINED <hist>_"
         << kMuonSFCombinedName << "Up|Down (per-bin quadrature of the three) = the one nuisance carried into the fit\n";
