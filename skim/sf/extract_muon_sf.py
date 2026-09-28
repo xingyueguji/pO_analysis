@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """skim/sf/extract_muon_sf.py -- reduce the Muon POG correctionlib file to the
-corrections this analysis uses, so a small (~0.7 MB) provenance-stamped copy
+corrections this analysis uses, so a small (~0.45 MB) provenance-stamped copy
 can live in the repo instead of the 14 MB original.
 
     python3 extract_muon_sf.py <ScaleFactors_Muon_ID_ISO_2025_schemaV2.json> [out.json]

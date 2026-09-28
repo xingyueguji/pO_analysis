@@ -119,13 +119,14 @@ void mtandmet(bool isElec = 1)
     {
         outBase = "./plots";
     }
+    // Three display families: met (the backup discriminant), mt (the m_T shape
+    // check), leppt_mt40 (the primary discriminant). The fourth, leppt (plain
+    // W selection), was retired 2026-09-21 -- see the variant table below.
     const std::string outMetDir = outBase + "/met";
     const std::string outMtDir = outBase + "/mt";
-    const std::string outLepPtDir = outBase + "/leppt";
     const std::string outLepPtMt40Dir = outBase + "/leppt_mt40";
     gSystem->mkdir(outMetDir.c_str(), kTRUE);
     gSystem->mkdir(outMtDir.c_str(), kTRUE);
-    gSystem->mkdir(outLepPtDir.c_str(), kTRUE);
     gSystem->mkdir(outLepPtMt40Dir.c_str(), kTRUE);
 
     // Lepton-pT stacks (2026-07-29) are DISPLAY ONLY: they are never written
@@ -173,6 +174,16 @@ void mtandmet(bool isElec = 1)
     ps.boxY2 = 0.82;
     ps.normBkgToData = false; // ABSOLUTE pO scaling (k_s incl. A=16) -- no area norm
     ps.pullPad = true;        // (data-MC)/sigma bars in a sub-pad under each plot
+
+    // The MET and lepton-pT stacks carry THREE count lines (data, W signal MC,
+    // total stack -- see totalLine) against the m_T stacks' one. DrawInfoBox
+    // centres the box in [boxY1, boxY2], so a third line would push the first
+    // one up into the rapidity header: shift the band (and the auto legend
+    // under it) down by half a line (DrawInfoBox's line pitch is 0.05), which
+    // keeps the first line exactly where it sat on the two-line box.
+    PlotStyle psCounts = ps;
+    psCounts.boxY1 -= 0.025;
+    psCounts.boxY2 -= 0.025;
 
     // (Optional) one tuner you can reuse for all plots
     PlotTuner commonTuner = [&](TCanvas *c, TH1 *h)
@@ -236,6 +247,25 @@ void mtandmet(bool isElec = 1)
         return s;
     };
 
+    // Third info-box line of the MET / lepton-pT stacks: the TOTAL of the stack
+    // as drawn -- every MC sample plus the ABCD QCD when the stack has one, i.e.
+    // the same total the pull pad compares the data to. Next to "Passing
+    // Events" it separates a normalization offset (data != total) from a shape
+    // mismatch (totals agree, pulls still structured). Takes the SAME vectors
+    // handed to SaveNicePlot1D_WithBkg, so the label cannot disagree with the
+    // legend; integral over bins 1..N like the other two lines (no
+    // under/overflow), so the three numbers compare directly.
+    auto totalLine = [](const std::vector<TH1 *> &stack,
+                        const std::vector<std::string> &names) -> std::string
+    {
+        double s = 0.0;
+        for (TH1 *h : stack)
+            if (h) s += h->Integral(1, h->GetNbinsX());
+        const bool withQcd = std::any_of(names.begin(), names.end(),
+            [](const std::string &n) { return n.compare(0, 3, "QCD") == 0; });
+        return Form("%s: %.0f", withQcd ? "Total MC+QCD" : "Total MC", s);
+    };
+
     // --- ABCD QCD (low-MET) background, MET stacks ----------------------------
     // Inclusive-in-rapidity per-charge QCD MET template from
     // correction/qcd_abcd.C (ABCD: data-EWK anti-iso shape x transfer factor),
@@ -251,7 +281,9 @@ void mtandmet(bool isElec = 1)
     const std::string qlep = isElec ? "ele" : "mu";
     const std::string qcdFile = "../correction/rootfile/qcd_abcd_" + qlep + ".root";
     TH1D *qcdPlusBase = nullptr, *qcdMinusBase = nullptr, *qcd_met_incl = nullptr;
-    TH1D *qcdPtPlusBase = nullptr, *qcdPtMinusBase = nullptr, *qcd_pt_incl = nullptr;
+    // No-m_T-cut lepton-pT QCD: since the plain-leppt variant was retired
+    // (2026-09-21) these feed only the m_T-cut-efficiency line printed below.
+    TH1D *qcdPtPlusBase = nullptr, *qcdPtMinusBase = nullptr;
     TH1D *qcdPtMt40PlusBase = nullptr, *qcdPtMt40MinusBase = nullptr, *qcd_pt_mt40_incl = nullptr;
     // In-fit ABCD (QCD_MODE=abcd, 2026-08-23): the exported m_T-plane counts and
     // the A0-renormalized SR template bases built from them (same anti-iso
@@ -294,16 +326,10 @@ void mtandmet(bool isElec = 1)
             std::cerr << "[WARN] ABCD QCD template not found (" << qcdFile
                       << "); run qcd_abcd.C" << (isElec ? "+(true)" : "+")
                       << " first. MET stacks will omit QCD.\n";
-        if (qcdPtPlusBase && qcdPtMinusBase)
-        {
-            qcd_pt_incl = (TH1D *)qcdPtPlusBase->Clone("qcd_pt_incl");
-            qcd_pt_incl->SetDirectory(nullptr);
-            qcd_pt_incl->Add(qcdPtMinusBase);
-        }
-        else
-            std::cerr << "[WARN] lepton-pT QCD template (qcd_pt_*) not in " << qcdFile
+        if (!qcdPtPlusBase || !qcdPtMinusBase)
+            std::cerr << "[WARN] no-m_T-cut lepton-pT QCD template (qcd_pt_*) not in " << qcdFile
                       << "; re-run qcd_abcd.C on a skim with the h_iso_pt planes."
-                      << " Lepton-pT stacks will omit QCD.\n";
+                      << " Only the m_T-cut-efficiency line below is affected.\n";
         if (qcdPtMt40PlusBase && qcdPtMt40MinusBase)
         {
             qcd_pt_mt40_incl = (TH1D *)qcdPtMt40PlusBase->Clone("qcd_pt_mt40_incl");
@@ -428,10 +454,17 @@ void mtandmet(bool isElec = 1)
     };
 
     // Lepton-pT selection variants (shared by the stacks below and the Combine
-    // input writer): kVarNom = plain W selection, kVarMt40 = pT>25 && m_T>40.
-    enum { kVarNom = 0, kVarMt40 = 1, kNVar = 2 };
-    const char *varStem[kNVar] = {"h_leppt", "h_leppt_mt40"};
-    const char *varTag [kNVar] = {"", "_mt40"};
+    // input writer). ONE variant since 2026-09-21: kVarMt40 = pT>25 && m_T>40.
+    // The plain no-m_T-cut variant (kVarNom, "h_leppt_*" -> plots/leppt/ +
+    // combine_input_W_leppt.root) was RETIRED that day: the discriminant itself
+    // was dropped on 2026-08-16 (only met and leppt_mt40 are fitted), its
+    // out-tree pO_fit_out_leppt/ never had a simfit, and the skim stores no LHE
+    // /SF systematic twins for h_leppt_* -- so its Combine input carried no
+    // shape systematics and could not be fitted by the current card generator.
+    // The table is kept so re-adding a variant is a two-entry edit.
+    enum { kVarMt40 = 0, kNVar = 1 };
+    const char *varStem[kNVar] = {"h_leppt_mt40"};
+    const char *varTag [kNVar] = {"_mt40"};
 
     // --- Structured per-region Combine input -----------------------------------
     // For every fit region we emit the 6 absolute templates the downstream
@@ -446,16 +479,15 @@ void mtandmet(bool isElec = 1)
     // template is already at its absolute pO yield (k_s applied below) -- NO area
     // normalization, so the fit floats real normalizations, not shapes-to-data.
     //
-    // THREE input files, one per W discriminant (2026-07-30), same region names
-    // and template roles in all of them so the fork's datacard generator applies
+    // TWO input files, one per W discriminant (three until 2026-09-21, when the
+    // plain-leppt one was retired -- see the variant table above), same region
+    // names and template roles in both so the fork's datacard generator applies
     // unchanged:
-    //   combine_input_W.root            PF MET               (the nominal fit)
-    //   combine_input_W_leppt.root      lepton pT, plain W selection
-    //   combine_input_W_leppt_mt40.root lepton pT, pT>25 && m_T>40 selection
-    // qcd_norm stays FREE in the fit for all three (2026-07-30 decision). NB for
-    // the lepton-pT variants the QCD-anchoring low-MET region is absent from the
-    // discriminant, so expect a weaker qcd_norm constraint / larger r-qcd
-    // correlation there.
+    //   combine_input_W.root            PF MET               (the backup fit)
+    //   combine_input_W_leppt_mt40.root lepton pT, pT>25 && m_T>40 (PRIMARY)
+    // NB for the lepton-pT variant the QCD-anchoring low-MET region is absent
+    // from the discriminant, which is why its QCD is constrained by the in-fit
+    // ABCD control regions (QCD_MODE=abcd) instead of by the shape.
     struct RegionTemplates {
         std::string dir;
         TH1D *data, *sig, *z, *ztau, *wtau, *qcd;
@@ -472,7 +504,7 @@ void mtandmet(bool isElec = 1)
         std::map<std::string, TH1D *> syst;
     };
     std::vector<RegionTemplates> regions;          // PF MET (the nominal fit input)
-    std::vector<RegionTemplates> regionsPt[kNVar]; // lepton-pT: [kVarNom], [kVarMt40]
+    std::vector<RegionTemplates> regionsPt[kNVar]; // lepton-pT: [kVarMt40]
 
     // `tag` disambiguates the detached-clone names across the three collections
     // (same region dir appears once per discriminant).
@@ -504,23 +536,23 @@ void mtandmet(bool isElec = 1)
         return r;
     };
 
-    // --- Lepton-pT stacks (display only) ---------------------------------------
+    // --- Lepton-pT stacks -------------------------------------------------------
     // Absolute data-vs-stack comparisons in the leading-lepton pT (the pT twins
-    // of the MET stacks: h_leppt_* from the skim + the qcd_pt_* ABCD template).
-    // These are NOT written into combine_input_W.root -- the fit stays on MET.
+    // of the MET stacks: h_leppt_mt40_* from the skim + the qcd_pt_mt40_* ABCD
+    // template). The PLOTS are display only; the same per-region templates are
+    // collected here and written to combine_input_W_leppt_mt40.root, which IS
+    // the primary fit input (combine_input_W.root itself stays PF-MET-only).
     //
-    // TWO variants (kVarNom / kVarMt40), each with its own output directory and
-    // its own inclusive accumulators:
-    //   kVarNom  -- the plain W selection (no m_T cut), h_leppt_*   + qcd_pt_*
+    // ONE variant since 2026-09-21 (see the variant table above):
     //   kVarMt40 -- the lepton-pT-DISCRIMINANT selection pT>25 && m_T>40,
     //               h_leppt_mt40_* + qcd_pt_mt40_* (2026-07-30). The m_T cut is
     //               what suppresses QCD when the fit no longer uses the MET
     //               shape to do it.
-    TH1D *h_leppt_inclusive[kNVar]           = {nullptr, nullptr};
-    TH1D *h_leppt_inclusive_MC_signal[kNVar] = {nullptr, nullptr};
-    TH1D *h_leppt_inclusive_MC_Z[kNVar]      = {nullptr, nullptr};
-    TH1D *h_leppt_inclusive_MC_Ztau[kNVar]   = {nullptr, nullptr};
-    TH1D *h_leppt_inclusive_MC_Wtau[kNVar]   = {nullptr, nullptr};
+    TH1D *h_leppt_inclusive[kNVar]           = {nullptr};
+    TH1D *h_leppt_inclusive_MC_signal[kNVar] = {nullptr};
+    TH1D *h_leppt_inclusive_MC_Z[kNVar]      = {nullptr};
+    TH1D *h_leppt_inclusive_MC_Ztau[kNVar]   = {nullptr};
+    TH1D *h_leppt_inclusive_MC_Wtau[kNVar]   = {nullptr};
 
     // Get + absolute-scale one MC histo (fresh Get per name/file, scaled in
     // place and used once -- same convention as scaleAll above).
@@ -618,29 +650,31 @@ void mtandmet(bool isElec = 1)
 
         std::vector<std::string> box = {
             Form("Passing Events: %.0f", hD->Integral(1, hD->GetNbinsX())),
-            Form("W signal MC: %.0f", sigInt({hWp, hWm}))};
+            Form("W signal MC: %.0f", sigInt({hWp, hWm})),
+            totalLine(bkgs, names)};
 
         // pT axes start at the selection floor (bin edge 24 encloses the
         // 25 GeV cut on the 2 GeV grid) -- no empty [0,25) band. The helper
         // restores the full range after saving, so the Combine-input writing
         // below sees untouched histograms.
-        PlotStyle psPt = ps;
+        PlotStyle psPt = psCounts;
         psPt.xRangeLo = 24.0;
         psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(hD, bkgs, names, outPath,
                                ptTitle, "Events / 2.0 GeV", "",
                                sub1, sub2, box, psPt, commonTuner);
 
-        // Collect this region's templates for the lepton-pT Combine inputs
-        // (written to SEPARATE combine_input_W_leppt[_mt40].root files below --
+        // Collect this region's templates for the lepton-pT Combine input
+        // (written to the SEPARATE combine_input_W_leppt_mt40.root below --
         // combine_input_W.root itself stays PF-MET-only).
         regionsPt[var].push_back(makeRegion(
             Form("%s_%s_y%d", chg, (suf[0] ? "fb" : "lab"), iy),
             Form("_lp%s", varTag[var]),
             hD, hWp, hWm, hZ, hZtau, hWptau, hWmtau, qcdH, qcdAbcdH));
-        // LHE shape systematics: the skim stores twins for h_met_* and
-        // h_leppt_mt40_* only (the plain leppt discriminant is dropped).
-        if (var == kVarMt40) attachSysts(regionsPt[var].back(), Form("_lp%s", varTag[var]), nm.c_str());
+        // LHE / lepton-SF shape systematics: the skim stores twins for h_met_*
+        // and h_leppt_mt40_* only -- which is also why the plain leppt variant
+        // was retired (2026-09-21): it could carry none.
+        attachSysts(regionsPt[var].back(), Form("_lp%s", varTag[var]), nm.c_str());
 
         if (accumulate)
         {
@@ -946,6 +980,7 @@ void mtandmet(bool isElec = 1)
                 "Wm Tau"};
 
             if (qcd_met_Wp) { bkgs.push_back(qcd_met_Wp); names.push_back("QCD"); }
+            box.push_back(totalLine(bkgs, names));
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wp,
@@ -958,7 +993,7 @@ void mtandmet(bool isElec = 1)
                 Channeltypewplus,                    // subTitle1
                 yLabel[iy],                          // subTitle2
                 box,                                 // info box lines
-                ps,
+                psCounts,
                 commonTuner);
         }
 
@@ -984,6 +1019,7 @@ void mtandmet(bool isElec = 1)
                 "Wm Tau"};
 
             if (qcd_met_Wm) { bkgs.push_back(qcd_met_Wm); names.push_back("QCD"); }
+            box.push_back(totalLine(bkgs, names));
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wm,
@@ -996,7 +1032,7 @@ void mtandmet(bool isElec = 1)
                 Channeltypewminus,
                 yLabel[iy],
                 box,
-                ps,
+                psCounts,
                 commonTuner);
         }
 
@@ -1024,6 +1060,7 @@ void mtandmet(bool isElec = 1)
                 "Wm Tau"};
 
             if (qcd_met_Wp_FB) { bkgs.push_back(qcd_met_Wp_FB); names.push_back("QCD"); }
+            box.push_back(totalLine(bkgs, names));
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wp_FB,
@@ -1036,7 +1073,7 @@ void mtandmet(bool isElec = 1)
                 Channeltypewplus,                       // subTitle1
                 yLabel_FB[iy],                          // subTitle2
                 box,                                    // info box lines
-                ps,
+                psCounts,
                 commonTuner);
         }
 
@@ -1062,6 +1099,7 @@ void mtandmet(bool isElec = 1)
                 "Wm Tau"};
 
             if (qcd_met_Wm_FB) { bkgs.push_back(qcd_met_Wm_FB); names.push_back("QCD"); }
+            box.push_back(totalLine(bkgs, names));
 
             SaveNicePlot1D_WithBkg(
                 h_met_Wm_FB,
@@ -1074,7 +1112,7 @@ void mtandmet(bool isElec = 1)
                 Channeltypewminus,
                 yLabel_FB[iy],
                 box,
-                ps,
+                psCounts,
                 commonTuner);
         }
 
@@ -1216,32 +1254,12 @@ void mtandmet(bool isElec = 1)
                 commonTuner);
         }
 
-        // --------- lepton-pT plots (display only; NOT in combine_input) ----------
+        // --------- lepton-pT plots (+ the leppt_mt40 Combine input) -------------
         {
             // Per-y QCD = inclusive pT template shape x the SAME per-bin low-MET
             // excess weights as the MET stacks (the QCD y-distribution does not
-            // depend on which variable is plotted).
-            TH1D *qcd_pt_Wp    = qcdPerY(qcdPtPlusBase,  wQcdWp[iy],   Form("qcd_pt_Wp_y%d", iy));
-            TH1D *qcd_pt_Wm    = qcdPerY(qcdPtMinusBase, wQcdWm[iy],   Form("qcd_pt_Wm_y%d", iy));
-            TH1D *qcd_pt_Wp_FB = qcdPerY(qcdPtPlusBase,  wQcdWpFB[iy], Form("qcd_pt_Wp_y%d_FB", iy));
-            TH1D *qcd_pt_Wm_FB = qcdPerY(qcdPtMinusBase, wQcdWmFB[iy], Form("qcd_pt_Wm_y%d_FB", iy));
-
-            bool ok = true;
-            ok &= lepPtStack(kVarNom, iy, "Wp", "",    qcd_pt_Wp,    Channeltypewplus,  yLabel[iy],
-                             outLepPtDir + Form("/leppt_Wp_y%d", iy),    /*accumulate=*/true);
-            ok &= lepPtStack(kVarNom, iy, "Wm", "",    qcd_pt_Wm,    Channeltypewminus, yLabel[iy],
-                             outLepPtDir + Form("/leppt_Wm_y%d", iy),    /*accumulate=*/true);
-            ok &= lepPtStack(kVarNom, iy, "Wp", "_FB", qcd_pt_Wp_FB, Channeltypewplus,  yLabel_FB[iy],
-                             outLepPtDir + Form("/leppt_Wp_y%d_FB", iy), /*accumulate=*/false);
-            ok &= lepPtStack(kVarNom, iy, "Wm", "_FB", qcd_pt_Wm_FB, Channeltypewminus, yLabel_FB[iy],
-                             outLepPtDir + Form("/leppt_Wm_y%d_FB", iy), /*accumulate=*/false);
-            if (!ok && iy == 0)
-                std::cerr << "[WARN] h_leppt_* not found (skim output predates the"
-                          << " lepton-pT histos); lepton-pT stacks skipped.\n";
-
-            // --- the same, with the pT-discriminant m_T > 40 selection ---------
-            // Per-y QCD split reuses the SAME low-MET-excess weights: they model
-            // where QCD sits in y, which the m_T cut does not change.
+            // depend on which variable is plotted). The m_T cut does not change
+            // where QCD sits in y, so the m_T>40 split reuses those weights.
             TH1D *qcd_pt40_Wp    = qcdPerY(qcdPtMt40PlusBase,  wQcdWp[iy],   Form("qcd_pt_mt40_Wp_y%d", iy));
             TH1D *qcd_pt40_Wm    = qcdPerY(qcdPtMt40MinusBase, wQcdWm[iy],   Form("qcd_pt_mt40_Wm_y%d", iy));
             TH1D *qcd_pt40_Wp_FB = qcdPerY(qcdPtMt40PlusBase,  wQcdWpFB[iy], Form("qcd_pt_mt40_Wp_y%d_FB", iy));
@@ -1326,6 +1344,7 @@ void mtandmet(bool isElec = 1)
             "W+/W- tau"};
 
         if (qcd_met_incl) { bkgs.push_back(qcd_met_incl); names.push_back("QCD (ABCD)"); }
+        box.push_back(totalLine(bkgs, names));
 
         SaveNicePlot1D_WithBkg(
             h_met_inclusive,
@@ -1338,17 +1357,16 @@ void mtandmet(bool isElec = 1)
             Channeltype,
             "inclusive",
             box,
-            ps,
+            psCounts,
             commonTuner);
     }
 
     for (int var = 0; var < kNVar; ++var)
     {
-        // Inclusive lepton-pT stacks (display only): the absolute-normalization
-        // closure test in the pT variable -- the ABCD QCD should fill the
-        // low-pT (25-35 GeV) data excess the way it fills low MET. var=kVarMt40
-        // is the same with the discriminant's m_T > 40 cut, where QCD is
-        // strongly suppressed and the Jacobian peak should dominate.
+        // Inclusive lepton-pT stack (display only): the absolute-normalization
+        // closure test in the fit's own variable, with the discriminant's
+        // m_T > 40 cut applied -- QCD is strongly suppressed there and the
+        // Jacobian peak should dominate.
         if (!h_leppt_inclusive[var]) continue;
 
         std::vector<std::string> box = {
@@ -1362,23 +1380,23 @@ void mtandmet(bool isElec = 1)
         pushIf(h_leppt_inclusive_MC_Z[var], "DY");
         pushIf(h_leppt_inclusive_MC_Ztau[var], "DY tau");
         pushIf(h_leppt_inclusive_MC_Wtau[var], "W+/W- tau");
-        pushIf(var == kVarMt40 ? qcd_pt_mt40_incl : qcd_pt_incl, "QCD (ABCD)");
+        pushIf(qcd_pt_mt40_incl, "QCD (ABCD)");
+        box.push_back(totalLine(bkgs, names));
 
         // pT axis starts at the selection floor (see lepPtStack)
-        PlotStyle psPt = ps;
+        PlotStyle psPt = psCounts;
         psPt.xRangeLo = 24.0;
         psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(
             h_leppt_inclusive[var],
             bkgs,
             names,
-            (var == kVarMt40 ? outLepPtMt40Dir + "/h_leppt_mt40_inclusive"
-                             : outLepPtDir + "/h_leppt_inclusive"),
+            outLepPtMt40Dir + "/h_leppt_mt40_inclusive",
             ptTitle,
             "Events / 2.0 GeV",
             "",
             Channeltype,
-            (var == kVarMt40 ? "inclusive, m_{T} > 40 GeV" : "inclusive"),
+            "inclusive, m_{T} > 40 GeV",
             box,
             psPt,
             commonTuner);
@@ -1678,15 +1696,12 @@ void mtandmet(bool isElec = 1)
         };
 
         writeCombineInput(outBase + "/combine_input_W.root", regions, "", nullptr);
-        if (!regionsPt[kVarNom].empty())
-            writeCombineInput(outBase + "/combine_input_W_leppt.root",
-                              regionsPt[kVarNom], "_lp", nullptr);
-        else
-        {
-            gSystem->Unlink((outBase + "/combine_input_W_leppt.root").c_str());
-            std::cerr << "[WARN] no lepton-pT regions collected -> combine_input_W_leppt.root"
-                      << " not written (any stale copy deleted so the fork cannot fit old templates)\n";
-        }
+        // The plain-leppt input was retired 2026-09-21 (see the variant table).
+        // Delete any pre-retirement copy so the fork can never fit templates
+        // that nothing regenerates -- the same guard the two live inputs use.
+        for (const char *stale : {"/combine_input_W_leppt.root",
+                                  "/combine_input_W_leppt_systs.txt"})
+            gSystem->Unlink((outBase + stale).c_str());
         if (!regionsPt[kVarMt40].empty())
             writeCombineInput(outBase + "/combine_input_W_leppt_mt40.root",
                               regionsPt[kVarMt40], "_lp_mt40",

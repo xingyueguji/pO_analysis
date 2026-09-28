@@ -1,0 +1,955 @@
+<meta charset="utf-8">
+<title>WP90 Electron SF Cross-check</title>
+<meta name="description" content="Definitions, selection, fit model, error propagation, results and plot guide for the pO electron WP90 ID+iso scale-factor cross-check against the EGM wp90iso SF.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=STIX+Two+Text:ital,wght@0,400;0,500;1,400&display=swap">
+<style>
+:root{
+  --bg:#F3F5F8; --paper:#FFFFFF; --ink:#172031; --ink-2:#39455A; --muted:#667085;
+  --rule:#D8DEE7; --rule-2:#C3CBD7; --tint:#EAEFF6; --code:#E9EDF3; --plate:#FFFFFF;
+  --accent:#1E4FA0; --accent-soft:#DCE6F7;
+  --z:#1B7A3A; --z-soft:#E3F2E7; --egm:#A9570A; --egm-soft:#FBEEDD;
+  --lim:#B42318; --lim-soft:#FBE8E6;
+  --font-sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --font-math:"STIX Two Text","Cambria Math","Times New Roman",serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E131A; --paper:#151C26; --ink:#E4E9F0; --ink-2:#C3CCD8; --muted:#95A1B3;
+    --rule:#28323F; --rule-2:#364252; --tint:#1A2230; --code:#1C2532; --plate:#F2F4F7;
+    --accent:#8FB0F2; --accent-soft:#1D2A42;
+    --z:#63C585; --z-soft:#15291D; --egm:#F0A451; --egm-soft:#2E2113;
+    --lim:#F28B80; --lim-soft:#321A18;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E131A; --paper:#151C26; --ink:#E4E9F0; --ink-2:#C3CCD8; --muted:#95A1B3;
+  --rule:#28323F; --rule-2:#364252; --tint:#1A2230; --code:#1C2532; --plate:#F2F4F7;
+  --accent:#8FB0F2; --accent-soft:#1D2A42;
+  --z:#63C585; --z-soft:#15291D; --egm:#F0A451; --egm-soft:#2E2113;
+  --lim:#F28B80; --lim-soft:#321A18;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.62 var(--font-sans);-webkit-font-smoothing:antialiased}
+.page{max-width:880px;margin:0 auto;padding-inline:20px;padding-block:44px 96px;display:flex;flex-direction:column;gap:36px}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+h1,h2,h3{text-wrap:balance;color:var(--ink);margin:0}
+h1{font-size:clamp(28px,4.2vw,40px);line-height:1.15;font-weight:600;letter-spacing:-0.012em}
+h2{font-size:clamp(21px,2.6vw,25px);line-height:1.25;font-weight:600;letter-spacing:-0.005em;display:flex;gap:.6em;align-items:baseline}
+h2 .n{font-family:var(--font-cond);font-weight:600;color:var(--muted);font-size:.8em;min-width:1.4em}
+h3{font-size:17px;font-weight:600;margin-top:6px}
+p{margin:0}
+code,.mono{font-family:var(--font-mono);font-size:.88em;background:var(--code);padding:.08em .32em;border-radius:4px;overflow-wrap:anywhere}
+pre{font-family:var(--font-mono);font-size:12.5px;line-height:1.5;background:var(--code);padding:14px 16px;border-radius:8px;overflow-x:auto;margin:0;white-space:pre}
+pre code{background:none;padding:0;font-size:inherit}
+sub,sup{font-size:.72em;line-height:0}
+.eyebrow{font-family:var(--font-cond);font-weight:600;text-transform:uppercase;letter-spacing:.09em;font-size:12.5px;color:var(--muted)}
+.lede{font-size:18px;color:var(--ink-2);max-width:68ch}
+.meta{font-size:14px;color:var(--muted)}
+header.doc{display:flex;flex-direction:column;gap:14px}
+section{display:flex;flex-direction:column;gap:16px}
+section.body{border-top:1px solid var(--rule);padding-top:30px}
+.prose{display:flex;flex-direction:column;gap:14px;max-width:72ch}
+.prose ul,.prose ol{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:6px}
+.muted{color:var(--muted)}
+.small{font-size:14px}
+
+/* result panel */
+.result{background:var(--paper);border:1px solid var(--rule);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:18px}
+.result-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.stat{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:9px;background:var(--tint)}
+.stat.z{background:var(--z-soft)} .stat.egm{background:var(--egm-soft)}
+.stat .k{font-family:var(--font-cond);font-weight:600;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.stat .v{font-size:30px;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat.z .v{color:var(--z)} .stat.egm .v{color:var(--egm)}
+.stat .v small{font-size:.58em;font-weight:500}
+.stat .s{font-size:13.5px;color:var(--ink-2)}
+@media (max-width:680px){.result-grid{grid-template-columns:1fr}}
+
+/* callouts */
+.callout{border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:8px;background:var(--tint)}
+.callout.fix{background:var(--lim-soft)}
+.callout .label{font-family:var(--font-cond);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:12px;color:var(--ink-2)}
+.callout.fix .label{color:var(--lim)}
+
+/* toc */
+nav.toc ol{margin:0;padding-left:0;list-style:none;columns:2;column-gap:28px}
+nav.toc li{break-inside:avoid;padding:3px 0;display:flex;gap:.6em}
+nav.toc li span{font-family:var(--font-cond);color:var(--muted);min-width:1.5em;font-weight:600}
+@media (max-width:620px){nav.toc ol{columns:1}}
+
+/* tables */
+.tw{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--paper)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14.5px}
+th,td{padding:8px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}
+tbody tr:last-child td{border-bottom:none}
+th{font-weight:600;font-size:13px;color:var(--ink-2);background:var(--tint);white-space:nowrap}
+td.num,th.num{text-align:right;white-space:nowrap}
+tr.sep td{border-top:2px solid var(--rule-2)}
+td .exp{display:block;font-size:12px;color:var(--muted)}
+td.lim .v{color:var(--muted)}
+.chip{display:inline-block;font-family:var(--font-cond);font-weight:600;font-size:11.5px;letter-spacing:.03em;padding:1px 6px;border-radius:999px;margin-left:6px;vertical-align:1px;white-space:nowrap}
+.chip.r0{background:var(--accent-soft);color:var(--accent)}
+.chip.r10{background:var(--lim-soft);color:var(--lim)}
+td.meas .v{font-weight:600}
+.k-z{color:var(--z);font-weight:600} .k-egm{color:var(--egm);font-weight:600}
+
+/* equations */
+.eqw{overflow-x:auto}
+.eq{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:6px 0;min-width:max-content}
+.eq .body{grid-column:2;font-family:var(--font-math);font-size:19px;display:flex;align-items:center;gap:.3em;flex-wrap:nowrap;white-space:nowrap}
+.eq .no{grid-column:3;justify-self:end;color:var(--muted);font-size:14px;padding-left:24px}
+.m{font-family:var(--font-math);font-size:1.07em;white-space:nowrap}
+.m i,.eq i{font-style:italic}
+.frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;margin:0 .12em}
+.frac>span{padding:0 .3em;line-height:1.45}
+.frac>span:first-child{border-bottom:1px solid currentColor}
+
+/* figures */
+figure{margin:0;display:flex;flex-direction:column;gap:12px}
+.plate{background:var(--plate);border:1px solid var(--rule);border-radius:10px;padding:10px}
+.plate img{display:block;width:100%;height:auto;max-width:100%}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:700px){.two{grid-template-columns:1fr}}
+figcaption{display:flex;flex-direction:column;gap:10px;font-size:15px;color:var(--ink-2);max-width:74ch}
+figcaption .cap-t{font-weight:600;color:var(--ink)}
+figcaption ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:5px}
+.read{background:var(--tint);border-radius:8px;padding:10px 14px}
+.read b{font-family:var(--font-cond);text-transform:uppercase;letter-spacing:.07em;font-size:12px;color:var(--ink-2);display:block;margin-bottom:2px}
+
+/* diagram */
+.dg{overflow-x:auto;background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:10px}
+.dg svg{display:block;width:100%;min-width:560px;height:auto;font-family:var(--font-sans)}
+.d-sr{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.2}
+.d-cr{fill:var(--tint);stroke:var(--rule-2);stroke-width:1.2}
+.d-sb{fill:var(--egm-soft);stroke:var(--rule-2);stroke-width:1.2}
+.d-hatch{stroke:var(--rule-2);stroke-width:2}
+.d-axis{stroke:var(--ink-2);stroke-width:1.2;fill:none}
+.d-split{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:5 4}
+.d-t{fill:var(--ink);font-size:13px}
+.d-b{fill:var(--ink);font-size:14px;font-weight:600}
+.d-m{fill:var(--muted);font-size:12px}
+
+/* details */
+details{border:1px solid var(--rule);border-radius:10px;background:var(--paper)}
+details>summary{cursor:pointer;padding:12px 16px;font-weight:500;color:var(--ink)}
+details>div{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}
+dl.defs{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:0}
+dl.defs dt{font-weight:600}
+dl.defs dd{margin:0;color:var(--ink-2)}
+@media (max-width:560px){dl.defs{grid-template-columns:1fr} dl.defs dd{margin-bottom:6px}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<div class="page">
+
+<header class="doc">
+  <p class="eyebrow">pO 2025 · W and Z cross sections · electron efficiency</p>
+  <h1>Electron WP90 ID + iso scale-factor cross-check</h1>
+  <p class="lede">If the electron selection switches to the forest's <code>eleMVAIdWP90 &amp;&amp; eleMVAIsoWP90</code>, can the pp EGM <code>wp90iso</code> scale factor be applied to our MC? This note records what was built to answer that, every cut and definition, how the fits and their errors work, what came out, and how to read each plot.</p>
+  <p class="meta">Data 46.5 nb<sup>−1</sup> · Combine fits run on lxplus 26 Sep 2026 · status 27 Sep 2026 · a separate stream: the nominal skim, inputs and fits are untouched</p>
+</header>
+
+<section class="result" aria-label="Result">
+  <div class="result-grid">
+    <div class="stat z"><span class="k">Z tag-and-probe, measured</span><span class="v">0.959 <small>± 0.025</small></span><span class="s">expected ± 0.026 · 310 Z events</span></div>
+    <div class="stat egm"><span class="k">EGM wp90iso, same probes</span><span class="v">0.956 <small>± 0.009</small></span><span class="s">⟨SF<sub>EGM</sub>⟩ over the passing DY-MC probes</span></div>
+    <div class="stat"><span class="k">Agreement</span><span class="v">+0.11 σ</span><span class="s">(0.959 − 0.956) / √(0.026² + 0.009²)</span></div>
+  </div>
+  <div class="prose">
+    <p><strong>The pp SF describes our WP90 ID + iso in pO data.</strong> The agreement is inclusive, at the 2.6% precision of 310 Z events.</p>
+    <p><strong>The W-sample method, the original design, cannot measure the efficiency.</strong> The fail category is about 98% QCD. In every one of the 9 W fits at least one bin has its fail W pushed to a limit of its allowed range, <span class="m"><i>r</i></span> = 0 or <span class="m"><i>r</i></span> = 10. The expected precision on the SF is ±0.09 to ±0.67 even if the model were right.</p>
+    <p class="muted">Whether to switch the electron selection is still your decision.</p>
+  </div>
+</section>
+
+<div class="callout fix">
+  <span class="label">Corrected since yesterday's summary</span>
+  <p>The W results near SF ≈ 0.41 (the relIso 0.6–1.0 sideband) were drawn as measured points with errors of ±0.006. Their fail <span class="m"><i>r</i></span> sits at 10, the upper edge of its allowed range [0, 10], so they are limits, just like the 1.24 values at <span class="m"><i>r</i></span> = 0. I found it while preparing this note, from the fitted <span class="m"><i>r</i></span> values. <code>idiso_sf_plots.C</code> now flags both limits and the plots were regenerated. The summary CSV has a <code>boundary</code> column (<code>no|r0|r10|r0+r10</code>), and CLAUDE.md and the project memory are corrected. Only 5 of the 24 per-bin W results have a fail <span class="m"><i>r</i></span> inside its range. Those 5 sit at 2–9 times the MC prediction.</p>
+</div>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><span>1</span><a href="#question">What is being tested</a></li>
+    <li><span>2</span><a href="#samples">Samples and the separate skim</a></li>
+    <li><span>3</span><a href="#selection">Event and electron selection</a></li>
+    <li><span>4</span><a href="#defs">Efficiency and SF definitions</a></li>
+    <li><span>5</span><a href="#egm">The EGM prediction for our electrons</a></li>
+    <li><span>6</span><a href="#wfit">Measurement 1: W sample, in-fit ABCD</a></li>
+    <li><span>7</span><a href="#ztnp">Measurement 2: Z tag-and-probe</a></li>
+    <li><span>8</span><a href="#errors">How every error is obtained</a></li>
+    <li><span>9</span><a href="#results">Results</a></li>
+    <li><span>10</span><a href="#plots">How to read the plots</a></li>
+    <li><span>11</span><a href="#scope">What this does and does not establish</a></li>
+    <li><span>12</span><a href="#history">History and questions along the way</a></li>
+    <li><span>13</span><a href="#files">Files and commands</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section class="body" id="question">
+  <h2><span class="n">1</span>What is being tested</h2>
+  <div class="prose">
+    <p><strong>Today</strong> electrons are selected with <code>eleMVAIdWP95</code> (outside the ECAL crack) and Δβ relIso &lt; 0.095. No electron SF is applied to MC.</p>
+    <p><strong>The candidate</strong> is <code>eleMVAIdWP90 &amp;&amp; eleMVAIsoWP90</code>. These are the heavy-ion forest's own classifiers: an XGBoost ID and an XGBoost isolation from <code>HIElectronInfoProducer</code>, each passing below a centrality-dependent cut. They are not EGM VID decisions, and the ntuple stores no EGM VID flag.</p>
+    <p><strong>The closest EGM object</strong> is <code>wp90iso</code>. It is the Run-3 EGM MVA ID trained with PF isolation among its inputs, at the 90% signal working point. EGM provides one SF for ID and isolation together, measured with Z→ee tag-and-probe relative to a reconstructed electron, in cells of signed supercluster η × p<sub>T</sub>.</p>
+    <p>Because the two objects differ, so do their absolute efficiencies: our W MC gives ε<sub>MC</sub> = 0.81 for the WP90 pair, while EGM's effMC is 0.85–0.95 in the relevant cells. <strong>So only data/MC ratios are compared.</strong> The test asks whether the data/MC ratio of our efficiency agrees with the EGM SF evaluated for our own electrons. If it does, the EGM SF can serve as the SF of our WP90 selection.</p>
+  </div>
+  <details>
+    <summary>The EGM table as used here</summary>
+    <div>
+      <dl class="defs">
+        <dt>Source</dt><dd><code>skim/sf/EGM/electron.json.gz</code>, correction <code>Electron-ID-SF</code> version 3, year <code>2025Prompt</code>, md5 <code>ede29ef89fa15ac54c6f25f4edb0c0d6</code></dd>
+        <dt>Flattened by</dt><dd><code>skim/sf/extract_electron_sf.py</code> into <code>skim/sf/electron_sf_2025Prompt_wp90iso.csv</code> (provenance in its header)</dd>
+        <dt>Cells</dt><dd>signed η<sub>SC</sub> edges ±2.0, ±1.566, ±1.444, ±0.8, 0 (the outer cells are open-ended) × p<sub>T</sub> edges 10, 20, 35, 50, 70, 100, 200, 300, 500, 700, 1000 GeV</dd>
+        <dt>Error</dt><dd><code>sfup/sfdown</code> = sf ± √(stat² + syst²), checked to 10<sup>−16</sup> per cell, although the file's description says "syst". Used here as err = (sfup − sfdown)/2.</dd>
+        <dt>Crack</dt><dd>The 1.444 &lt; |η| &lt; 1.566 cells hold EGM's placeholder 1. Our selection excludes the crack anyway.</dd>
+        <dt>Example</dt><dd>η &lt; −2.0, 20 &lt; p<sub>T</sub> &lt; 35: SF 0.958 (effData 0.818, effMC 0.854)</dd>
+      </dl>
+    </div>
+  </details>
+</section>
+
+<!-- 2 -->
+<section class="body" id="samples">
+  <h2><span class="n">2</span>Samples and the separate skim</h2>
+  <div class="prose">
+    <p>The study runs in its own stream:</p>
+    <ul>
+      <li><code>correction/idiso_sf_skim.C</code> skims.</li>
+      <li><code>correction/idiso_sf_inputs.C</code> builds the Combine inputs.</li>
+      <li>The fork's <code>test/run_pO_idiso_sf.sh</code> runs the fits.</li>
+      <li><code>correction/idiso_sf_plots.C</code> draws the plots.</li>
+    </ul>
+    <p>Every cut, bin and histogram name is defined once in <code>correction/idiso_sf_common.h</code>. <code>skim/skim.C</code>, the nominal Combine inputs and the nominal fit are not touched.</p>
+    <p>MC is the Aug-20 embedded production (POWHEG + Angantyr). Each MC event is filled with its generator weight, and each sample is scaled by <span class="m"><i>k<sub>s</sub></i> = <i>A</i>·σ·<i>L</i> / <i>N</i><sub>gen</sub></span> with <span class="m"><i>A</i></span> = 16 and <span class="m"><i>L</i></span> = 46.5 nb<sup>−1</sup> (<code>skim/mc_norm.h</code>). Every template is therefore absolute, with no area normalization. No lepton SFs and no LHE variations enter. Data are filled with weight 1.</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Sample</th><th>File</th><th class="num">Events</th><th class="num">k<sub>s</sub></th></tr></thead>
+    <tbody>
+      <tr><td>Data</td><td><code>July_29_DATA.root</code></td><td class="num">3,890,722</td><td class="num">1</td></tr>
+      <tr><td>W⁺→eν</td><td><code>Aug_20_MC_Wp_ele</code></td><td class="num">1,199,640</td><td class="num">6.20×10⁻⁷</td></tr>
+      <tr><td>W⁻→eν</td><td><code>Aug_20_MC_Wm_ele</code></td><td class="num">1,195,640</td><td class="num">6.22×10⁻⁷</td></tr>
+      <tr><td>DY→ee, m &gt; 50</td><td><code>Aug_20_MC_DY_ele_Z</code></td><td class="num">1,159,701</td><td class="num">6.42×10⁻⁷</td></tr>
+      <tr><td>DY→ττ</td><td><code>Aug_20_MC_DY_tau_Z</code></td><td class="num">1,193,654</td><td class="num">6.24×10⁻⁷</td></tr>
+      <tr><td>W⁺→τν</td><td><code>Aug_20_MC_Wp_tau</code></td><td class="num">1,179,680</td><td class="num">6.31×10⁻⁷</td></tr>
+      <tr><td>W⁻→τν</td><td><code>Aug_20_MC_Wm_tau</code></td><td class="num">1,197,634</td><td class="num">6.21×10⁻⁷</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- 3 -->
+<section class="body" id="selection">
+  <h2><span class="n">3</span>Event and electron selection</h2>
+  <div class="prose">
+    <p>Per event, in this order (<code>idiso_sf_skim.C</code>):</p>
+    <ol>
+      <li><strong>(a) Event filter</strong>: <code>pprimaryVertexFilter</code> (the analysis' <code>PassEventSelection_pO</code>) and |v<sub>z</sub>| &lt; 15 cm.</li>
+      <li><strong>(b) Trigger</strong>: <code>HLT_OxyL1SingleEG10_v1</code> fired. The Z tag-and-probe selection of <a href="#ztnp">section 7</a> is taken from these events.</li>
+      <li><strong>(c) Leading electron</strong>: the highest-p<sub>T</sub> electron with p<sub>T</sub> &gt; 25 GeV, |η<sub>SC</sub>| &lt; 2.4 and outside the ECAL crack 1.4442 &lt; |η<sub>SC</sub>| &lt; 1.566 (supercluster η). There is no ID and no isolation requirement at this step.</li>
+      <li><strong>(d) DY veto</strong>: the event is rejected if any opposite-sign pair of veto legs has 60 ≤ m<sub>ee</sub> ≤ 120 GeV. A veto leg is any electron with p<sub>T</sub> ≥ 10, |η<sub>SC</sub>| &lt; 2.4, outside the crack, and relIso &lt; 0.3, with no ID. Because the veto ignores the tested ID, it cannot bias pass against fail, and every Z tag-and-probe leg is also a veto leg, so no event enters both the W and the Z channels.</li>
+      <li><strong>(e) Trigger match</strong>: the leading electron lies within ΔR &lt; 0.4 of an <code>HLT_OxyL1SingleEG10</code> trigger object.</li>
+      <li><strong>(f) Isolation split</strong> of the leading electron:
+        <ul>
+          <li>relIso &lt; 0.3: the <strong>total</strong>, the efficiency denominator. It is split into <strong>pass</strong> (<code>eleMVAIdWP90 &amp;&amp; eleMVAIsoWP90</code>) and <strong>fail</strong> (everything else).</li>
+          <li>0.3 ≤ relIso &lt; 1.0: the <strong>QCD sideband</strong>, split at 0.6. It is kept twice: <code>sball</code> with any ID and <code>sbid</code> with <code>eleMVAIdWP90</code> required.</li>
+          <li>relIso ≥ 1.0: dropped.</li>
+        </ul>
+      </li>
+    </ol>
+    <p>relIso is the analysis' Δβ-corrected PF isolation, <span class="m">(ch + max(0, neu + pho − 0.5 PU)) / <i>p</i><sub>T</sub></span> (<code>pOSkim::RelIsoPF</code>).</p>
+    <p>For each category the skim fills three quantities:</p>
+    <ul>
+      <li>PF MET, from all PF candidates;</li>
+      <li><span class="m"><i>m</i><sub>T</sub> = √(2 <i>p</i><sub>T</sub> MET (1 − cos Δφ))</span>;</li>
+      <li>the lepton p<sub>T</sub>, only for m<sub>T</sub> &gt; 40 GeV. This is the fitted variable.</li>
+    </ul>
+    <p>Everything is split by the electron's charge and by the coarse bin of three schemes. The schemes use EGM's own cell edges, folded in ±η and merged in p<sub>T</sub>:</p>
+    <ul>
+      <li><code>incl</code>: one bin;</li>
+      <li><code>abseta</code>: |η<sub>SC</sub>| in [0, 0.8), [0.8, 1.4442), [1.566, 2.0), [2.0, 2.4];</li>
+      <li><code>pt</code>: p<sub>T</sub> in [25, 35), [35, 50), [50, ∞) GeV.</li>
+    </ul>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Step</th><th class="num">Data</th><th class="num">W⁺→eν MC</th><th class="num">DY→ee MC</th></tr></thead>
+    <tbody>
+      <tr><td>all events</td><td class="num">3,890,722</td><td class="num">1,199,640</td><td class="num">1,159,701</td></tr>
+      <tr><td>(a) filter + |v<sub>z</sub>| &lt; 15</td><td class="num">3,882,947</td><td class="num">1,196,839</td><td class="num">1,157,044</td></tr>
+      <tr><td>(b) EG10 fired</td><td class="num">2,906,551</td><td class="num">901,642</td><td class="num">1,041,324</td></tr>
+      <tr><td>(c) leading e in acceptance</td><td class="num">352,553</td><td class="num">529,261</td><td class="num">757,359</td></tr>
+      <tr><td>(d) DY veto</td><td class="num">352,051</td><td class="num">528,908</td><td class="num">326,647</td></tr>
+      <tr><td>(e) trigger-matched</td><td class="num">324,083</td><td class="num">527,543</td><td class="num">320,808</td></tr>
+      <tr><td>(f) relIso &lt; 1.0</td><td class="num">294,984</td><td class="num">527,300</td><td class="num">320,658</td></tr>
+      <tr class="sep"><td>total (relIso &lt; 0.3)</td><td class="num">139,751</td><td class="num">522,932</td><td class="num">316,798</td></tr>
+      <tr><td>&nbsp;&nbsp;pass</td><td class="num">6,059</td><td class="num">421,119</td><td class="num">254,989</td></tr>
+      <tr><td>&nbsp;&nbsp;fail</td><td class="num">133,692</td><td class="num">101,813</td><td class="num">61,809</td></tr>
+      <tr><td>sideband (0.3–1.0)</td><td class="num">155,233</td><td class="num">4,368</td><td class="num">3,860</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Raw event counts, before the m<sub>T</sub> &gt; 40 cut of the fit. In data only 4.3% of the total passes, against 80.5% in W MC. The data total is dominated by QCD fakes, which nearly always fail WP90 ID + iso.</p>
+  <div class="prose">
+    <h3>Why the total carries relIso &lt; 0.3</h3>
+    <p>The QCD templates need an isolation sideband that is not itself part of the measurement. With relIso &lt; 0.3 in the denominator, 0.3–1.0 is free for them. The cost is small: 99.29% of gen-matched prompt W electrons have relIso &lt; 0.3, and 99.93% of passing electrons sit below 0.3 anyway. Our SF therefore differs from EGM's "relative to a reconstructed electron" definition only by SF(relIso &lt; 0.3), which is assumed to be 1.</p>
+    <h3>Why the pass-like sideband requires only the WP90 ID</h3>
+    <p>An electron with relIso ≥ 0.3 essentially never passes the WP90 isolation MVA, so requiring it would empty the sideband. Requiring the ID half keeps the sideband's fake composition closer to that of the pass category.</p>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="body" id="defs">
+  <h2><span class="n">4</span>Efficiency and SF definitions</h2>
+  <div class="prose">
+    <h3>W sample</h3>
+    <p>The population is the leading, trigger-matched electron of W candidates with m<sub>T</sub> &gt; 40 GeV, the signal region of the nominal <code>leppt_mt40</code> fit, in data and MC alike.</p>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ε</i> = <span class="frac"><span><i>N</i><sub>W</sub>(pass)</span><span><i>N</i><sub>W</sub>(pass) + <i>N</i><sub>W</sub>(fail)</span></span></div><span class="no">(1)</span></div></div>
+  <div class="prose">
+    <p>In MC, ε<sub>MC</sub> = S<sub>pass</sub> / (S<sub>pass</sub> + S<sub>fail</sub>). Here S is the integral over the fitted bins of the W→eν signal template: the W⁺ and W⁻ samples, k<sub>s</sub>-weighted, in the reconstructed-charge channel.</p>
+    <p>In data the fail category is about 98% QCD, so the W yields cannot be counted. They come from the fit, <span class="m"><i>N</i> = <i>r</i> × <i>S</i></span>, with <span class="m"><i>r</i></span> the fitted W signal strength of that channel. Then:</p>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body">SF = <span class="frac"><span><i>ε</i><sub>data</sub></span><span><i>ε</i><sub>MC</sub></span></span> = <span class="frac"><span><i>r</i><sub>pass</sub></span><span><i>ε</i><sub>MC</sub> <i>r</i><sub>pass</sub> + (1 − <i>ε</i><sub>MC</sub>) <i>r</i><sub>fail</sub></span></span> = <span class="frac"><span>1</span><span><i>ε</i><sub>MC</sub> + (1 − <i>ε</i><sub>MC</sub>) <i>r</i><sub>fail</sub>/<i>r</i><sub>pass</sub></span></span></div><span class="no">(2)</span></div></div>
+  <div class="prose">
+    <p>Three consequences of eq. (2) matter for everything that follows:</p>
+    <ul>
+      <li><strong>The SF depends only on r<sub>fail</sub>/r<sub>pass</sub>.</strong></li>
+      <li><strong>r<sub>fail</sub> = 0 gives SF = 1/ε<sub>MC</sub></strong>, which is 1.24 inclusive and 1.31 at p<sub>T</sub> 25–35. This is the largest SF the fit can return.</li>
+      <li><strong>r<sub>fail</sub> = 10</strong>, the upper edge of the allowed range, gives SF ≈ 0.41 inclusive with r<sub>pass</sub> ≈ 1.2. This is the smallest. The fail W is only 1 − ε<sub>MC</sub> ≈ 19% of all W electrons, so near r = 1 the SF uncertainty is about (1 − ε<sub>MC</sub>) × σ(r<sub>fail</sub>).</li>
+    </ul>
+    <p>Charge-combined and scheme-combined values sum N and S over the included channels: <span class="m"><i>ε</i><sub>data</sub> = Σ<sub>c</sub> <i>r</i><sub>pass,c</sub><i>S</i><sub>pass,c</sub> / Σ<sub>c</sub> (<i>r</i><sub>pass,c</sub><i>S</i><sub>pass,c</sub> + <i>r</i><sub>fail,c</sub><i>S</i><sub>fail,c</sub>)</span>.</p>
+    <h3>Z tag-and-probe</h3>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ε</i> = <span class="frac"><span>2 <i>N</i><sub>PP</sub></span><span>2 <i>N</i><sub>PP</sub> + <i>N</i><sub>PF</sub></span></span></div><span class="no">(3)</span></div></div>
+  <div class="prose">
+    <p>N<sub>PP</sub> (N<sub>PF</sub>) is the DY yield in the both-pass (one-fails) category. A PP event holds two passing probes and a PF event one failing probe (<a href="#ztnp">section 7</a>). In MC, ε<sub>MC</sub> = 2S<sub>PP</sub>/(2S<sub>PP</sub> + S<sub>PF</sub>) from the DY→ee templates. In data, N = r × S from the Z fit.</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Electrons</th><th class="num">ε<sub>MC</sub> (fit templates)</th><th class="num">ε<sub>MC</sub> gen-matched</th><th class="num">ε(relIso &lt; 0.3), gen-matched</th></tr></thead>
+    <tbody>
+      <tr><td>W inclusive (W⁺ / W⁻)</td><td class="num">0.806 (0.806 / 0.807)</td><td class="num">0.820</td><td class="num">0.993</td></tr>
+      <tr><td>W |η<sub>SC</sub>| 0–0.8</td><td class="num">0.838</td><td class="num">0.853</td><td class="num">0.992</td></tr>
+      <tr><td>W |η<sub>SC</sub>| 0.8–1.4442</td><td class="num">0.764</td><td class="num">0.777</td><td class="num">0.993</td></tr>
+      <tr><td>W |η<sub>SC</sub>| 1.566–2.0</td><td class="num">0.830</td><td class="num">0.843</td><td class="num">0.992</td></tr>
+      <tr><td>W |η<sub>SC</sub>| 2.0–2.4</td><td class="num">0.784</td><td class="num">0.796</td><td class="num">0.996</td></tr>
+      <tr><td>W p<sub>T</sub> 25–35</td><td class="num">0.761</td><td class="num">0.774</td><td class="num">0.988</td></tr>
+      <tr><td>W p<sub>T</sub> 35–50</td><td class="num">0.829</td><td class="num">0.842</td><td class="num">0.996</td></tr>
+      <tr><td>W p<sub>T</sub> ≥ 50</td><td class="num">0.883</td><td class="num">0.900</td><td class="num">0.998</td></tr>
+      <tr class="sep"><td>Z probes (DY MC)</td><td class="num">0.826</td><td class="num">–</td><td class="num">–</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">The templates include the 2.1% of W-MC electrons that do not match a prompt W electron, exactly as the nominal templates do. The fit and ε<sub>MC</sub> use the same templates, so the definition is consistent. The gen-matched columns come from the <code>[EPS]</code> lines of the inputs log.</p>
+</section>
+
+<!-- 5 -->
+<section class="body" id="egm">
+  <h2><span class="n">5</span>The EGM prediction for our electrons</h2>
+  <div class="prose">
+    <p>The hypothesis under test is that, in every EGM cell c, our data/MC efficiency ratio equals SF<sub>EGM</sub>(c). Applying an SF means weighting every passing MC electron by the SF of its cell. The predicted data efficiency in a coarse bin is then <span class="m">Σ<sub><i>i</i></sub> <i>p<sub>i</sub> w<sub>i</sub></i> SF(<i>c<sub>i</sub></i>) / Σ<sub><i>i</i></sub> <i>w<sub>i</sub></i></span>, where p<sub>i</sub> = 1 for a passing electron and w<sub>i</sub> is its MC weight. Dividing by ε<sub>MC</sub> gives:</p>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body">SF<sub>pred</sub> = <span class="frac"><span>Σ<sub>pass</sub> <i>w<sub>i</sub></i> SF<sub>EGM</sub>(<i>c<sub>i</sub></i>)</span><span>Σ<sub>pass</sub> <i>w<sub>i</sub></i></span></span> = ⟨SF<sub>EGM</sub>⟩<sub>passing MC electrons</sub></div><span class="no">(4)</span></div></div>
+  <div class="prose">
+    <p>This is the number our measured SF should equal if the pp SF describes our selection. The skim fills EGM-cell maps (signed η<sub>SC</sub> × p<sub>T</sub>) of passing electrons to compute it:</p>
+    <ul>
+      <li><strong>Z:</strong> passing opposite-sign probes in DY MC.</li>
+      <li><strong>W:</strong> passing electrons of the total category with m<sub>T</sub> &gt; 40 in W⁺ and W⁻ MC, k<sub>s</sub>-weighted.</li>
+    </ul>
+    <p>Its error is the per-cell total error averaged with the same weights. The average is linear, which assumes full correlation between cells and is conservative. EGM's crack edge is 1.444 and ours is 1.4442; the 0.0002-wide slice maps to EGM's [0.8, 1.444) cell.</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Electrons</th><th class="num">SF<sub>EGM</sub> prediction</th></tr></thead>
+    <tbody>
+      <tr><td>Z tag-and-probe probes</td><td class="num">0.956 ± 0.009</td></tr>
+      <tr class="sep"><td>W inclusive (also the scheme-combined rows)</td><td class="num">0.954 ± 0.009</td></tr>
+      <tr><td>W |η<sub>SC</sub>| 0–0.8 / 0.8–1.4442 / 1.566–2.0 / 2.0–2.4</td><td class="num">0.960 / 0.952 / 0.942 / 0.960</td></tr>
+      <tr><td>W p<sub>T</sub> 25–35 / 35–50 / ≥ 50 GeV</td><td class="num">0.949 / 0.958 / 0.956</td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">The prediction is flat (0.94–0.96) across our bins and nearly equal for Z probes and W electrons. The different kinematics of the Z sample therefore do not limit the comparison at our precision.</p>
+</section>
+
+<!-- 6 -->
+<section class="body" id="wfit">
+  <h2><span class="n">6</span>Measurement 1: the W sample with the in-fit ABCD</h2>
+  <div class="prose">
+    <p>The idea, built the same way as the MB-based trigger efficiency (<code>correction/trig_eff_mb.C</code>), is to measure the efficiency on the W electrons themselves by fitting the W yield in pass and fail channels. The electron QCD is too large to count, so the W yields come from a fit whose QCD is modelled exactly as in the nominal <code>leppt_mt40</code> fit (<code>QCD_MODE=abcd</code>). The QCD normalization is determined inside the likelihood, never assumed from a prefit number.</p>
+    <h3>Channels and regions</h3>
+    <p>Each channel is one charge (W⁺, W⁻) × category (pass, fail) × coarse bin k, named <code>&lt;C&gt;_&lt;cat&gt;_k&lt;k&gt;</code>. That gives 4 signal regions for <code>incl</code>, 16 for <code>abseta</code> and 12 for <code>pt</code>. Each signal region brings three one-bin counting control regions, and one Z channel pins the DY. The cards therefore have 17, 65 and 49 channels.</p>
+  </div>
+  <figure>
+    <div class="dg">
+      <svg viewBox="0 0 660 344" role="img" aria-labelledby="abcd-t abcd-d">
+        <title id="abcd-t">In-fit ABCD regions of one W channel</title>
+        <desc id="abcd-d">Schematic of the plane of transverse mass (horizontal) and relative isolation (vertical). Signal region A and control region B are below relIso 0.3, at mT above 40 and below 30. Control regions C and D are in the sideband 0.3 to 1.0, at mT above 40 and below 30. The band from 30 to 40 GeV is a buffer.</desc>
+        <defs>
+          <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="8" class="d-hatch"/>
+          </pattern>
+        </defs>
+        <rect x="80" y="30" width="170" height="190" class="d-sb"/>
+        <rect x="310" y="30" width="320" height="190" class="d-sb"/>
+        <rect x="80" y="220" width="170" height="80" class="d-cr"/>
+        <rect x="310" y="220" width="320" height="80" class="d-sr"/>
+        <rect x="250" y="30" width="60" height="270" fill="url(#hatch)" stroke="none"/>
+        <line x1="80" y1="139" x2="250" y2="139" class="d-split"/>
+        <line x1="310" y1="139" x2="630" y2="139" class="d-split"/>
+        <text x="280" y="22" text-anchor="middle" class="d-m">buffer, not used</text>
+        <text x="165" y="68" text-anchor="middle" class="d-b">D · CRD</text>
+        <text x="165" y="87" text-anchor="middle" class="d-t">sideband, one count</text>
+        <text x="455" y="68" text-anchor="middle" class="d-b">C · CRC</text>
+        <text x="455" y="87" text-anchor="middle" class="d-t">sideband, one count</text>
+        <text x="455" y="106" text-anchor="middle" class="d-t">its p<tspan dy="3" font-size="10">T</tspan><tspan dy="-3"> shape = SR QCD template</tspan></text>
+        <text x="622" y="130" text-anchor="end" class="d-m">0.6–1.0</text>
+        <text x="622" y="156" text-anchor="end" class="d-m">0.3–0.6</text>
+        <text x="165" y="247" text-anchor="middle" class="d-b">B · CRB</text>
+        <text x="165" y="266" text-anchor="middle" class="d-t">same category</text>
+        <text x="165" y="285" text-anchor="middle" class="d-t">one count</text>
+        <text x="470" y="247" text-anchor="middle" class="d-b">A · signal region</text>
+        <text x="470" y="266" text-anchor="middle" class="d-t">the channel's category (pass or fail)</text>
+        <text x="470" y="285" text-anchor="middle" class="d-t">fitted in lepton p<tspan dy="3" font-size="10">T</tspan><tspan dy="-3">, 2 GeV bins</tspan></text>
+        <path d="M80 30 V300 H630" class="d-axis"/>
+        <line x1="74" y1="300" x2="80" y2="300" class="d-axis"/><text x="70" y="304" text-anchor="end" class="d-m">0</text>
+        <line x1="74" y1="220" x2="80" y2="220" class="d-axis"/><text x="70" y="224" text-anchor="end" class="d-m">0.3</text>
+        <line x1="74" y1="139" x2="80" y2="139" class="d-axis"/><text x="70" y="143" text-anchor="end" class="d-m">0.6</text>
+        <line x1="74" y1="30" x2="80" y2="30" class="d-axis"/><text x="70" y="34" text-anchor="end" class="d-m">1.0</text>
+        <text x="22" y="165" text-anchor="middle" class="d-t" transform="rotate(-90 22 165)">relIso</text>
+        <line x1="80" y1="300" x2="80" y2="306" class="d-axis"/><text x="80" y="320" text-anchor="middle" class="d-m">0</text>
+        <line x1="250" y1="300" x2="250" y2="306" class="d-axis"/><text x="250" y="320" text-anchor="middle" class="d-m">30</text>
+        <line x1="310" y1="300" x2="310" y2="306" class="d-axis"/><text x="310" y="320" text-anchor="middle" class="d-m">40</text>
+        <line x1="630" y1="300" x2="630" y2="306" class="d-axis"/><text x="630" y="320" text-anchor="middle" class="d-m">200+</text>
+        <text x="355" y="340" text-anchor="middle" class="d-t">m<tspan dy="3" font-size="10">T</tspan><tspan dy="-3"> (GeV), schematic scale</tspan></text>
+      </svg>
+    </div>
+    <figcaption>
+      <span><span class="cap-t">The (m<sub>T</sub> × relIso) plane of one W channel.</span> A and B use the channel's own category. C and D use the relIso sideband, taken with <code>eleMVAIdWP90</code> for pass channels (<code>sbid</code>) and with any ID for fail channels (<code>sball</code>). The sideband window is 0.3–1.0 (nominal), 0.3–0.6 (<code>sblo</code>) or 0.6–1.0 (<code>sbhi</code>). Three schemes × three windows give the 9 W fits. m<sub>T</sub> is an ABCD axis, so it cannot also be the fitted variable. MET is strongly correlated with m<sub>T</sub>, so the lepton p<sub>T</sub> is fitted, as in the nominal fit.</span>
+    </figcaption>
+  </figure>
+  <div class="prose">
+    <h3>Prefit QCD inputs (idiso_sf_inputs.C)</h3>
+    <ul>
+      <li>B<sub>0</sub>, C<sub>0</sub>, D<sub>0</sub> = data − Σ k<sub>s</sub>·EWK MC in each region, at r = 1. A value ≤ 0 would be floored to 10<sup>−3</sup>; this never happened.</li>
+      <li>A<sub>0</sub> = B<sub>0</sub>C<sub>0</sub>/D<sub>0</sub> is the prefit signal-region QCD.</li>
+      <li>The SR QCD template is the sideband p<sub>T</sub> spectrum at m<sub>T</sub> &gt; 40 (data − EWK MC per bin, negative bins set to 0), normalized to A<sub>0</sub> over the fitted bins.</li>
+      <li>The CR templates are one-bin histograms holding these counts. CRB also holds its own W, W→τν, DY and DY→ττ MC counts.</li>
+    </ul>
+    <h3>The likelihood</h3>
+    <p>For channel R and bin i of its signal region, with S = W→eν, T = W→τν, Z = DY→ee, Z<sup>τ</sup> = DY→ττ, Q = the QCD template and E = the EWK sum:</p>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ν</i><sub>SR,<i>i</i></sub> = <i>r</i><sub>R</sub>(<i>S<sub>i</sub></i> + <i>T<sub>i</sub></i>) + <i>r</i><sub>Z</sub>(<i>Z<sub>i</sub></i> + <i>Z</i><sup>τ</sup><sub><i>i</i></sub>) + <i>M</i><sub>R</sub> <i>Q<sub>i</sub></i>, &nbsp;&nbsp; <i>M</i><sub>R</sub> = <i>κ</i><sup><i>θ</i></sup> <span class="frac"><span><i>s</i><sub>B</sub> <i>s</i><sub>C</sub></span><span><i>s</i><sub>D</sub></span></span></div><span class="no">(5)</span></div></div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ν</i><sub>B</sub> = <i>s</i><sub>B</sub><i>B</i><sub>0</sub> + <i>r</i><sub>R</sub>(<i>S</i> + <i>T</i>)<sub>B</sub> + <i>r</i><sub>Z</sub>(<i>Z</i> + <i>Z</i><sup>τ</sup>)<sub>B</sub>, &nbsp; <i>ν</i><sub>C</sub> = <i>s</i><sub>C</sub><i>C</i><sub>0</sub> + <i>E</i><sub>C</sub>, &nbsp; <i>ν</i><sub>D</sub> = <i>s</i><sub>D</sub><i>D</i><sub>0</sub> + <i>E</i><sub>D</sub></div><span class="no">(6)</span></div></div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ν</i><sub>Z<sub>PP</sub>,<i>j</i></sub> = <i>r</i><sub>Z</sub>(<i>Z<sub>j</sub></i> + <i>Z</i><sup>τ</sup><sub><i>j</i></sub>) + <i>W<sub>j</sub></i> + <i>W</i><sup>τ</sup><sub><i>j</i></sub> + <i>b</i> · <i>N</i><sub>bkg</sub>/60, &nbsp;&nbsp; <i>L</i> = ∏<sub>channels, bins</sub> Pois(<i>n</i> | <i>ν</i>) · ∏<sub><i>θ</i></sub> <i>G</i>(<i>θ</i>)</div><span class="no">(7)</span></div></div>
+  <div class="tw"><table>
+    <thead><tr><th>Parameter</th><th>Range / constraint</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>r_&lt;C&gt;_&lt;cat&gt;_k&lt;k&gt;</code></td><td>free, [0, 10]</td><td>The POIs. They scale W→eν and W→τν in the signal region and in its CRB, which makes the EWK subtraction of the ABCD float with the W.</td></tr>
+      <tr><td><code>r_Z</code></td><td>free, [0, 10]</td><td>DY scale in every channel, pinned by the Z<sub>PP</sub> peak.</td></tr>
+      <tr><td><code>qcd_s{B,C,D}_ele_R</code></td><td>free, [0, 10]</td><td>QCD scales of the three control regions of channel R.</td></tr>
+      <tr><td><code>qcd_abcd_ele_R</code></td><td>formula (@0*@1/@2)</td><td>s<sub>B</sub>s<sub>C</sub>/s<sub>D</sub> on the signal-region QCD. The prefit is exactly the ABCD prediction, and nothing of its normalization is assumed.</td></tr>
+      <tr><td><code>qcd_rate_ele_&lt;C&gt;_&lt;cat&gt;</code></td><td>lnN, κ = 1.15</td><td>Residual ABCD non-closure on the SR QCD only (the nominal electron value). One per charge × category, shared by all coarse bins.</td></tr>
+      <tr><td><code>bkg_norm_ele_Z_PP</code></td><td>free, [0, 100]</td><td>Flat background under the Z peak.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose">
+    <p>Some pieces are frozen at MC: EWK in CRC and CRD (at most 2.5% there), and W and W→τν under the Z peak. There are no luminosity, theory or MC-statistics nuisances, because a common normalization cancels in ε and this is a cross-check. In Combine the card uses the rateParam syntax of the nominal abcd mode. The model is defined by multiSignalModel maps:</p>
+  </div>
+  <pre><code>map=ele_Wp_pass_k0(_CRB)?/(signal|wtau)$:r_Wp_pass_k0[1,0,10]     (one line per channel)
+map=.*/(z|ztau|zsig)$:r_Z[1,0,10]
+
+text2workspace.py datacard.txt -P HiggsAnalysis.CombinedLimit.PhysicsModel:multiSignalModel --PO map=...
+combine -M FitDiagnostics workspace.root --saveShapes --saveWithUncertainties --skipBOnlyFit \
+        --cminDefaultMinimizerStrategy 0
+combine -M FitDiagnostics workspace.root --skipBOnlyFit -t -1 --setParameters r_...=1,...   # Asimov</code></pre>
+
+  <div class="prose">
+    <h3>Why the fail W cannot be extracted</h3>
+    <p>Prefit composition of the inclusive fit, sideband 0.3–1.0 (<code>[ABCD]</code> lines of the inputs log):</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Channel</th><th class="num">SR data</th><th class="num">W MC (S+T)</th><th class="num">DY MC</th><th class="num">A<sub>0</sub> (QCD)</th><th class="num">W / A<sub>0</sub></th><th class="num">(data − EWK) / A<sub>0</sub></th></tr></thead>
+    <tbody>
+      <tr><td>W⁺ pass</td><td class="num">2,307</td><td class="num">1,636</td><td class="num">33</td><td class="num">407</td><td class="num">4.0</td><td class="num">1.57</td></tr>
+      <tr><td>W⁺ fail</td><td class="num">23,126</td><td class="num">414</td><td class="num">11</td><td class="num">24,434</td><td class="num">0.017</td><td class="num">0.93</td></tr>
+      <tr><td>W⁻ pass</td><td class="num">1,803</td><td class="num">1,315</td><td class="num">31</td><td class="num">432</td><td class="num">3.0</td><td class="num">1.06</td></tr>
+      <tr><td>W⁻ fail</td><td class="num">22,623</td><td class="num">335</td><td class="num">11</td><td class="num">24,090</td><td class="num">0.014</td><td class="num">0.93</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose">
+    <p>Four facts, each sufficient on its own:</p>
+    <ol>
+      <li><strong>Size.</strong> The fail W is 1.4–1.8% of the fail QCD inclusively, and 0.4–2.7% across all bins and windows.</li>
+      <li><strong>Counting precision.</strong> The W⁺ fail control regions hold B = 31,604, C = 27,923 and D = 36,053 events. The Poisson error of A<sub>0</sub> = B·C/D alone is √(1/B + 1/C + 1/D) = 1.0%, which is 240 events or 58% of the fail W. The residual lnN (15%) allows ±3,700 events. The counts cannot fix the W; only the p<sub>T</sub> shape can.</li>
+      <li><strong>Closure.</strong> The prefit (data − EWK)/A<sub>0</sub> in the fail channels runs from 0.64 to 1.30 across bins and windows. The ABCD relation misses by thousands of events, 10–100 times the W.</li>
+      <li><strong>Shape.</strong> The sideband QCD p<sub>T</sub> spectrum is much softer than that of the fail signal region: (data − EWK)/QCD rises from 0.6 at 25 GeV to 2.5–3 above 80 GeV (<a href="#fig-shape">figure 4</a>). This is the known p<sub>T</sub> rise of the electron fake factor, measured at 4.4–4.8σ in <code>qcd_abcd.C</code>. The W template peaks at 35–45 GeV, where the ratio crosses 1, so the W yield and a QCD shape correction are degenerate.</li>
+    </ol>
+    <p><strong>Expected precision.</strong> In the Asimov fit (every parameter at prefit), σ(r<sub>fail</sub>) = 0.92 (W⁺) and 1.06 (W⁻) inclusively, against σ(r<sub>pass</sub>) = 0.039 and 0.043. Propagated through eq. (2), the expected SF error is ±0.135 inclusive, ±0.12 to ±0.22 per |η| bin, and ±0.17 to ±0.67 per p<sub>T</sub> bin. The p<sub>T</sub> scheme is worst because slicing in the fitted variable removes the shape information that separates W from QCD. Even with a perfect model, the W route measures the SF to about 13%, five times worse than the Z tag-and-probe.</p>
+    <p><strong>On data the model does not describe the fail region.</strong> The W⁺ fail postfit has χ²/ndf = 46.4, with pulls up to 20σ per bin. The fit then uses r<sub>fail</sub> as a shape knob and drives it to whichever limit patches the mismatch best:</p>
+    <ul>
+      <li>In the 0.3–1.0 and 0.3–0.6 windows it goes to r<sub>fail</sub> = 0 in most bins, giving SF = 1/ε<sub>MC</sub>.</li>
+      <li>In the 0.6–1.0 window the template is softer still, and r<sub>fail</sub> = 10, giving SF ≈ 0.41.</li>
+      <li>Where r<sub>fail</sub> stays inside its range (5 of 24 per-bin results), it is 2–9 times the MC-predicted fail W.</li>
+    </ul>
+    <p>Other symptoms of the same failure:</p>
+    <ul>
+      <li>The same data give 0.75 (|η| bins combined) or 1.24 (inclusive, or p<sub>T</sub> bins combined), depending only on the binning.</li>
+      <li>In the inclusive fits the pass-channel QCD is pulled by θ = −1.0 to −3.2σ, with multipliers of 0.52–0.82.</li>
+      <li>The W channels drag the DY scale: r<sub>Z</sub> = 1.10–1.36 in eight fits and 2.27 in the |η|, 0.6–1.0 fit. There the fit predicts 419 Z<sub>PP</sub> events against 201 observed, while the Z channel alone gives r<sub>ZPP</sub> = 1.085.</li>
+    </ul>
+    <p><strong>What does work:</strong> r<sub>pass</sub> = 1.14–1.20 inclusive is the same W normalization excess as in the nominal fit (effective r ≈ 1.21), and the pass postfit is good (W⁺ χ²/ndf = 1.04, p = 0.38).</p>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="body" id="ztnp">
+  <h2><span class="n">7</span>Measurement 2: the inclusive Z tag-and-probe</h2>
+  <div class="prose">
+    <h3>Selection (the same events, after steps (a) and (b))</h3>
+    <dl class="defs">
+      <dt>Leg</dt><dd>p<sub>T</sub> &gt; 25 GeV, |η<sub>SC</sub>| &lt; 2.4, outside the crack, relIso &lt; 0.3. This is the W total's electron without the trigger match.</dd>
+      <dt>Tag</dt><dd>A leg that passes <code>eleMVAIdWP90 &amp;&amp; eleMVAIsoWP90</code> and is matched to an EG10 trigger object (ΔR &lt; 0.4).</dd>
+      <dt>Pair</dt><dd>Among opposite-sign pairs of legs with 60 ≤ m<sub>ee</sub> ≤ 120 GeV and at least one tag, the one closest to 91.1876 GeV. There is one pair per event.</dd>
+      <dt>Category</dt><dd><strong>PP</strong> if both legs pass. <strong>PF</strong> if exactly one passes: that leg is the tag and the other is the failing probe. Two failing legs cannot occur, because a tag must pass.</dd>
+      <dt>Same sign</dt><dd>Pairs chosen the same way among same-sign legs. Used only as the background estimate of the cut-and-count cross-check.</dd>
+    </dl>
+    <p><strong>Why a PP event counts twice.</strong> A leg is a probe when its partner is a tag. When both legs of a PP event are trigger-matched, both are tags and both are passing probes. In a PF event the passing leg must be the tag, which leaves one failing probe. A PP event with only one matched leg really holds a single probe. Counting it twice shifts ε by about 0.1% in data and 0.4% in MC, and the exact per-pair count moves the SF by 0.3% (0.9595 against 0.9564 in the cut-and-count).</p>
+    <h3>The fit (its own likelihood, tag <code>ztnp</code>)</h3>
+    <p>There are two channels in m<sub>ee</sub>, with 60 bins of 1 GeV from 60 to 120:</p>
+  </div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ν</i><sub>PP,<i>j</i></sub> = <i>r</i><sub>ZPP</sub>(<i>Z</i> + <i>Z</i><sup>τ</sup>)<sub><i>j</i></sub> + (<i>W</i> + <i>W</i><sup>τ</sup>)<sub><i>j</i></sub> + <i>b</i><sub>PP</sub><i>N</i><sub>PP</sub><sup>bkg</sup>/60, &nbsp;&nbsp; same for PF with <i>r</i><sub>ZPF</sub>, <i>b</i><sub>PF</sub></div><span class="no">(8)</span></div></div>
+  <div class="prose">
+    <p>Z is the opposite-sign DY→ee MC template of that category. The flat background has prefit size N<sup>bkg</sup> = max(same-sign data count, 1), which is 1 for PP and 5 for PF, and its scale b floats in [0, 100]; r is in [0, 10]. W and W→τν are frozen at MC. The two channels share no parameter, so r<sub>ZPP</sub> and r<sub>ZPF</sub> are uncorrelated; the fit gives exactly 0.</p>
+    <p><strong>Why a separate fit.</strong> It was first built inside the W likelihood, with one r<sub>Z</sub> shared with the DY of the W channels. The W channels pulled it: r<sub>Z</sub> ran from 1.10 to 1.21 and SF<sub>Z</sub> from 0.96 to 1.01 across W variants whose Z channels are identical.</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th></th><th class="num">PP (both pass)</th><th class="num">PF (probe fails)</th></tr></thead>
+    <tbody>
+      <tr><td>data, opposite sign</td><td class="num">201</td><td class="num">109</td></tr>
+      <tr><td>data, same sign</td><td class="num">1</td><td class="num">5</td></tr>
+      <tr><td>DY→ee MC, prefit</td><td class="num">185.15</td><td class="num">78.12</td></tr>
+      <tr><td>W→eν / W→τν / DY→ττ MC</td><td class="num">0.007 / 0 / 0.12</td><td class="num">0.82 / 0.07 / 0.23</td></tr>
+      <tr class="sep"><td>fitted r</td><td class="num">1.085 ± 0.077</td><td class="num">1.352 ± 0.141</td></tr>
+      <tr><td>postfit DY yield</td><td class="num">200.9 (401.7 probes)</td><td class="num">105.6</td></tr>
+      <tr><td>postfit flat background</td><td class="num">0.0 (b = 0.00 ± 1.92)</td><td class="num">2.3 (b = 0.45 ± 0.87)</td></tr>
+      <tr><td>postfit χ²/ndf (p)</td><td class="num">0.90 (0.69)</td><td class="num">0.88 (0.73)</td></tr>
+    </tbody>
+  </table></div>
+  <div class="eqw"><div class="eq"><div class="body"><i>ε</i><sub>data</sub> = <span class="frac"><span>401.7</span><span>401.7 + 105.6</span></span> = 0.7918 ± 0.0208, &nbsp; <i>ε</i><sub>MC</sub> = <span class="frac"><span>370.3</span><span>370.3 + 78.1</span></span> = 0.8258, &nbsp; SF = 0.9588 ± 0.0251</div><span class="no">(9)</span></div></div>
+  <div class="prose">
+    <p>The expected error from the Asimov fit is ±0.0259, essentially the fitted one. Both r values above 1 reflect the DY MC being low overall, like r<sub>Z</sub> ≈ 1.12 in the nominal fit. The efficiency information is in their ratio, r<sub>ZPF</sub>/r<sub>ZPP</sub> = 1.25: relative to passing probes, data have 25% more failing probes than MC.</p>
+    <p><strong>Cross-checks</strong> (<code>[ZTNP]</code> lines of the inputs log):</p>
+    <ul>
+      <li>Cut-and-count with same-sign subtraction in data and in MC: ε<sub>data</sub> = 0.7937 ± 0.0204 and ε<sub>MC</sub> = 0.8299, giving SF = 0.9564 ± 0.0246.</li>
+      <li>Exact per-pair probe counting gives SF = 0.9595.</li>
+    </ul>
+    <p><strong>Against EGM:</strong> the prediction for the same probes is 0.9559 ± 0.0089, so the pull is (0.9588 − 0.9559)/√(0.0259² + 0.0089²) = <span class="k-z">+0.11</span>.</p>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="body" id="errors">
+  <h2><span class="n">8</span>How every error is obtained</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Quantity</th><th>Error</th><th>How it is computed</th></tr></thead>
+    <tbody>
+      <tr><td>r, s, θ, b</td><td>fit (Hesse)</td><td>Symmetric errors and correlations from the covariance matrix of the fit result (<code>fit_s</code> of FitDiagnostics). All 10 fits have status 0 and covQual 3, a full accurate matrix.</td></tr>
+      <tr><td>ε<sub>data</sub>, SF (fitted)</td><td>linear propagation</td><td><span class="m">σ²(ε) = Σ<sub><i>a,b</i></sub> <i>g<sub>a</sub> g<sub>b</sub> ρ<sub>ab</sub> σ<sub>a</sub> σ<sub>b</sub></i></span> over the r's involved, with <span class="m"><i>g<sub>a</sub></i> = ∂ε/∂<i>r<sub>a</sub></i> = +<i>S<sub>a</sub>N</i><sub>fail</sub>/<i>T</i>²</span> for a pass term and <span class="m">−<i>S<sub>a</sub>N</i><sub>pass</sub>/<i>T</i>²</span> for a fail term, where <span class="m"><i>T</i> = <i>N</i><sub>pass</sub> + <i>N</i><sub>fail</sub></span>. Then σ(SF) = σ(ε)/ε<sub>MC</sub>.</td></tr>
+      <tr><td>SF (expected)</td><td>Asimov fit</td><td>The prefit prediction replaces the data (every r and s at 1, θ at 0). The Asimov fit is refitted and propagated the same way. This is the precision the measurement would have if the model described the data.</td></tr>
+      <tr><td>ε<sub>MC</sub></td><td>not included</td><td>MC statistics are neglected: the MC is about 100 times the data (0.52 M W⁺ MC events in the total alone).</td></tr>
+      <tr><td>SF<sub>EGM</sub> prediction</td><td>weighted average</td><td>Per cell σ = (sfup − sfdown)/2 = √(stat² + syst²), averaged linearly with the passing-MC weights (full correlation).</td></tr>
+      <tr><td>pull vs EGM</td><td><span class="m">(SF − SF<sub>EGM</sub>)/√(σ<sub>exp</sub>² + σ<sub>EGM</sub>²)</span></td><td>Uses the expected error, because the fitted error means nothing at a limit. For the Z the two are 0.0251 and 0.0259.</td></tr>
+      <tr><td>cut-and-count</td><td>Poisson per category</td><td>Same-sign-subtracted counts, with the variance of each category = opposite-sign + same-sign counts. σ(ε) = √(4F²V<sub>PP</sub> + P²V<sub>PF</sub>)/(P + F)² with P = 2N<sub>PP</sub> and F = N<sub>PF</sub>.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose">
+    <p><strong>A worked example: the Z error.</strong> With T = 507.4 probes, ∂ε/∂r<sub>PP</sub> · σ = (370.3 × 105.6 / T²) × 0.077 = 0.0116, and ∂ε/∂r<sub>PF</sub> · σ = (78.1 × 401.7 / T²) × 0.141 = 0.0172. In quadrature (the correlation is 0) this gives 0.0208, and dividing by ε<sub>MC</sub> gives the SF error 0.0251. The 109 failing probes are the bottleneck. The relative errors are 7.1% on r<sub>ZPP</sub> (1/√201) and 10.4% on r<sub>ZPF</sub> (1/√109 plus the free background).</p>
+    <p><strong>Why a fitted error at a limit means nothing.</strong> At r<sub>fail</sub> = 0 or 10 the minimum sits on the edge of the allowed range, where the likelihood is not a parabola; Hesse only reports the curvature of a function cut off by the bound. Examples: in the inclusive 0.3–1.0 fit, σ(r<sub>fail</sub>) = 0.014 fitted against 0.92 expected; in the p<sub>T</sub> 0.3–0.6 fit, bin 0 W⁺ has r<sub>fail</sub> = 0.027 ± 7.7.</p>
+    <p><strong>Why the 5 interior W results have fitted errors (±0.03–0.05) 3–5 times smaller than expected (±0.12–0.26).</strong> They are evaluated at r<sub>fail</sub> = 2–9, a point where the model is wrong. There the fail W is a larger part of its channel, and ∂ε/∂r<sub>fail</sub> shrinks as T grows. The curvature at that point does not say how well the data determine ε; the expected error does.</p>
+    <p><strong>What no error here includes:</strong></p>
+    <ul>
+      <li>MC statistics.</li>
+      <li>The QCD template shape. Only the window variation probes it.</li>
+      <li>The definition differences to EGM: W kinematics, the trigger match, relIso &lt; 0.3 in the denominator.</li>
+      <li>For the Z: the flat-background shape, the m<sub>ee</sub> window and the tag definition.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="body" id="results">
+  <h2><span class="n">9</span>Results</h2>
+  <div class="prose">
+    <p><strong>Fit health.</strong> All 10 fits converged with status 0 and covQual 3. Every Asimov closure passed: every r, s and b returned 1 and every θ returned 0, to ≤ 7.5×10<sup>−6</sup>.</p>
+    <p><strong>W fits, charge-combined per bin.</strong> A value marked <span class="chip r0">r<sub>fail</sub> = 0</span> or <span class="chip r10">r<sub>fail</sub> = 10</span> means that at least one charge of that bin has its fail r on that limit. The SF is then set by the limit (1/ε<sub>MC</sub> at 0) and carries no information. Under each value is the expected error from the Asimov fit.</p>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>Bin</th><th class="num">ε<sub>MC</sub></th><th class="num">EGM pred.</th><th class="num">SF, sideband 0.3–1.0</th><th class="num">SF, 0.3–0.6</th><th class="num">SF, 0.6–1.0</th></tr></thead>
+    <tbody>
+      <tr><td>inclusive</td><td class="num">0.806</td><td class="num">0.954</td>
+        <td class="num lim"><span class="v">1.240</span><span class="chip r0">0</span><span class="exp">exp ± 0.135</span></td>
+        <td class="num lim"><span class="v">1.240</span><span class="chip r0">0</span><span class="exp">exp ± 0.127</span></td>
+        <td class="num lim"><span class="v">0.412</span><span class="chip r10">10</span><span class="exp">exp ± 0.129</span></td></tr>
+      <tr class="sep"><td>|η<sub>SC</sub>| 0–0.8</td><td class="num">0.838</td><td class="num">0.960</td>
+        <td class="num meas"><span class="v">0.767 ± 0.034</span><span class="exp">exp ± 0.125</span></td>
+        <td class="num meas"><span class="v">0.701 ± 0.031</span><span class="exp">exp ± 0.124</span></td>
+        <td class="num lim"><span class="v">0.460</span><span class="chip r10">10</span><span class="exp">exp ± 0.115</span></td></tr>
+      <tr><td>|η<sub>SC</sub>| 0.8–1.4442</td><td class="num">0.764</td><td class="num">0.952</td>
+        <td class="num lim"><span class="v">1.309</span><span class="chip r0">0</span><span class="exp">exp ± 0.161</span></td>
+        <td class="num lim"><span class="v">1.309</span><span class="chip r0">0</span><span class="exp">exp ± 0.162</span></td>
+        <td class="num lim"><span class="v">0.358</span><span class="chip r10">10</span><span class="exp">exp ± 0.154</span></td></tr>
+      <tr><td>|η<sub>SC</sub>| 1.566–2.0</td><td class="num">0.830</td><td class="num">0.942</td>
+        <td class="num meas"><span class="v">0.758 ± 0.046</span><span class="exp">exp ± 0.209</span></td>
+        <td class="num meas"><span class="v">0.799 ± 0.047</span><span class="exp">exp ± 0.210</span></td>
+        <td class="num lim"><span class="v">0.468</span><span class="chip r10">10</span><span class="exp">exp ± 0.180</span></td></tr>
+      <tr><td>|η<sub>SC</sub>| 2.0–2.4</td><td class="num">0.784</td><td class="num">0.960</td>
+        <td class="num lim"><span class="v">0.423</span><span class="chip r10">10</span><span class="exp">exp ± 0.218</span></td>
+        <td class="num lim"><span class="v">0.395</span><span class="chip r10">10</span><span class="exp">exp ± 0.219</span></td>
+        <td class="num lim"><span class="v">0.391</span><span class="chip r10">10</span><span class="exp">exp ± 0.173</span></td></tr>
+      <tr><td>|η<sub>SC</sub>| combined</td><td class="num">0.806</td><td class="num">0.954</td>
+        <td class="num lim"><span class="v">0.754</span><span class="chip r0">0</span><span class="chip r10">10</span><span class="exp">exp ± 0.111</span></td>
+        <td class="num lim"><span class="v">0.723</span><span class="chip r0">0</span><span class="chip r10">10</span><span class="exp">exp ± 0.106</span></td>
+        <td class="num lim"><span class="v">0.417</span><span class="chip r10">10</span><span class="exp">exp ± 0.085</span></td></tr>
+      <tr class="sep"><td>p<sub>T</sub> 25–35</td><td class="num">0.761</td><td class="num">0.949</td>
+        <td class="num lim"><span class="v">1.314</span><span class="chip r0">0</span><span class="exp">exp ± 0.254</span></td>
+        <td class="num lim"><span class="v">1.308</span><span class="chip r0">0</span><span class="exp">exp ± 0.256</span></td>
+        <td class="num meas"><span class="v">0.439 ± 0.036</span><span class="exp">exp ± 0.264</span></td></tr>
+      <tr><td>p<sub>T</sub> 35–50</td><td class="num">0.829</td><td class="num">0.958</td>
+        <td class="num lim"><span class="v">1.206</span><span class="chip r0">0</span><span class="exp">exp ± 0.176</span></td>
+        <td class="num lim"><span class="v">1.206</span><span class="chip r0">0</span><span class="exp">exp ± 0.171</span></td>
+        <td class="num lim"><span class="v">0.908</span><span class="chip r0">0</span><span class="exp">exp ± 0.223</span></td></tr>
+      <tr><td>p<sub>T</sub> ≥ 50</td><td class="num">0.883</td><td class="num">0.956</td>
+        <td class="num lim"><span class="v">1.133</span><span class="chip r0">0</span><span class="exp">exp ± 0.666</span></td>
+        <td class="num lim"><span class="v">1.133</span><span class="chip r0">0</span><span class="exp">exp ± 0.632</span></td>
+        <td class="num lim"><span class="v">0.618</span><span class="chip r10">10</span><span class="exp">exp ± 0.331</span></td></tr>
+      <tr><td>p<sub>T</sub> combined</td><td class="num">0.806</td><td class="num">0.954</td>
+        <td class="num lim"><span class="v">1.240</span><span class="chip r0">0</span><span class="exp">exp ± 0.205</span></td>
+        <td class="num lim"><span class="v">1.238</span><span class="chip r0">0</span><span class="exp">exp ± 0.197</span></td>
+        <td class="num lim"><span class="v">0.619</span><span class="chip r0">0</span><span class="chip r10">10</span><span class="exp">exp ± 0.185</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Wherever r<sub>fail</sub> = 0 the value equals 1/ε<sub>MC</sub> exactly (1/0.764 = 1.309, 1/0.883 = 1.133). That identity is the direct sign that these numbers carry no measurement. Per-charge values and every fitted r are in <code>test/pO_idiso_sf_out/&lt;tag&gt;/summary/idiso_sf_&lt;tag&gt;.csv</code> and in the table below.</p>
+
+  <details>
+    <summary>Every fitted r<sub>pass</sub> and r<sub>fail</sub>, per charge (24 bins × 2 charges)</summary>
+    <div>
+      <div class="tw"><table>
+        <thead><tr><th>Fit</th><th>Bin</th><th class="num">W⁺ r<sub>pass</sub></th><th class="num">W⁺ r<sub>fail</sub></th><th class="num">W⁻ r<sub>pass</sub></th><th class="num">W⁻ r<sub>fail</sub></th></tr></thead>
+        <tbody>
+          <tr><td>incl 0.3–1.0</td><td>–</td><td class="num">1.199 ± 0.037</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.140 ± 0.038</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td>incl 0.3–0.6</td><td>–</td><td class="num">1.201 ± 0.037</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.137 ± 0.039</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td>incl 0.6–1.0</td><td>–</td><td class="num">1.216 ± 0.035</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.165 ± 0.036</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr class="sep"><td>|η| 0.3–1.0</td><td>0–0.8</td><td class="num">1.236 ± 0.049</td><td class="num">2.90 ± 0.52</td><td class="num">1.171 ± 0.052</td><td class="num">4.16 ± 0.67</td></tr>
+          <tr><td></td><td>0.8–1.444</td><td class="num">1.172 ± 0.059</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.192 ± 0.064</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>1.566–2.0</td><td class="num">1.347 ± 0.079</td><td class="num">1.98 ± 0.60</td><td class="num">1.222 ± 0.088</td><td class="num">5.97 ± 1.12</td></tr>
+          <tr><td></td><td>2.0–2.4</td><td class="num">1.216 ± 0.080</td><td class="num">7.53 ± 0.82</td><td class="num">1.124 ± 0.090</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr class="sep"><td>|η| 0.3–0.6</td><td>0–0.8</td><td class="num">1.234 ± 0.050</td><td class="num">3.97 ± 0.59</td><td class="num">1.168 ± 0.052</td><td class="num">4.87 ± 0.69</td></tr>
+          <tr><td></td><td>0.8–1.444</td><td class="num">1.184 ± 0.058</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.203 ± 0.063</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>1.566–2.0</td><td class="num">1.347 ± 0.080</td><td class="num">2.21 ± 0.65</td><td class="num">1.257 ± 0.087</td><td class="num">4.58 ± 0.93</td></tr>
+          <tr><td></td><td>2.0–2.4</td><td class="num">1.217 ± 0.080</td><td class="num">9.22 ± 0.84</td><td class="num">1.135 ± 0.091</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr class="sep"><td>|η| 0.6–1.0</td><td>0–0.8</td><td class="num">1.240 ± 0.049</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.176 ± 0.052</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr><td></td><td>0.8–1.444</td><td class="num">1.151 ± 0.062</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.174 ± 0.064</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr><td></td><td>1.566–2.0</td><td class="num">1.376 ± 0.077</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.192 ± 0.089</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr><td></td><td>2.0–2.4</td><td class="num">1.251 ± 0.079</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.176 ± 0.087</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+          <tr class="sep"><td>p<sub>T</sub> 0.3–1.0</td><td>25–35</td><td class="num">1.083 ± 0.062</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">0.996 ± 0.069</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>35–50</td><td class="num">1.168 ± 0.050</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.111 ± 0.052</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>≥ 50</td><td class="num">1.592 ± 0.126</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.416 ± 0.123</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr class="sep"><td>p<sub>T</sub> 0.3–0.6</td><td>25–35</td><td class="num">1.112 ± 0.061</td><td class="num">0.03 ± 7.7</td><td class="num">0.997 ± 0.072</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>35–50</td><td class="num">1.180 ± 0.049</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.121 ± 0.051</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr><td></td><td>≥ 50</td><td class="num">1.601 ± 0.124</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.427 ± 0.122</td><td class="num">0 <span class="chip r0">limit</span></td></tr>
+          <tr class="sep"><td>p<sub>T</sub> 0.6–1.0</td><td>25–35</td><td class="num">1.044 ± 0.066</td><td class="num">4.94 ± 0.92</td><td class="num">1.025 ± 0.065</td><td class="num">8.83 ± 1.24</td></tr>
+          <tr><td></td><td>35–50</td><td class="num">1.138 ± 0.059</td><td class="num">0 <span class="chip r0">limit</span></td><td class="num">1.101 ± 0.055</td><td class="num">3.85 ± 1.88</td></tr>
+          <tr><td></td><td>≥ 50</td><td class="num">1.657 ± 0.112</td><td class="num">10 <span class="chip r10">limit</span></td><td class="num">1.532 ± 0.109</td><td class="num">10 <span class="chip r10">limit</span></td></tr>
+        </tbody>
+      </table></div>
+      <p class="small muted">The r<sub>pass</sub> values are well measured and stable across windows. The rise to 1.4–1.7 at p<sub>T</sub> ≥ 50 is the known electron high-p<sub>T</sub> data excess.</p>
+    </div>
+  </details>
+</section>
+
+<!-- 10 -->
+<section class="body" id="plots">
+  <h2><span class="n">10</span>How to read the plots</h2>
+  <div class="prose">
+    <p>All SF plots are in <code>correction/plots/idiso_sf_ele/</code> and are regenerated by <code>./run_idiso_sf.sh plots</code>. The conventions shared by the SF plots:</p>
+    <ul>
+      <li><strong>Sideband window → marker:</strong> 0.3–1.0 black circle, 0.3–0.6 blue square, 0.6–1.0 red diamond.</li>
+      <li><strong>Filled:</strong> every fail r involved is inside its range, and the bar is the fitted (Hesse) error.</li>
+      <li><strong>Open:</strong> a fail r of the bin (either charge) sits at 0 or 10. The value is set by that limit and no error bar is drawn.</li>
+      <li><strong>Grey box:</strong> ±expected error from the Asimov fit, centred on the plotted value.</li>
+      <li><strong>Colour references:</strong> <span class="k-egm">orange</span> is the EGM prediction and <span class="k-z">green</span> is the Z tag-and-probe result.</li>
+    </ul>
+  </div>
+
+  <figure id="fig-summary">
+    <div class="plate"><img src="img/sf_summary.png" alt="Summary of all ten scale-factor measurements with expected precision boxes and the EGM prediction bands" width="1150" height="900" loading="lazy"></div>
+    <figcaption>
+      <span><span class="cap-t">Figure 1 · sf_summary.</span> Every SF result on one axis: the Z tag-and-probe at the top (green), then the 9 W fits (scheme × window), each combined over charges and over all bins of its scheme.</span>
+      <ul>
+        <li><strong>Point and bar:</strong> the fitted SF and its fitted error. The bar is drawn only when no fail r of the fit is at a limit, and none of the W rows qualifies.</li>
+        <li><strong>Right column:</strong> "value ± fitted error [exp. ± expected error]", or "value [which limit; exp. ± …]".</li>
+        <li><strong>Orange band:</strong> the EGM prediction for the same electrons. The top segment (Z row) is for the Z probes, 0.956 ± 0.009. The lower segment (W rows) is for all W electrons with m<sub>T</sub> &gt; 40, 0.954 ± 0.009. The two nearly coincide, so the band looks continuous. The dashed grey line marks SF = 1.</li>
+      </ul>
+      <div class="read"><b>What it says</b>The Z point sits on the orange band. The W rows sit at the two limits of what the fit allows: 1.24 = 1/ε<sub>MC</sub> for r<sub>fail</sub> = 0 and 0.41 for r<sub>fail</sub> = 10. The rest lie in between with a limit hit in some bin. Their grey boxes (±0.09 to ±0.21) show that even an ideal W fit would be 3–8 times less precise than the Z.</div>
+    </figcaption>
+  </figure>
+
+  <figure id="fig-egm">
+    <div class="two">
+      <div class="plate"><img src="img/sf_egm_abseta.png" alt="Scale factor versus absolute supercluster eta: W fit results, EGM prediction, Z band, and the EGM fine-binned SF in a zoomed lower pad" width="900" height="1000" loading="lazy"></div>
+      <div class="plate"><img src="img/sf_egm_pt.png" alt="Scale factor versus electron pT: W fit results, EGM prediction, Z band, and the EGM fine-binned SF in a zoomed lower pad" width="900" height="1000" loading="lazy"></div>
+    </div>
+    <figcaption>
+      <span><span class="cap-t">Figures 2 and 3 · sf_egm_abseta and sf_egm_pt.</span> These are the EGM overlays the study was built for.</span>
+      <ul>
+        <li><strong>Top pad:</strong> our W SF per coarse bin; dotted vertical lines are the bin edges. The three windows sit side by side (circle, square, diamond); the horizontal offset only separates the markers. The grey box is the expected error of the 0.3–1.0 fit.</li>
+        <li><strong>Dashed black segment:</strong> the EGM prediction for the W electrons of that bin, eq. (4).</li>
+        <li><strong>Green band:</strong> the Z tag-and-probe ±1σ. It is one inclusive number, drawn across the axis as a reference, with no η or p<sub>T</sub> dependence.</li>
+        <li><strong>Axis details:</strong> the hatched band is the excluded ECAL crack. On the p<sub>T</sub> plot the last bin (≥ 50 GeV) is drawn out to 120 GeV.</li>
+        <li><strong>Bottom pad</strong> (zoomed to 0.88–1.04): the EGM fine-binned SF. On the |η| plot each colour is one EGM p<sub>T</sub> slice: 25–35 (EGM's 20–35 cell), 35–50, 50–70 and 70–100 GeV. On the p<sub>T</sub> plot each colour is one |η<sub>SC</sub>| cell: 0–0.8, 0.8–1.444, 1.566–2.0 and 2.0–2.5. The line is the SF averaged over the +η and −η cells; the band is ± the averaged total error. The dashed black segments are the weighted averages of these lines over our passing W-MC electrons.</li>
+      </ul>
+      <div class="read"><b>What it says</b>The EGM SF is 0.93–0.98 everywhere, and the Z result agrees with it. The W points scatter from 0.36 to 1.31, and the scatter does not follow EGM's η or p<sub>T</sub> structure. It follows the fit limits instead.</div>
+    </figcaption>
+  </figure>
+
+  <figure id="fig-shape">
+    <div class="plate"><img src="img/fail_qcdshape_full.png" alt="Inclusive fail signal region: data minus EWK MC compared to the prefit in-fit ABCD QCD template, with their ratio" width="800" height="800" loading="lazy" style="max-width:640px;margin:0 auto"></div>
+    <figcaption>
+      <span><span class="cap-t">Figure 4 · fail_qcdshape_full.</span> This is the inclusive fail signal region, W⁺ + W⁻, at prefit. The <code>_sblo</code> version looks similar. In <code>_sbhi</code> the ratio is steeper still: it starts at 0.4 and passes 3 by 65 GeV, which is why that window drives r<sub>fail</sub> to its upper limit.</span>
+      <ul>
+        <li><strong>Points:</strong> data minus EWK MC at r = 1. The W is at most 2% here, so the subtraction hardly matters.</li>
+        <li><strong>Red histogram:</strong> the in-fit ABCD QCD template, the sideband p<sub>T</sub> shape at m<sub>T</sub> &gt; 40 normalized to A<sub>0</sub>.</li>
+        <li><strong>Ratio pad:</strong> (data − EWK)/QCD.</li>
+      </ul>
+      <div class="read"><b>What it says</b>If the sideband shape were right, the ratio would be flat. It rises from 0.6 at 25 GeV through 1 near 45 GeV to 2.5–3 above 80 GeV. The fail W, about 750 events for both charges, peaks at 35–45 GeV, right where the ratio crosses 1. The fit can therefore trade the W yield against this mismatch, which is why r<sub>fail</sub> lands on a limit.</div>
+    </figcaption>
+  </figure>
+
+  <figure id="fig-mult">
+    <div class="two">
+      <div class="plate"><img src="img/abcd_multiplier_incl.png" alt="In-fit ABCD signal-region QCD multiplier per channel for the inclusive fits" width="1000" height="750" loading="lazy"></div>
+      <div class="plate"><img src="img/abcd_multiplier_abseta.png" alt="In-fit ABCD signal-region QCD multiplier per channel for the eta-binned fits" width="1000" height="750" loading="lazy"></div>
+    </div>
+    <figcaption>
+      <span><span class="cap-t">Figure 5 · abcd_multiplier_incl and _abseta</span> (<code>_pt</code> too). Each point is the post-fit/prefit QCD normalization in one W signal region, <span class="m"><i>M</i> = <i>κ</i><sup><i>θ</i></sup><i>s</i><sub>B</sub><i>s</i><sub>C</sub>/<i>s</i><sub>D</sub></span>, with its error propagated with all correlations. The three windows are side by side. M = 1 means the fit kept the ABCD prediction.</span>
+      <div class="read"><b>What it says</b>In the inclusive fits the fail channels stay near 1 for the 0.3–1.0 and 0.3–0.6 windows (0.94–0.98) and drop to 0.73–0.75 for 0.6–1.0. The pass channels come out at 0.52–0.82. There the fit removes QCD through θ (−1.0 to −3.2σ), while s<sub>B</sub>, s<sub>C</sub> and s<sub>D</sub> stay within a few % of 1. A multiplier far from 1 means A = B·C/D does not close for that channel, and that non-closure is what the fail W competes with.</div>
+    </figcaption>
+  </figure>
+
+  <figure id="fig-wpost">
+    <div class="two">
+      <div class="plate"><img src="img/postfit_incl_Wp_pass.png" alt="Postfit W plus pass channel, inclusive fit, lepton pT" width="800" height="880" loading="lazy"></div>
+      <div class="plate"><img src="img/postfit_incl_Wp_fail.png" alt="Postfit W plus fail channel, inclusive fit, lepton pT" width="800" height="880" loading="lazy"></div>
+    </div>
+    <figcaption>
+      <span><span class="cap-t">Figure 6 · postfit, inclusive fit (0.3–1.0), W⁺ pass (left) and fail (right).</span> These are from the fork's <code>pO_idiso_sf_out/&lt;tag&gt;/postfit/</code>, which has every channel of every fit.</span>
+      <ul>
+        <li><strong>Stack:</strong> the post-fit templates (W signal, DY, DY τ, W τ, QCD) with the data as points.</li>
+        <li><strong>Pull pad:</strong> (data − postfit)/σ.</li>
+        <li><strong>Info box:</strong> the data count, the post-fit total, and a Baker–Cousins χ²/ndf over the channel's bins (ndf = bins − 3). It also shows the channel's r and "DY norm" = r<sub>Z</sub>.</li>
+      </ul>
+      <div class="read"><b>What it says</b>The pass channel is described well: χ²/ndf = 1.04 and r<sub>pass</sub> = 1.199 ± 0.037, the same W normalization excess as the nominal fit. In the fail channel the model cannot follow the data. It overshoots below 35 GeV and undershoots above 45 GeV by up to 20σ per bin, giving χ²/ndf = 46.4. The fit set r<sub>fail</sub> = 0.000, and the ±0.014 in the box is the meaningless error at the limit.</div>
+    </figcaption>
+  </figure>
+
+  <figure id="fig-zpost">
+    <div class="two">
+      <div class="plate"><img src="img/postfit_ztnp_PP.png" alt="Postfit Z tag-and-probe, both legs pass" width="800" height="880" loading="lazy"></div>
+      <div class="plate"><img src="img/postfit_ztnp_PF.png" alt="Postfit Z tag-and-probe, probe fails" width="800" height="880" loading="lazy"></div>
+    </div>
+    <figcaption>
+      <span><span class="cap-t">Figure 7 · postfit of the Z tag-and-probe fit, PP (left) and PF (right).</span> m<sub>ee</sub> from 60 to 120 GeV, showing the DY template, tiny W and τ contributions, and the data. ndf = bins − 2.</span>
+      <ul>
+        <li>Two labels come from the shared postfit plotter. "QCD norm" in the box is the flat-background scale b.</li>
+        <li>The flat background is part of "Postfit total" and of the χ², but is not drawn as its own stack entry. It is 0 events in PP and 2.3 in PF.</li>
+      </ul>
+      <div class="read"><b>What it says</b>The DY template describes both categories (χ²/ndf 0.90 and 0.88). r<sub>ZPP</sub> = 1.085 ± 0.077 and r<sub>ZPF</sub> = 1.352 ± 0.141, and their ratio of 1.25 carries the efficiency.</div>
+    </figcaption>
+  </figure>
+  <p class="small muted">Prefit stacks of every W channel (window 0.3–1.0) and of Z<sub>PP</sub>/Z<sub>PF</sub> are in <code>correction/plots/idiso_sf_ele/prefit/</code>. The summary CSV <code>idiso_sf_summary.csv</code> holds every number drawn, with the <code>boundary</code> flag and the pull against EGM.</p>
+</section>
+
+<!-- 11 -->
+<section class="body" id="scope">
+  <h2><span class="n">11</span>What this does and does not establish</h2>
+  <div class="prose">
+    <p><strong>Established:</strong> inclusively, the data/MC ratio of our WP90 ID + iso efficiency agrees with the EGM <code>wp90iso</code> SF evaluated for the same electrons, 0.959 ± 0.025 against 0.956 ± 0.009. A deviation larger than about 5% (2σ) is excluded.</p>
+    <p><strong>Not tested:</strong></p>
+    <ul>
+      <li><strong>η and p<sub>T</sub> dependence.</strong> The Z sample (310 events) is used inclusively. EGM's per-cell SFs vary between 0.93 and 0.98, below what we could resolve, so the per-cell structure would be taken from EGM on trust.</li>
+      <li><strong>Reconstruction efficiency.</strong> Our denominator starts from a reconstructed electron, as EGM's ID SF does. The EGM Reco SF (<code>Reco20to75</code>: 0.91–0.95 at 20–75 GeV, about −8% on electron MC) is a separate correction and is not covered here.</li>
+      <li><strong>The relIso &lt; 0.3 requirement in the denominator.</strong> Its SF is assumed to be 1; 99.3% of prompt W electrons pass it.</li>
+      <li><strong>The trigger.</strong> It is measured separately in <code>correction/trig_eff_mb.C</code>: SF 0.9975 ± 0.0037 for m<sub>T</sub> &gt; 40.</li>
+      <li><strong>Any W-sample measurement with this QCD model.</strong> Making the W route work would need a fail-category QCD template whose p<sub>T</sub> spectrum matches the fakes in the signal region. That is the same fake-factor problem the nominal electron fit has.</li>
+    </ul>
+    <p class="muted">Open: whether to switch the electron selection to WP90 ID + iso and apply the EGM SF per (η<sub>SC</sub>, p<sub>T</sub>) cell. That decision is yours.</p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="body" id="history">
+  <h2><span class="n">12</span>History and questions along the way</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Date</th><th>What happened</th></tr></thead>
+    <tbody>
+      <tr><td>24 Sep</td><td>Design agreed with you:
+        <ul>
+          <li>a W-sample efficiency built like the trigger SF, from post-fit W yields;</li>
+          <li>the Z peak to pin the DY;</li>
+          <li>pass and fail channels in one fit, with the total at relIso &lt; 0.3;</li>
+          <li>coarse bins overlaid on the EGM fine binning.</li>
+        </ul>
+        The EGM table was extracted, and the separate skim written and run.</td></tr>
+      <tr><td>24–25 Sep</td><td>The QCD model changed twice:
+        <ul>
+          <li>The first version fitted PF MET, with a free QCD normalization per channel.</li>
+          <li>You asked for the ABCD. The second version used the sideband shape with an ABCD normalization held by an lnN.</li>
+          <li>You pointed out that the nominal is the in-fit ABCD. It was rebuilt as described in section 6: lepton p<sub>T</sub> at m<sub>T</sub> &gt; 40, with CRB/CRC/CRD in the likelihood.</li>
+        </ul>
+        The earlier inputs and plots are backed up in <code>correction/rootfile/idiso_sf_ele_pre_infit/</code> and <code>correction/plots/idiso_sf_ele_pre_infit/</code>.</td></tr>
+      <tr><td>25 Sep</td><td>The inclusive Z tag-and-probe was added. Because the shared r<sub>Z</sub> let the W channels pull the Z result, it became its own fit.</td></tr>
+      <tr><td>25 Sep</td><td>Local validation without Combine:
+        <ul>
+          <li>the cards are column-aligned;</li>
+          <li>the maps were run through the fork's own MultiSignalModel, and all 1,399 (bin, process) columns of the 10 cards are scaled by the intended parameter;</li>
+          <li>a RooFit stand-in of the likelihood closed exactly on Asimov.</li>
+        </ul></td></tr>
+      <tr><td>26 Sep</td><td>You ran the 10 fits on lxplus with <code>--asimov</code>. I downloaded them, checked every extraction log and wrote <code>idiso_sf_plots.C</code>. <code>plotting_helper.C</code> gained an opt-in ratio range (the default is unchanged).</td></tr>
+      <tr><td>27 Sep</td><td>While writing this note I found that the 0.6–1.0 results sit at the r = 10 limit. The plots, CSV, CLAUDE.md and memory were corrected.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose">
+    <h3>Questions you raised</h3>
+    <dl class="defs">
+      <dt>Why the sideband is 0.3–1.0</dt><dd>The nominal uses 0.2–1.0, but here the total already contains everything below 0.3. The sideband must be disjoint from the measured sample.</dd>
+      <dt>MET or lepton p<sub>T</sub>?</dt><dd>The lepton p<sub>T</sub> at m<sub>T</sub> &gt; 40. m<sub>T</sub> is an ABCD axis and cannot be fitted. MET is strongly correlated with m<sub>T</sub>.</dd>
+      <dt>Fit total and pass instead?</dt><dd>That cannot add information. Every pass event is also in the total, so the two are not independent samples, and fitting both as separate channels would count the pass events twice. Done correctly (independent pass and fail channels, or the total with a binomial split), it is the same likelihood as pass + fail. The fail-QCD problem would sit inside the total channel unchanged.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="body" id="files">
+  <h2><span class="n">13</span>Files and commands</h2>
+  <div class="tw"><table>
+    <thead><tr><th>File</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>correction/idiso_sf_common.h</code></td><td>Definition, bins, windows, histogram names, the EGM-table helpers (<code>LoadEgm</code>, <code>FindEgm</code>, <code>EgmPrediction</code>) and the gen match</td></tr>
+      <tr><td><code>correction/idiso_sf_skim.C</code></td><td>The skim, one job per sample → <code>rootfile/idiso_sf_ele/skim_&lt;sample&gt;.root</code></td></tr>
+      <tr><td><code>correction/idiso_sf_inputs.C</code></td><td>Combine inputs + the <code>[EPS]</code>, <code>[ZTNP]</code>, <code>[EGMPRED]</code> and <code>[ABCD]</code> record → <code>combine_input_idiso_&lt;tag&gt;.root</code> + <code>_meta.txt</code></td></tr>
+      <tr><td><code>correction/idiso_sf_plots.C</code></td><td>The plots of section 10 + <code>idiso_sf_summary.csv</code></td></tr>
+      <tr><td><code>correction/run_idiso_sf.sh</code></td><td>Wrapper: <code>skim | inputs | plots | all</code>, logs in <code>correction/logs/idiso_sf_ele_*.log</code></td></tr>
+      <tr><td><code>skim/sf/extract_electron_sf.py</code></td><td>EGM JSON → <code>skim/sf/electron_sf_2025Prompt_wp90iso.csv</code></td></tr>
+      <tr class="sep"><td><code>test/run_pO_idiso_sf.sh</code> (fork)</td><td>Cards, t2w, FitDiagnostics, Asimov, extraction and postfit for all 10 tags → <code>test/pO_idiso_sf_out/&lt;tag&gt;/</code></td></tr>
+      <tr><td><code>test/my_script/make_pO_idiso_sf_cards.sh</code></td><td>The datacard + multiSignalModel maps</td></tr>
+      <tr><td><code>test/my_script/extract_pO_idiso_sf.C</code></td><td>ε, SF and their errors; ABCD multipliers; Asimov closure and <code>[expected]</code> lines</td></tr>
+      <tr><td><code>test/sync_lxplus.sh upload-idiso | download-idiso</code></td><td>Moves inputs and scripts to lxplus, and the results back</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code># analysis repo, from correction/  (on this Mac: prefix DEVELOPER_DIR=/Library/Developer/CommandLineTools)
+./run_idiso_sf.sh all              # skim (7 jobs) + Combine inputs
+# fork, test/
+./sync_lxplus.sh upload-idiso
+# lxplus, under cmsenv, in test/
+./run_pO_idiso_sf.sh --asimov      # 9 W fits + the Z tag-and-probe fit
+# fork, test/
+./sync_lxplus.sh download-idiso
+# analysis repo, from correction/
+./run_idiso_sf.sh plots</code></pre>
+  <details>
+    <summary>The inclusive W datacard as fitted (17 channels) and its maps</summary>
+    <div>
+<pre><code>imax 17
+jmax *
+kmax *
+------------
+shapes data_obs ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/data_obs
+shapes signal   ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/signal
+shapes z        ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/z
+shapes ztau     ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/ztau
+shapes wtau     ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/wtau
+shapes qcd      ele_Wp_pass_k0 combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0/qcd
+shapes data_obs ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/data_obs
+shapes qcd      ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/qcd
+shapes signal   ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/signal
+shapes wtau     ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/wtau
+shapes z        ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/z
+shapes ztau     ele_Wp_pass_k0_CRB combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRB/ztau
+shapes data_obs ele_Wp_pass_k0_CRC combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRC/data_obs
+shapes qcd      ele_Wp_pass_k0_CRC combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRC/qcd
+shapes ewk      ele_Wp_pass_k0_CRC combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRC/ewk
+shapes data_obs ele_Wp_pass_k0_CRD combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRD/data_obs
+shapes qcd      ele_Wp_pass_k0_CRD combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRD/qcd
+shapes ewk      ele_Wp_pass_k0_CRD combine_input_idiso_incl_leppt_mt40.root Wp_pass_k0_CRD/ewk
+   ... the same block for Wp_fail_k0, Wm_pass_k0, Wm_fail_k0 ...
+shapes data_obs ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/data_obs
+shapes zsig     ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/signal
+shapes w        ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/w
+shapes wtau     ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/wtau
+shapes ztau     ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/ztau
+shapes bkg      ele_Z_PP combine_input_idiso_incl_leppt_mt40.root Z_PP/bkg
+------------
+bin/observation: 17 channels, all -1 (from the input histograms)
+process per W channel:  SR  signal z ztau wtau qcd | CRB qcd signal wtau z ztau | CRC qcd ewk | CRD qcd ewk
+process for Z_PP:       zsig w wtau ztau bkg
+rate: all -1
+------------
+qcd_rate_ele_Wp_pass lnN   1.15 on the ele_Wp_pass_k0 SR qcd column, '-' elsewhere
+qcd_rate_ele_Wp_fail lnN   1.15 on the ele_Wp_fail_k0 SR qcd column   (and likewise Wm_pass, Wm_fail)
+qcd_sB_ele_Wp_pass_k0   rateParam ele_Wp_pass_k0_CRB qcd 1 [0,10]
+qcd_sC_ele_Wp_pass_k0   rateParam ele_Wp_pass_k0_CRC qcd 1 [0,10]
+qcd_sD_ele_Wp_pass_k0   rateParam ele_Wp_pass_k0_CRD qcd 1 [0,10]
+qcd_abcd_ele_Wp_pass_k0 rateParam ele_Wp_pass_k0 qcd (@0*@1/@2) qcd_sB_ele_Wp_pass_k0,qcd_sC_ele_Wp_pass_k0,qcd_sD_ele_Wp_pass_k0
+   ... the same four lines for Wp_fail_k0, Wm_pass_k0, Wm_fail_k0 ...
+bkg_norm_ele_Z_PP rateParam ele_Z_PP bkg 1 [0,100]
+
+# t2w_maps_idiso_incl_leppt_mt40.txt
+map=ele_Wp_pass_k0(_CRB)?/(signal|wtau)$:r_Wp_pass_k0[1,0,10]
+map=ele_Wp_fail_k0(_CRB)?/(signal|wtau)$:r_Wp_fail_k0[1,0,10]
+map=ele_Wm_pass_k0(_CRB)?/(signal|wtau)$:r_Wm_pass_k0[1,0,10]
+map=ele_Wm_fail_k0(_CRB)?/(signal|wtau)$:r_Wm_fail_k0[1,0,10]
+map=.*/(z|ztau|zsig)$:r_Z[1,0,10]</code></pre>
+      <p class="small muted">The full cards as fitted are in <code>test/pO_idiso_sf_out/&lt;tag&gt;/datacards/</code>.</p>
+    </div>
+  </details>
+  <details>
+    <summary>The Z tag-and-probe datacard as fitted (2 channels) and its maps</summary>
+    <div>
+<pre><code>imax 2
+jmax *
+kmax *
+------------
+shapes data_obs ele_Z_PP combine_input_idiso_ztnp.root Z_PP/data_obs
+shapes zsig     ele_Z_PP combine_input_idiso_ztnp.root Z_PP/signal
+shapes w        ele_Z_PP combine_input_idiso_ztnp.root Z_PP/w
+shapes wtau     ele_Z_PP combine_input_idiso_ztnp.root Z_PP/wtau
+shapes ztau     ele_Z_PP combine_input_idiso_ztnp.root Z_PP/ztau
+shapes bkg      ele_Z_PP combine_input_idiso_ztnp.root Z_PP/bkg
+shapes data_obs ele_Z_PF combine_input_idiso_ztnp.root Z_PF/data_obs
+shapes zsig     ele_Z_PF combine_input_idiso_ztnp.root Z_PF/signal
+shapes w        ele_Z_PF combine_input_idiso_ztnp.root Z_PF/w
+shapes wtau     ele_Z_PF combine_input_idiso_ztnp.root Z_PF/wtau
+shapes ztau     ele_Z_PF combine_input_idiso_ztnp.root Z_PF/ztau
+shapes bkg      ele_Z_PF combine_input_idiso_ztnp.root Z_PF/bkg
+------------
+bin         ele_Z_PP ele_Z_PF
+observation -1 -1
+------------
+bin      ele_Z_PP ele_Z_PP ele_Z_PP ele_Z_PP ele_Z_PP ele_Z_PF ele_Z_PF ele_Z_PF ele_Z_PF ele_Z_PF
+process  zsig w wtau ztau bkg zsig w wtau ztau bkg
+process  -1 5 3 2 6 -1 5 3 2 6
+rate     -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+------------
+bkg_norm_ele_Z_PP rateParam ele_Z_PP bkg 1 [0,100]
+bkg_norm_ele_Z_PF rateParam ele_Z_PF bkg 1 [0,100]
+
+# t2w_maps_idiso_ztnp.txt
+map=ele_Z_PP/(zsig|ztau)$:r_ZPP[1,0,10]
+map=ele_Z_PF/(zsig|ztau)$:r_ZPF[1,0,10]</code></pre>
+    </div>
+  </details>
+</section>
+
+</div>

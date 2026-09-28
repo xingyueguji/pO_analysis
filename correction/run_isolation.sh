@@ -4,7 +4,7 @@
 # Logging wrapper for the isolation / electron-ID working-point studies, in the
 # same spirit as run_qcd_abcd.sh and skim/run_all.sh: ROOT prints the scan
 # tables (AUC, Youden J, efficiencies at the analysis cut) to stdout ONLY, and
-# those numbers are quoted in AN_selection_optimization.tex -- a bare
+# those numbers are quoted in docs/AN_selection_optimization.tex -- a bare
 # `root -l -q 'isolation_ele.C+'` silently throws the record away.
 #
 # Usage:

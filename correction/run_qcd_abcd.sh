@@ -8,7 +8,7 @@
 # band), the anti-iso window scan, the plane-to-plane transport with its r-scan,
 # the multijet fraction of each fitted selection, and the assembled systematic
 # budget -> lnN kappa. Those numbers are quoted in the AN
-# (../AN_qcd_background.tex), so they must be reproducible, not scrolled past.
+# (../docs/AN_qcd_background.tex), so they must be reproducible, not scrolled past.
 # ROOT writes them to stdout only, hence this wrapper: same convention as
 # skim/run_all.sh, one log per job under correction/logs/.
 #

@@ -1,2 +1,0 @@
-# Shape systematics in ./plots/combine_input_W_leppt.root (plotting/mtandmet.C)
-# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>

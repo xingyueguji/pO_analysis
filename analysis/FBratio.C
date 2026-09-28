@@ -10,6 +10,14 @@
 #include "analysis_helpers.h" // YieldInRange, RatioErr, kPORapidityShift
 
 // ---------- main ----------
+// Production input (2026-09-22): the FIDUCIAL yields r x sigma_gen of a fit,
+// ../skim/rootfile/fidyields_<fit>_<disc>.root (analysis/fiducial_yields.C,
+// same histogram names) -- every observable is built from r x sigma_gen,
+// never from the raw fitted yields (user directive: there is no dedicated
+// efficiency/acceptance correction -- and here it matters most: F and B are
+// different |eta_lab| regions, so a raw-count ratio carries the detector
+// acceptance, up to 60% apart between mu and e). Any file with h_yield_*
+// (+ h_cov_yield_FB*) still works.
 void FBratio(
     const char *inFile = "../skim/rootfile/WToMuNu_pO_PFMet_hist.root",
     const char *outFile = "../skim/rootfile/FBratio.root", // update same

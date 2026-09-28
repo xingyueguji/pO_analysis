@@ -42,6 +42,11 @@
 //   postfit_incl(disc)  -> plots/comb/postfit_incl/<disc>/postfit_{mu,ele}_{Wp,Wm,W}.{png,pdf}
 //   postfit_incl(disc, csv, muW, eleW, lheSysts, fitDiag): explicit paths;
 //     lheSysts "" = read the sidecar, "none" = force the shortcut path
+//   postfit_incl_fit(disc, fit) (2026-09-22): the same for ANY fit --
+//     fit = simfit_mu / simfit_ele (the per-flavour fits, fork mode flavfit)
+//     -> plots/flavfit/postfit_incl/<disc>/postfit_<flav>_{Wp,Wm,W}; each from
+//     its own summary CSV, sidecar and fitDiagnostics (the fit's work dir), and
+//     only for the flavour that fit contains. comb = postfit_incl(disc).
 //
 // Same cosmetics as the per-bin postfit plots (SaveNicePlot1D_WithBkg, pull
 // pad). Run by analysis/run_observables.sh (comb chain), or by hand:
@@ -49,6 +54,7 @@
 // =============================================================================
 #include "plotting_helper.C"
 #include "disc_variants.h"
+#include "fit_variants.h" // pOFit::Spec (which fit: comb / mu-only / e-only)
 #include "TFile.h"
 #include "TH1D.h"
 #include "TMath.h"
@@ -193,18 +199,19 @@ bool AccPostfitShape(TFile *fd, const TString &path, const TH1 *ref, TH1D *&acc,
 
 } // namespace
 
-void postfit_incl(const char *disc = "met",
-                  const char *csv = nullptr,       // default: pO_fit_out<suffix>/simfit/summary/comb_W_yields.csv
-                  const char *muWFile = nullptr,   // default: plots/combine_input_W<suffix>.root
-                  const char *eleWFile = nullptr,  // default: plots/Elec/combine_input_W<suffix>.root
-                  const char *lheSysts = "",       // "" = read the fitted cards' sidecar; "none" = shortcut path
-                  const char *fitDiag = nullptr)   // default: pO_fit_out<suffix>/simfit/fits/simfit_lab/fitDiagnostics_simfit_lab.root
+// the implementation, for any fit (fitTag: comb | simfit_mu | simfit_ele)
+static void postfit_incl_impl(const char *disc, const char *fitTag,
+                              const char *csv, const char *muWFile, const char *eleWFile,
+                              const char *lheSysts, const char *fitDiag)
 {
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
+    pOFit::Spec spec;
+    if (!pOFit::Get(fitTag, spec)) return;
+    const bool isComb = (spec.flav == "");
 
-    const TString fork = TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit", dsuf.Data());
-    const TString sCsv = csv ? TString(csv) : fork + "/summary/comb_W_yields.csv";
+    const TString fork = pOFit::WorkDir(dsuf, spec);   // the fit's work dir (honours $FORK_TEST)
+    const TString sCsv = csv ? TString(csv) : pOFit::SummaryFile(dsuf, spec, "W_yields.csv");
     const TString sMuW  = muWFile  ? TString(muWFile)  : TString::Format("./plots/combine_input_W%s.root", dsuf.Data());
     const TString sEleW = eleWFile ? TString(eleWFile) : TString::Format("./plots/Elec/combine_input_W%s.root", dsuf.Data());
     const TString sFD   = fitDiag ? TString(fitDiag) : fork + "/fits/simfit_lab/fitDiagnostics_simfit_lab.root";
@@ -243,12 +250,17 @@ void postfit_incl(const char *disc = "met",
     const char *xTitle = isMET ? "PF MET (GeV)" : "Lepton p_{T} (GeV)";
     const char *yTitle = "Events / 2.0 GeV";
 
-    const std::string outDir = std::string("./plots/comb/postfit_incl/") + disc;
+    const std::string outDir = std::string(isComb ? "./plots/comb/postfit_incl/" : "./plots/flavfit/postfit_incl/") + disc;
     gSystem->mkdir(outDir.c_str(), kTRUE);
+    // "simfit" for the grand fit (the historical label), "#mu-only simfit" etc.
+    const TString who = isComb ? "simfit" : (spec.flav == "mu" ? "#mu-only simfit" : "e-only simfit");
 
     const char *flavs[2] = {"mu", "ele"};
     for (int fl = 0; fl < 2; ++fl)
     {
+        bool inFit = false; // only the flavours this fit contains
+        for (const TString &f : spec.flavours) inFit |= (f == flavs[fl]);
+        if (!inFit) continue;
         const TString fpath = (fl == 0) ? sMuW : sEleW;
         TFile *fW = TFile::Open(fpath, "READ");
         if (!fW || fW->IsZombie()) { std::cerr << "[ERROR] cannot open " << fpath << "\n"; continue; }
@@ -373,7 +385,7 @@ void postfit_incl(const char *disc = "met",
             const std::string out = outDir + "/postfit_" + flavs[fl] + "_" + tag[is];
             SaveNicePlot1D_WithBkg(hData, bkgs, names, out, xTitle, yTitle,
                                    "", lepLab,
-                                   Form("%s lab incl (simfit postfit)", tag[is]),
+                                   Form("%s lab incl (%s postfit)", tag[is], who.Data()),
                                    box, ps, tuner);
             std::cout << "[postfit-incl] " << out << ".png\n";
         }
@@ -381,7 +393,24 @@ void postfit_incl(const char *disc = "met",
         delete fW;
     }
     if (fFD) { fFD->Close(); delete fFD; }
-    std::cout << "[OK] inclusive simfit postfit stacks (disc=" << disc << ", "
+    std::cout << "[OK] inclusive " << spec.dir << " postfit stacks (disc=" << disc << ", "
               << (useShapes ? "shapes_fit_s" : (nLhe > 0 ? "APPROX prefit x scale" : "prefit x scale"))
               << ") -> " << outDir << "\n";
+}
+
+// the grand fit (unchanged interface; run_observables.sh: postfit_incl.C+("<disc>"))
+void postfit_incl(const char *disc = "met",
+                  const char *csv = nullptr,       // default: pO_fit_out<suffix>/simfit/summary/comb_W_yields.csv
+                  const char *muWFile = nullptr,   // default: plots/combine_input_W<suffix>.root
+                  const char *eleWFile = nullptr,  // default: plots/Elec/combine_input_W<suffix>.root
+                  const char *lheSysts = "",       // "" = read the fitted cards' sidecar; "none" = shortcut path
+                  const char *fitDiag = nullptr)   // default: pO_fit_out<suffix>/simfit/fits/simfit_lab/fitDiagnostics_simfit_lab.root
+{
+    postfit_incl_impl(disc, "comb", csv, muWFile, eleWFile, lheSysts, fitDiag);
+}
+
+// any fit by tag (2026-09-22): comb | simfit_mu | simfit_ele
+void postfit_incl_fit(const char *disc = "leppt_mt40", const char *fit = "simfit_mu")
+{
+    postfit_incl_impl(disc, fit, nullptr, nullptr, nullptr, "", nullptr);
 }

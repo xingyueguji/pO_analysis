@@ -21,9 +21,11 @@ naming is load-bearing, inter-channel asymmetries). The pipeline:
 skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
      → fit (fork: run_pO_fits.sh; DEFAULT = simfit, the μ+e GRAND SIMULTANEOUS
             fit → simfit/summary/comb_fitted_yields.root [+ covariance];
-            legacy per-flavour modes → <chan>_fitted_yields.root)
+            flavfit = the same fit per flavour → simfit_{mu,ele}/summary/)
+     → fiducial_yields.C (r × σ_gen — EVERY observable is built from these,
+            never from the raw fitted counts)
      → charge_asym.C / FBratio.C   → observables.C (comb = primary;
-            legacy per-channel + merged overlay kept for comparison)
+            μ-only vs e-only overlays from the flavfit trees, plots/flavfit/)
 ```
 
 ## TL;DR (full chain)
@@ -33,17 +35,17 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 cd correction  && ./run_trig_eff_mb.sh mu                                    # 0 muon trigger SF (the muon MC skim reads its rootfile since 2026-09-14)
 cd ../skim     && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims (muon MC weighted by ID x ISO x TRIG SFs) + nPDF Up/Down + N_gen
 cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
-cd ../plotting && for a in 'mtandmet.C+(false)' 'mtandmet.C+(true)' \
-                          'dileptonpeak.C+(false)' 'dileptonpeak.C+(true)' \
-                          'plotRpOtheory.C+'; do root -l -q -b "$a"; done       # 3b inputs + theory
+cd ../plotting && ./run_combine_inputs.sh                                    # 3b Combine inputs (mu+ele, logged)
+#   theory graphs are one-time + yield-independent: root -l -q -b 'plotRpOtheory.C+'
 
 # ---- fork (cmsenv) -- locally, or push to lxplus (see Module 4) ----
 cd ../../HiggsAnalysis-CombinedLimit/test && cmsenv && ./run_pO_fits.sh --asimov   # 4 fit (simfit = DEFAULT; --asimov adds the closure fit)
-#   ./run_pO_fits.sh both all   # legacy per-flavour per-bin fits + simfit
+#   ./run_pO_fits.sh both flavfit --asimov   # the mu-only + e-only simultaneous fits
+#   ./run_pO_fits.sh both all --asimov       # grand + mu-only + e-only in one go
 
 # ---- pO_analysis (plain ROOT) ----
 cd ../../pO_analysis/analysis && ./run_observables.sh                            # 5 observables (met)
-#   ./run_observables.sh leppt | leppt_mt40 | all    -> per-discriminant folders (Module 5)
+#   ./run_observables.sh leppt_mt40 | all    -> per-discriminant folders (Module 5; + mu-vs-e overlays when flavfit ran)
 ```
 
 ## Layout
@@ -54,7 +56,7 @@ cd ../../pO_analysis/analysis && ./run_observables.sh                           
 | `skim/`            | selection → per-sample histos; N_gen   | `run_all.sh`, `run_ngen.sh` |
 | `correction/`      | ABCD QCD, isolation WP, Data/MC checks | `run_qcd_abcd.sh` → `qcd_abcd.C`, … |
 | `plotting/`        | data/MC overlays + **Combine inputs**  | `mtandmet.C`, `dileptonpeak.C`, `plotRpOtheory.C` |
-| `analysis/`        | charge asymmetry, F/B ratio            | `charge_asym.C`, `FBratio.C` |
+| `analysis/`        | r × σ_gen yields, charge asymmetry, F/B ratio | `fiducial_yields.C`, `charge_asym.C`, `FBratio.C` |
 | (fork) `test/`     | Combine fit pipeline                   | `run_pO_fits.sh`, `sync_lxplus.sh` |
 
 ## Prerequisites
@@ -180,7 +182,7 @@ lnN κ used in the datacards — plus, since 2026-08-23, the **in-fit ABCD block
 (the m_T-plane B/C40/D counts + A40 prediction exported as `abcd_counts_*`, the
 reduced κ for `QCD_MODE=abcd`) and the **per-pT-bin fake-factor diagnostic**
 (F(pT) tables + `ff_*` plots). Those are the numbers quoted in
-[AN_qcd_background.tex](AN_qcd_background.tex), and ROOT prints them to stdout
+[docs/AN_qcd_background.tex](docs/AN_qcd_background.tex), and ROOT prints them to stdout
 only. `run_qcd_abcd.sh` pre-builds once (so the two channels cannot race on the
 ACLiC artifacts), tees each channel to `correction/logs/qcd_abcd_<chan>.log`
 (~290 lines) and echoes the transfer factors and the κ's to the terminal.
@@ -194,7 +196,8 @@ lose the report.
 (`data_obs/signal/w/wtau/ztau`, mass peak). **Since 2026-09-07 every MC
 process of every region also carries the LHE shape systematics
 `<process>_{nPDF,qcdScale,alphaS}Up/Down`** (from the skim's Up/Down twins,
-Module 2.4; not in the dropped plain `leppt` file) **and, in the muon inputs,
+Module 2.4; their absence for plain `leppt` is what retired that variant on
+2026-09-21 — see Module 4) **and, in the muon inputs,
 the combined SF systematic `<process>_muSFUp/Down` (Module 2.5,
 2026-09-14)**, and a sidecar
 `<input>_systs.txt` next to each file lists what was written — the fork's
@@ -221,7 +224,7 @@ One driver does everything per channel. Full details:
 ```bash
 cd HiggsAnalysis-CombinedLimit/test
 cmsenv
-./run_pO_fits.sh [mu|ele|both] [perbin|incl|combined|simfit|all] [--disc met|leppt|leppt_mt40] [--dry-run] [--no-postfit] [--draw-only] [--asimov]
+./run_pO_fits.sh [mu|ele|both] [simfit|flavfit|all] [--disc met|leppt_mt40] [--dry-run] [--no-postfit] [--draw-only] [--asimov] [--no-statonly] [--no-contour] [--extract-only]
 ```
 
 ### The grand simultaneous fit — `simfit` (2026-08-04, the DEFAULT)
@@ -266,8 +269,9 @@ workspaces, same POI names; charge asymmetry ← lab, R_FB ← fb). This replace
 the legacy scheme's statistical flaw — 48 per-bin fits per flavour each
 re-using the same Z data with the induced correlations ignored — with one
 correct likelihood, and it produces the full covariance of the r's:
-`extract_pO_simfit.C` stores it as `h_cov_yield[_FB]` and
-`charge_asym.C`/`FBratio.C` automatically include the cross terms when present.
+`extract_pO_simfit.C` stores it as `h_cov_yield[_FB]` (+ the POI-space
+`h_cov_poi[_FB]`), `fiducial_yields.C` carries it over to the r × σ_gen yields,
+and `charge_asym.C`/`FBratio.C` automatically include the cross terms when present.
 
 Implementation: `make_pO_simfit_cards.sh` writes one 50-channel datacard + the
 `multiSignalModel` map file per variant (plain files — `--dry-run` needs no
@@ -277,38 +281,67 @@ closure fit (`-t -1`): every fitted POI must come back at 1 — checked and
 reported (PASS/FAIL) by the extraction. Outputs under
 `pO_fit_out<suffix>/simfit/`: `summary/comb_W_yields.csv`, `comb_summary.csv`
 (all POIs, fit status/covQual, covariance-propagated W⁺/W⁻/W inclusive sums,
-Asimov closure rows) and **`comb_fitted_yields.root`** — the `h_yield_*` names
-Module 5 reads (yields = r × the μ+e-summed prefit template integral) plus the
-covariance matrices. Postfit plots for every channel of the grand fit land in
+Asimov closure rows) and **`comb_fitted_yields.root`** — the fit's record:
+`h_yield_*` = r × the μ+e-summed prefit template integral (RECO-level counts)
+plus the covariance matrices (incl. the 25×25 POI covariance `h_cov_poi*`).
+Module 5 never builds an observable on those counts: `fiducial_yields.C` first
+turns the r's into r × σ_gen (see Module 5). Postfit plots for every channel of the grand fit land in
 `simfit/postfit/` (info box: that bin's `r_<C>_y<i>`, the global `r_Z` shown as
 "DY norm", the channel's `qcd_norm`).
 
-### Legacy per-flavour pipeline (`perbin|incl|combined` — the superseded scheme, kept runnable for comparison)
+### The per-flavour fits — `flavfit` (2026-09-22)
 
-It (1) finds this repo's structured inputs (env `PO_PLOTS` / `--plots-dir`, else
-autodetect), (2) generates **all** datacards (`make_pO_datacards.sh`: 48 per-(charge,y)
-lab+FB — each a **two-channel card fitted simultaneously with `Z_incl`** —
-per-charge incl, `W_incl`, `Z_incl`, simultaneous `WZ`), (3) runs
-`text2workspace` + `combine -M FitDiagnostics` per region into a clean tree
-`pO_fit_out/<chan>/{datacards,fits/<region>,postfit,summary}`, (4) extracts
-fitted yields (`extract_pO_yields.C`), (5) draws postfit plots (`draw_postfit_pO.C`,
-same cosmetics as `mtandmet.C`). Mode `all` = this whole legacy pipeline PLUS
-the simfit (when channel = `both`).
+`./run_pO_fits.sh both flavfit` runs the **same simultaneous fit once per lepton
+flavour**: a μ-only likelihood (the 24 muon W channels + the μμ peak + the 6
+muon ABCD control regions) and an e-only one, per binning variant. Everything
+else is the grand fit's: 25 POIs (`r_<C>_y<i>` + `r_Z`, now measured by that
+flavour alone — its own Z peak pins its own `r_Z`), every nuisance that acts
+on the flavour (`lumi`, its two QCD rows, the LHE shapes, `muSF` in the muon
+fit only), the three passes (nominal + `--statonly` = the stat error +
+`--contour`), the `--asimov` closure and the same extraction. The card
+generator writes the flavour halves of the grand card (`SIMFIT_FLAVS`;
+verified identical per column, with Combine's own `multiSignalModel`), and the
+grand card is byte-identical to before. Outputs `pO_fit_out<suffix>/simfit_mu/`
+and `simfit_ele/` with the grand fit's layout and summary files
+`simfit_<flav>_{W_yields.csv,summary.csv,fitted_yields.root}`; `mu flavfit`
+runs one flavour; `both all` runs the grand fit and both flavour fits in one go.
+Purpose: compare μ with e (Module 5 overlays them) — e.g. while the electron
+SFs are not applied — which the grand fit cannot, since it forces one r on both.
+
+**Removed 2026-09-22 (user decision): the legacy per-flavour per-bin pipeline**
+(modes `perbin|incl|combined`: 48 separate two-channel cards per flavour, the
+two-parameter `r` + `dy_norm` + free `qcd_norm` model with no systematics,
+re-fitting the same Z data in every card; scripts `make_pO_datacards.sh`,
+`extract_pO_yields.C`, `make_yields_from_csv.C`). Those modes now exit with a
+pointer to `flavfit`; the scripts are in the fork's git history.
 
 ### W discriminant variants (`--disc`, 2026-07-30)
 
-The W fit can run on three discriminants; `--disc` selects which (default
-`met`, so all existing usage is unchanged):
+The W fit runs on two discriminants; `--disc` selects which:
 
-| `--disc` | discriminant | selection | input file (per channel) | output tree |
-|---|---|---|---|---|
-| `met` | PF MET shape | plain W selection | `combine_input_W.root` | `pO_fit_out/` |
-| `leppt` | lepton pT | plain W selection | `combine_input_W_leppt.root` | `pO_fit_out_leppt/` |
-| `leppt_mt40` | lepton pT | pT>25 && m_T>40 | `combine_input_W_leppt_mt40.root` | `pO_fit_out_leppt_mt40/` |
+| `--disc` | discriminant | selection | input file (per channel) | output tree | role |
+|---|---|---|---|---|---|
+| `met` | PF MET shape | plain W selection | `combine_input_W.root` | `pO_fit_out/` | backup |
+| `leppt_mt40` | lepton pT | pT>25 && m_T>40 | `combine_input_W_leppt_mt40.root` | `pO_fit_out_leppt_mt40/` | **PRIMARY** |
 
-Datacards and the fit model are IDENTICAL for all three (same region names,
-same two-parameter scheme, `qcd_norm` FREE for all — 2026-07-30 decision);
-only the input file, the output tree and the postfit x-title change.
+Datacards and the fit model are IDENTICAL for both (same region names, same
+POI scheme); only the input file, the output tree, the postfit x-title and the
+QCD treatment change (`QCD_MODE` defaults to `abcd` for `leppt_mt40`, `lnN`
+for `met` — see Module 4).
+
+**RETIRED 2026-09-21 — a third variant `leppt`** (lepton pT, plain W selection,
+`combine_input_W_leppt.root` → `pO_fit_out_leppt/`). It was dropped as a
+discriminant on 2026-08-16; `pO_fit_out_leppt/` never had a simfit, and the
+skim stores LHE/SF systematic twins only for `h_met_*` and `h_leppt_mt40_*`,
+so its Combine input carried **no shape systematics** and could not be fitted
+by the current card generator. `mtandmet.C` no longer writes that file or its
+`plots[/Elec]/leppt/` stacks, and deletes any pre-retirement copy on each run;
+`disc_variants.h` and `run_observables.sh` reject the tag with a message
+naming the replacement. To bring it back, restore the two-entry variant table
+at the top of `mtandmet.C` (`kVarNom`/`kVarMt40`) and the `leppt` rows in
+those two consumers. NB `skim.C` still fills `h_leppt_W{p,m}_y*` (the
+no-m_T-cut per-y histos) — they are now unread, but dropping them needs a
+full re-skim, so they were left in place.
 
 > **WARNING — carry the SAME `--disc` through the ENTIRE workflow of a variant
 > run.** The out-trees carry no marker of which discriminant produced them —
@@ -318,8 +351,8 @@ only the input file, the output tree and the postfit x-title change.
 > - **redraw**: `--draw-only` MUST repeat the same `--disc` (it selects the
 >   out-tree AND the axis title; without it, lepton-pT plots get relabeled
 >   "PF MET (GeV)" with no error). Same rule if you ever use `--out`.
-> - **download**: `sync_lxplus.sh download` needs NO flag — it sweeps all
->   three out-trees automatically, skipping absent ones.
+> - **download**: `sync_lxplus.sh download` needs NO flag — it sweeps every
+>   out-tree automatically, skipping absent ones.
 > - **observables (Module 5)**: run `analysis/run_observables.sh <disc>` —
 >   it carries the tag through every step automatically (reads the matching
 >   `pO_fit_out<suffix>/` tree, writes disc-tagged graph files and per-disc
@@ -328,50 +361,29 @@ only the input file, the output tree and the postfit x-title change.
 >   (`h_yield_*`), so if you ever drive the macros by hand instead, the tree
 >   you point at is the ONLY thing distinguishing a MET result from a pT
 >   result — the driver exists so you never have to get that right manually.
-> - **inputs**: `mtandmet.C` writes all three files in one run; a variant
->   whose skim histograms are missing is skipped AND its stale file deleted,
->   so a missing `combine_input_W_leppt*.root` means "re-run Module 3", never
->   "use the old one".
+> - **inputs**: `mtandmet.C` writes both files in one run; a variant whose
+>   skim histograms are missing is skipped AND its stale file deleted, so a
+>   missing `combine_input_W*.root` means "re-run Module 3", never "use the
+>   old one".
 >
 > Physics note for the pT variants: with no low-MET region in the
-> discriminant, the fit constrains `qcd_norm` only weakly — check the fitted
-> `QCD norm` on the postfit plots / in `<chan>_summary.csv` before trusting
-> the composition (if it wanders far from 1, consider constraining it to the
-> ABCD prediction instead of leaving it free).
+> discriminant the QCD normalization is constrained by the in-fit ABCD control
+> regions (`QCD_MODE=abcd`, the leppt_mt40 default) — check the fitted QCD
+> multipliers and `qcd_rate_*` pulls in `<fit>_summary.csv` / on the postfit
+> plots before trusting the composition.
 
-**Legacy fit model (two-parameter, 2026-07-01):** two MC scales per fit — the POI
-**`r` = all W-related MC** (W `signal` + `wtau`; plus the `w`/`wtau` backgrounds
-under the Z peak in simultaneous cards) and **`dy_norm` = all DY-related MC**
-(`z` + `ztau`; plus the Z signal in simultaneous cards). Composition WITHIN each
-group stays locked by the absolute `k_s` templates. Standalone `Z_incl` card:
-roles flip — the POI `r` IS the DY scale (`signal`+`ztau`), the W backgrounds
-get a free `w_norm`. Data-driven ABCD `qcd` → its own free `qcd_norm`.
-**Simultaneous cards** (`WZ` and every per-bin W card) have two fit channels
-(W region + `Z_incl`): `r` scales the W-related in both, the shared `dy_norm`
-scales the DY-related in both — the high-purity Z peak pins it (this replaces
-the old shared `eff_lumi`). Systematics deliberately deferred (stat-only fits).
-
-**Outputs** (`pO_fit_out/<chan>/summary/`): `<chan>_W_yields.csv`,
-`<chan>_summary.csv`, and `<chan>_fitted_yields.root` — single-bin
-`h_mt_W{p,m}_y0..11` (lab) + `..._FB` histos with Sumw2 = fit error, i.e. the
-exact names `charge_asym.C`/`FBratio.C` read.
-
-Channel = `mu|ele|both`; mode = `simfit` (DEFAULT, see above; ignores the
-channel argument — always μ+e), `perbin` (48 per-(charge,y) W regions, each
-simultaneous with `Z_incl`), `incl` (`Wp_incl Wm_incl W_incl Z_incl`,
-standalone), `combined` (the `WZ` fit only), or `all` (legacy + simfit).
-`--dry-run` builds
-datacards without `cmsenv`; `--no-postfit` skips plots; `--draw-only` redraws
-the postfit plots from an existing fit run (only `root` needed — for cosmetic
-`draw_postfit_pO.C` changes; requires the `fits/` tree, so redraw where the
-fits ran and `sync_lxplus.sh download --postfit`).
-Per-region failures (e.g. a tail FB bin with an all-zero `qcd` template) are
-logged and skipped, not fatal — check `pO_fit_out/<chan>/fits/<region>/fit.log`.
-Sanity-check `dy_norm ≈ 1` in `<chan>_summary.csv` after the fits (`w_norm ≈ 1`
-for `Z_incl`). Each postfit plot also carries on-plot fit-quality: `χ²/ndf (p)`
-(Poisson GoF), the fitted `r`, the fitted `DY norm`/`W norm`/`QCD norm`
-(whichever float in that fit), and a red `status/covQ` flag if the fit didn't
-converge cleanly (see the fork README "Diagnosing fit quality").
+Channel = `mu|ele|both` (the flavour(s) of `flavfit`; `simfit` is always μ+e);
+mode = `simfit` (DEFAULT), `flavfit`, or `all` (grand + per-flavour).
+`--dry-run` builds datacards without `cmsenv`; `--no-postfit` skips plots;
+`--draw-only` redraws the postfit plots from an existing fit run (only `root`
+needed — for cosmetic `draw_postfit_pO.C` changes; requires the `fits/` tree,
+so redraw where the fits ran and `sync_lxplus.sh download --postfit`). A
+failed pass is logged and skipped, not fatal — check
+`pO_fit_out<suffix>/<fit>/fits/simfit_<B>/fit.log` and
+`summary/extract_<fit>.log`. Each postfit plot carries on-plot fit-quality:
+`χ²/ndf (p)` (Poisson GoF), the bin's `r`, `DY norm` (= `r_Z`), the QCD
+parameter, and a red `status/covQ` flag if the fit didn't converge cleanly
+(see the fork README "Diagnosing fit quality").
 
 ### Running the fit on lxplus (split workflow)
 
@@ -385,107 +397,136 @@ cd HiggsAnalysis-CombinedLimit/test
 ssh zheng@lxplus.cern.ch                 # then: cmsenv; cd $FORK_LX/test
 #   # simfit (DEFAULT) + Asimov closure:
 #   PO_PLOTS=/afs/cern.ch/user/z/zheng/pO_analysis/plotting/plots ./run_pO_fits.sh --asimov
-#   # legacy per-flavour pipeline + simfit together:
-#   PO_PLOTS=... ./run_pO_fits.sh both all
+#   # the mu-only + e-only fits (flavfit), or all three fits in one go:
+#   PO_PLOTS=... ./run_pO_fits.sh both flavfit --asimov
+#   PO_PLOTS=... ./run_pO_fits.sh both all --asimov
 #   # discriminant variants (SEE THE --disc WARNING above -- keep the flag
-#   # consistent for every later step of that variant's workflow):
-#   PO_PLOTS=... ./run_pO_fits.sh --asimov --disc leppt
+#   # consistent for every later step of that variant's workflow).
+#   # NB --disc defaults to leppt_mt40, so the MET backup needs it explicitly:
 #   PO_PLOTS=... ./run_pO_fits.sh --asimov --disc leppt_mt40
-./sync_lxplus.sh download                # summary/ <- lxplus, ALL out-trees (met + variants)
+#   PO_PLOTS=... ./run_pO_fits.sh --asimov --disc met
+./sync_lxplus.sh download                # <- lxplus, ALL out-trees (met + variants), each fit (simfit + simfit_{mu,ele})
 ./sync_lxplus.sh download --postfit      # also the postfit plots
 ```
 lxplus paths (override via env): `ANA_LX=/afs/cern.ch/user/z/zheng/pO_analysis`,
 `FORK_LX=/afs/cern.ch/user/z/zheng/CMSSW_14_1_0_pre4/src/HiggsAnalysis/CombinedLimit`.
 
-If a downloaded `<chan>_fitted_yields.root` is ever empty but the CSV is fine,
-rebuild it without re-running the fit:
-`root -l -b -q 'my_script/make_yields_from_csv.C("<chan>_W_yields.csv","<chan>_fitted_yields.root")'`.
+A downloaded fit can be re-extracted locally without re-fitting (only `root`):
+`./run_pO_fits.sh [both simfit | both flavfit] --extract-only --disc <disc>`.
 
 ## Module 5 — final observables (`analysis/` + `plotting/`)
 
 **One command per discriminant (2026-08-03):** `analysis/run_observables.sh`
 runs the whole chain, carrying the disc tag through every filename and output
-folder so the three variants coexist without overwriting each other. Since
-2026-08-04 it has two conditional blocks, each run only when its fit outputs
-exist: the **PRIMARY simfit chain** (`charge_asym.C` + `FBratio.C` on
-`simfit/summary/comb_fitted_yields.root` — errors include the fit covariance —
-then `observables_comb`), and the **legacy per-flavour chain** (both channels'
-fitted yields, per-channel / overlay / fiducial-σ plots, kept for comparison):
+folder so the variants coexist without overwriting each other. It has two
+conditional blocks, each run only when its fit outputs exist: the **PRIMARY
+simfit chain** (`fiducial_yields.C` on the grand fit → r × σ_gen with the r
+covariance, `charge_asym.C` + `FBratio.C` on THAT — errors include the fit
+covariance — then `observables_comb`, the cross sections, the (σ_W, σ_Z)
+contour and the inclusive postfit stacks), and since 2026-09-22 the **μ-vs-e chain** of the
+per-flavour fits (`flavfit`, when `simfit_{mu,ele}/` exist), which overlays
+the μ-only and e-only results — each with stat bars + syst boxes, exactly as
+the grand fit's plots:
 
 ```bash
 cd analysis/
-./run_observables.sh              # met (default) -- the PF-MET-shape fit
-./run_observables.sh leppt        # lepton-pT variant   (its fit must exist)
-./run_observables.sh leppt_mt40   # lepton-pT, mT>40 variant
+./run_observables.sh              # met (default) -- the PF-MET-shape fit (backup)
+./run_observables.sh leppt_mt40   # lepton-pT, mT>40 -- the PRIMARY fit
 ./run_observables.sh all          # every variant whose out-tree exists (others SKIP)
 ```
 
-Outputs, per `<disc>` = `met` | `leppt` | `leppt_mt40`:
+Outputs, per `<disc>` = `met` | `leppt_mt40`:
 
 | output | path |
 |---|---|
-| **PRIMARY: simfit (μ+e comb)** graphs | `skim/rootfile/{charge_asym,FBratio}_fit_comb_<disc>.root` |
+| **every fit**: fiducial yields (r × σ_gen + r covariance) | `skim/rootfile/fidyields_<fit>_<disc>.root` (`<fit>` = `comb`, `simfit_mu`, `simfit_ele`) |
+| **every fit**: fiducial A_ch / R_FB graphs | `skim/rootfile/{charge_asym,FBratio}_fid_<fit>_<disc>.root` |
 | **PRIMARY: simfit (μ+e comb)** plots | `plotting/plots/comb/{charge_asym,FBratio}/<disc>/` |
 | **PRIMARY: simfit** fiducial σ: post-fit vs reco-MC vs **gen-MC** | `plotting/plots/comb/xsec/<disc>/` |
 | **PRIMARY: simfit** y-inclusive postfit stacks (μ/e × W⁺/W⁻/W) | `plotting/plots/comb/postfit_incl/<disc>/` |
+| **μ vs e** A_ch, R_FB overlays (+ `mu_vs_e_chi2.csv`) | `plotting/plots/flavfit/{charge_asym,FBratio}/<disc>/` |
+| **μ vs e** σ (W⁺/W⁻/W, with the grand fit), dσ/dη per charge, (σ_W, σ_Z) contour overlay + each fit's own contour, `xsec_flavfit[_ratio].csv` | `plotting/plots/flavfit/xsec/<disc>/` |
+| **μ vs e** each flavour fit's y-inclusive postfit stacks | `plotting/plots/flavfit/postfit_incl/<disc>/` |
 
 For the generator-level overlay on the comb σ plots, produce the (one-time,
 discriminant-independent) gen histograms first: `cd skim && root -l -b -q
 'gen_xsec.C+'` → `skim/rootfile/gen_xsec.root` (missing file ⇒ the overlay is
 skipped with a note, everything else unaffected).
-| legacy graph files (charge asym, R_FB) | `skim/rootfile/{charge_asym,FBratio}_fit_{mu,ele}_<disc>.root` |
-| legacy per-channel plots | `plotting/plots[/Elec]/{charge_asym,FBratio}/<disc>/` |
-| legacy merged μ+e overlay | `plotting/plots/merged/<disc>/` |
-| legacy fiducial σ (incl + dσ/dη) | `plotting/plots/xsec/<disc>/` |
 
-NB with the simfit's μ/e-shared `r`'s, the per-flavour observables are 100%
-correlated with the comb ones (they differ only through MC template ratios) —
-the comb plots are *the* result; per-flavour plots are meaningful as
-independent measurements only from the legacy per-bin fits.
+**Every observable is built from r × σ_gen, never from raw counts** (user rule,
+2026-09-22: there is no dedicated efficiency/acceptance correction, and
+r × σ_gen-fid is what applies it, from MC). The σ's have been r × σ_gen since
+2026-08-12; the charge asymmetry and R_FB were built from the count-based
+fitted yields r × S until 2026-09-22, on the argument that A×ε cancels in a
+ratio. That holds for A_ch (W⁺ and W⁻ share a bin; the switch moved it by
+≤ 0.008) but NOT for R_FB, which divides two different |η_lab| regions
+(η_lab = η_CM + 0.35): the electron ECAL crack sits in F at |η_CM| ≈ 1.2 and
+in B at ≈ 1.9, so the count-based comb R_FB was off by ~20% there (1.026 →
+0.848 and 0.908 → 1.087, 2.5–3 stat σ, on the 2026-09-21 fit). The count-based
+r × S remain the fit's record (the CSVs, `*_fitted_yields.root`) and appear
+only in the postfit stacks and the `xsec_fiducial_diag` A×ε diagnostic.
+
+**Reading the μ-vs-e plots.** Every flavour result is quoted in ONE fiducial
+volume (the pooled μ+e gen σ, bare lepton pT > 25 GeV, |η_lab| < 2.4), so
+σ_e/σ_μ = r_e/r_μ exactly. The A_ch and R_FB overlays use the same
+**acceptance-corrected** yields r × σ_gen (`analysis/fiducial_yields.C`); with
+the count-based r × S each flavour's own A×ε would enter R_FB, and on
+identical physics the μ and e R_FB would differ by up to 60%. The two fits' statistical errors are independent; the
+systematic boxes are largely COMMON (lumi 3% dominates σ and moves both
+flavours together; it cancels in the ratios), so the printed σ_e/σ_μ carries
+the stat error and the per-bin χ² is quoted against stat and total errors.
+(With the grand fit's μ/e-shared `r`'s the flavours cannot differ at all —
+the comb plots are the result; the flavfit plots are the consistency check.)
 
 Every plot also carries the discriminant as a header line ("PF MET fit" /
-"lep p_T fit" / "lep p_T (m_T>40) fit"), so a saved PNG self-identifies.
-The disc→path mapping is single-sourced in `plotting/disc_variants.h`
-(unknown tags are rejected, never silently misfiled). Pre-2026-08-03
-*untagged* graph files (`charge_asym_fit_<chan>.root`) are accepted as a
-met-only fallback when the tagged file is absent; old *flat* plot outputs
-(`plots/charge_asym/*.png`, `plots/merged/*.png`, `plots/xsec/W_*.png`) are
-stale leftovers — current outputs live in the per-disc subfolders.
+"lep p_T (m_T>40) fit"), so a saved PNG self-identifies. The disc→path
+mapping is single-sourced in `plotting/disc_variants.h` (unknown tags are
+rejected, never silently misfiled). The graph files are
+`<stem>_fid_<fit>_<disc>.root` since 2026-09-22 (`pODisc::GraphFile`, no
+fallback): the count-based `*_fit_*` ones — incl. the pre-2026-08-03
+*untagged* `charge_asym_fit_<chan>.root`, once a met-only fallback — are no
+longer read. The matching *untagged* plot outputs
+(`plots/charge_asym/chargeAsym_mt.png`, `plots/FBratio/RFB_mt_*.png`,
+`plots/merged/*_overlay.png`, `plots/xsec/W_*.png`, + the `Elec` twins —
+30 files) were **deleted 2026-09-21**: no live code path could overwrite
+them (every writer targets `<disc>/`), and their `_mt` names came from the
+discriminant naming retired in the 2026-07-30 audit, so they advertised a
+quantity the fit never used. Current outputs live only in the per-disc
+subfolders.
 
-Manual equivalents (what the driver runs; `disc` defaults to `"met"`
-everywhere, shown explicit here — sub in `leppt`/`leppt_mt40` AND the matching
-`pO_fit_out_leppt[_mt40]` tree for a variant):
+Manual equivalents (what the driver runs, for `leppt_mt40`; the loop is the
+fiducial step of BOTH chains, the `comb` pass is also what `observables_comb`
+reads; `S=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40`):
 
 ```bash
 cd analysis/
-for c in mu ele; do
-  F=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out/$c/summary/${c}_fitted_yields.root
-  root -l -b -q "charge_asym.C+(\"$F\",\"../skim/rootfile/charge_asym_fit_${c}_met.root\")"
-  root -l -b -q "FBratio.C+(\"$F\",\"../skim/rootfile/FBratio_fit_${c}_met.root\")"
+for T in simfit_mu simfit_ele comb; do
+  D=$T; [ $T = comb ] && D=simfit
+  root -l -b -q "fiducial_yields.C+(\"$S/$D/summary/${T}_W_yields.csv\",\"$S/$D/summary/${T}_fitted_yields.root\",\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\")"
+  root -l -b -q "charge_asym.C+(\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\",\"../skim/rootfile/charge_asym_fid_${T}_leppt_mt40.root\")"
+  root -l -b -q "FBratio.C+(\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\",\"../skim/rootfile/FBratio_fid_${T}_leppt_mt40.root\")"
 done
-
 cd ../plotting/
-root -l -b -q 'observables.C+(false, "met")'   # muon     -> plots/{charge_asym,FBratio}/met/
-root -l -b -q 'observables.C+(true, "met")'    # electron -> plots/Elec/{charge_asym,FBratio}/met/
-# merged muon+electron overlay -> plots/merged/met/ :
-root -l -q -b -e 'gROOT->LoadMacro("observables.C+"); observables_overlay("met");'
-# fiducial cross sections -> plots/xsec/met/ :
-root -l -b -q 'xsec_fiducial.C+("met")'        # W+/W-/W incl (mu+e), sigma_fid = N_fit / L
-root -l -q -b -e 'gROOT->LoadMacro("xsec_fiducial.C+"); xsec_fiducial_diff(false, "met"); xsec_fiducial_diff(true, "met");'
+root -l -b -q -e 'gROOT->LoadMacro("observables.C+");   observables_flav("leppt_mt40");'        # A_ch, R_FB overlays
+root -l -b -q -e 'gROOT->LoadMacro("xsec_fiducial.C+");  xsec_fiducial_flav("leppt_mt40");'     # sigma + dsigma/deta overlays
+root -l -b -q -e 'gROOT->LoadMacro("xsec_contour.C+");   xsec_contour_WZ_flav("leppt_mt40","lab");'           # contour overlay
+root -l -b -q -e 'gROOT->LoadMacro("xsec_contour.C+");   xsec_contour_WZ_fit("leppt_mt40","lab","simfit_mu");' # one fit's own contour
+root -l -b -q -e 'gROOT->LoadMacro("postfit_incl.C+");   postfit_incl_fit("leppt_mt40","simfit_mu");'
 ```
 
 `observables.C` overlays the data with **all four** nPDF theory bands
 (EPPS21/nCTEQ15HQ/nNNPDF3.0/TUJU21nlo, drawn as filled bands only — no central
-line / error bars). The merged overlay shows muon (black circles) + electron
-(red squares) on the same axes; the sum-channel theory is weighted by the
-combined μ+e fitted yields. Theory file optional (missing → data-only).
-`xsec_fiducial.C` reads the summary CSVs (σ_fid = N_fit / L, L =
-`pONorm::kLumi_invnb` = 46.5 nb⁻¹); `xsec_fiducial_diff` adds dσ_fid/dη per
-channel (per-bin `<chan>_W_yields.csv`; η bins from `g_chargeAsym`).
-NB this is the fiducial σ **before** the lepton-efficiency correction (= σ_fid×ε),
-which is why μ and e differ — the gap is the channel efficiency, and they should
-converge once ε is applied (universality). Stat (fit) uncertainty only.
-For arbitrary regions, read the absolute yields directly from the CSVs.
+line / error bars); theory file optional (missing → data-only). The per-fit
+series use the conventions of `plotting/fit_variants.h` (μ blue circle, e red
+square, combined black diamond). **Removed 2026-09-22 with the legacy
+per-flavour fits:** `observables(isElec, disc)`, `observables_overlay`, the
+N_fit/L `xsec_fiducial(disc, muCsv, eleCsv)` and `xsec_fiducial_diff`
+(`observables(disc)` / `xsec_fiducial(disc)` now run the comb + μ-vs-e views).
+Their last outputs (`plots[/Elec]/{charge_asym,FBratio}/`, `plots/merged/`,
+`plots/xsec/`, `skim/rootfile/{charge_asym,FBratio}_fit_{mu,ele}*.root`) are
+orphaned — nothing rewrites them — as are the count-based comb graphs
+`skim/rootfile/{charge_asym,FBratio}_fit_comb_<disc>.root` superseded by the
+`_fid_` ones on 2026-09-22.
 
 ## Module 6 — corrections & studies (`correction/`)
 
@@ -521,13 +562,18 @@ root -l -b -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil
   `draw_postfit_{inclusive,Zmumu,Zee}.C`) is **superseded** by `run_pO_fits.sh`.
 - **Sumw2 / weights.** All skim histos `Sumw2()`'d; per-event gen weight applied
   to MC; `analysis_helpers.h` Sumw2-aware (`YieldInRange`→`IntegralAndError`,
-  `AsymErr`/`RatioErr` propagate σ²). Fitted-yield histos carry the fit error in
-  Sumw2, so charge_asym/FBratio errors are the fit uncertainties.
+  `AsymErr`/`RatioErr` propagate σ²). The fiducial-yield histos
+  (`fidyields_*`) carry the fit error (r covariance × σ_gen) in Sumw2 plus the
+  covariance matrices, so charge_asym/FBratio errors are the fit uncertainties.
 - **Corrections WIP.** Recoil, lepton SFs, momentum scale/smearing not all
   applied — don't assume MC in `skim/rootfile/` is fully corrected.
-- **Acceptance / efficiency.** The fitted yields are reconstructed, in-acceptance
-  yields; the asymmetry / F/B are fiducial, lepton-level observables. Acceptance
-  is only needed to extrapolate to total cross-sections or boson-level theory.
+- **Acceptance / efficiency.** The fitted yields r × S are RECONSTRUCTED counts
+  (S carries the MC A×ε), so no observable is built on them: every σ, A_ch and
+  R_FB uses r × σ_gen-fid (bare lepton pT > 25 GeV, |η_lab| < 2.4), which applies
+  the MC A×ε bin by bin — there is no dedicated efficiency/acceptance
+  correction (user rule 2026-09-22). A×ε nearly cancels in A_ch but NOT in
+  R_FB (F and B are different detector regions). Going beyond the fiducial
+  volume (total σ, boson-level theory) would additionally need the acceptance.
 - **Pre-existing inter-channel asymmetries** (intentional; see CLAUDE.md):
   DY-veto pT 15 (μ) vs 10 (e) GeV; isolation 0.15 (μ) vs 0.095 (e) — both
   re-confirmed optimal under the Δβ-corrected relIso (2026-07-06, MuonPOG

@@ -84,6 +84,7 @@ struct NgenResult
 // even though the filenames change.
 //   May-26:  MC_Wp_mu_May26.root      -> "Wp_mu",  MC_DYee_May26.root  -> "DYee"
 //   July-29: July_29_MC_Wp_mu.root    -> "Wp_mu",  July_29_MC_DY_ele_Z.root -> "DYee"
+//   Aug-20:  Aug_20_MC_Wp_mu.root     -> "Wp_mu",  Aug_20_MC_DY_ele_Z.root  -> "DYee"
 std::string LabelFromFname(const std::string &fname)
 {
   std::string base = fname;
@@ -91,8 +92,9 @@ std::string LabelFromFname(const std::string &fname)
   if (slash != std::string::npos)
     base = base.substr(slash + 1);
 
-  // strip known prefixes (July-29 first: it contains the May-era "MC_" too)
-  for (const std::string &pre : {std::string("July_29_MC_"), std::string("MC_")})
+  // strip known prefixes (dated ones first: they contain the May-era "MC_" too)
+  for (const std::string &pre : {std::string("Aug_20_MC_"), std::string("July_29_MC_"),
+                                 std::string("MC_")})
     if (base.rfind(pre, 0) == 0)
     {
       base = base.substr(pre.size());

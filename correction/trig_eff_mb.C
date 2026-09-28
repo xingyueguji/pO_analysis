@@ -68,10 +68,17 @@
 //                                       bit_vs_match_pt_<sel>,
 //                                       trig_eff_<sel>.csv (per-bin table)
 //
-// BINNING OF THE APPLIED SF (2026-09-15): |y| = |eta_lab|, 6 bins of 0.4,
-// charge-inclusive -- consumed by skim/muon_sf.h via sf_absy_<sel> and the
-// h_{den,num,bit}_absy_<sel>_* histograms. Established by the likelihood-ratio
-// tests this macro prints under "BINNING DECISION" (2026-09-15, mt40 / nom):
+// WHAT IS APPLIED (2026-09-21, user decision): ONE INCLUSIVE SF -- skim/muon_sf.h
+// runs with kTrigBinning = kTrigInclusive, i.e. 0.9971 (+0.0020 -0.0024) for
+// every muon. This macro nevertheless measures, prints and plots the full
+// rapidity dependence: that record is what JUSTIFIES the choice, and it is the
+// drop-in input if the decision is revisited (flip that one constant back to
+// kTrigPerAbsY and the sf_absy_<sel> + h_{den,num,bit}_absy_<sel>_* histograms
+// below are applied instead, unchanged).
+//
+// IF a binned SF is applied, the binning is |y| = |eta_lab|, 6 bins of 0.4,
+// charge-inclusive -- established by the likelihood-ratio tests this macro
+// prints under "BINNING DECISION" (2026-09-15, mt40 / nom):
 //   flat -> pT (2 groups, </>35)  p = 0.71  / 0.80   => NO pT dependence
 //   flat -> |y| 6 bins            p = 0.0006/ 0.0004 => the eta dependence is real
 //   |y| 3 -> |y| 6 bins           p = 0.0043/ 0.0132 => 3 coarse bins are not enough
@@ -86,7 +93,13 @@
 // The SF runs 0.982 (|y| < 0.4) to 1.006 (|y| > 1.2), a 2.4% spread; the MC
 // itself dips at |y| < 0.4 (eps_MC 0.985 vs 0.994) = the eta ~ 0 barrel wheel
 // gap, and the data dips further (0.967), i.e. the L1 emulation under-models a
-// real, localized detector feature.
+// real, localized detector feature. So the structure is real and is NOT being
+// corrected for: leaving it out is a deliberate choice, whose cost is a pure
+// rapidity SHAPE effect on the W templates of -1.5% (|y| < 0.4) to +1.0%
+// (|y| > 2.0), |y|- and charge-symmetric, with the inclusive normalization
+// (and hence sigma_incl and the charge asymmetry) unchanged by construction --
+// only dsigma/deta and R_FB would move. Do not quote the flatness chi2 of the
+// [SF] log block as the justification; see the note there.
 //   stdout                              the tables -- run through
 //                                       ./run_trig_eff_mb.sh to keep the log
 //
@@ -149,11 +162,14 @@ const double kPtFoldMax = 119.9; // pT above the last edge is folded into the la
 const char *kSel[2]      = {"nom", "mt40"};
 const char *kSelLabel[2] = {"W selection (no m_{T} cut)", "W selection, m_{T} > 40 GeV"};
 
-// |y| = |eta_lab| binning -- the folded twin of kYEdges, and (since 2026-09-15)
-// THE binning in which the trigger SF is applied by skim/muon_sf.h. The signed
-// 12-bin table is kept as the asymmetry cross-check; folding is justified by the
-// likelihood-ratio test printed below (|y| 6 -> signed y 12 is not significant)
-// and doubles the data statistics per bin.
+// |y| = |eta_lab| binning -- the folded twin of kYEdges. This is the binning a
+// rapidity-dependent trigger SF WOULD use (folding is justified by the
+// likelihood-ratio test printed below -- |y| 6 -> signed y 12 is not
+// significant -- and doubles the data statistics per bin). skim/muon_sf.h
+// currently applies the INCLUSIVE SF instead (kTrigBinning = kTrigInclusive,
+// user decision 2026-09-21), but still reads this table and prints it as the
+// measured-but-not-applied record; switching back needs only that constant.
+// The signed 12-bin table is kept as the left/right asymmetry cross-check.
 const int    kNAbsY = 6;
 const double kAbsYEdges[kNAbsY + 1] = {0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4};
 
@@ -363,7 +379,8 @@ struct TrigOut
         b1(std::string(st) + "_y_" + S, kNY, kYEdges, "y = -#eta_{lab}");          // pT > 25 only
         b1(std::string(st) + "_y_" + S + "_plus", kNY, kYEdges, "y = -#eta_{lab}");
         b1(std::string(st) + "_y_" + S + "_minus", kNY, kYEdges, "y = -#eta_{lab}");
-        // |y| = |eta_lab|, folded -- THE binning the trigger SF is applied in
+        // |y| = |eta_lab|, folded -- the binning a rapidity-dependent trigger
+        // SF would use; read by skim/muon_sf.h either way (see the header)
         b1(std::string(st) + "_absy_" + S, kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
         b1(std::string(st) + "_absy_" + S + "_plus", kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
         b1(std::string(st) + "_absy_" + S + "_minus", kNAbsY, kAbsYEdges, "|y| = |#eta_{lab}|");
@@ -1068,7 +1085,7 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
     TEfficiency *e2D_D  = MakeEff(oData.H2("num_2d_" + S), oData.H2("den_2d_" + S), "eff_2d_" + S + "_data");
     TEfficiency *e2D_M  = MakeEff(mNum2, mDen2, "eff_2d_" + S + "_mc");
 
-    // |y|-folded twins -- THE binning skim/muon_sf.h applies (2026-09-15)
+    // |y|-folded twins -- the rapidity record skim/muon_sf.h reads and prints
     TEfficiency *eD_ay  = effD("num_absy_" + S, "den_absy_" + S, "eff_absy_" + S + "_data");
     TEfficiency *eM_ay  = effM("num_absy_" + S, "den_absy_" + S, "eff_absy_" + S + "_mc");
     TEfficiency *eD_ayP = effD("num_absy_" + S + "_plus",  "den_absy_" + S + "_plus",  "eff_absy_" + S + "_plus_data");
@@ -1132,9 +1149,10 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
                         M["den_y_" + S]->GetBinContent(i), M["num_y_" + S]->GetBinContent(i), FmtEff(eM_y, i).c_str(), sfStr.c_str());
     }
 
-    // ---- per-bin table (|y|, pT > 25) -- THE binning the SF is applied in ----
+    // ---- per-bin table (|y|, pT > 25) -- the rapidity record; skim/muon_sf.h
+    //      applies the INCLUSIVE SF, this is what justifies that (see header) ----
     std::cout << Form("\n%-14s | %9s %9s %-24s | %9s %9s %-24s | %-22s\n",
-                      "|y| bin (pT>25)", "data den", "data num", "eff_data", "MC den", "MC num", "eff_MC", "SF = data/MC  <-- APPLIED");
+                      "|y| bin (pT>25)", "data den", "data num", "eff_data", "MC den", "MC num", "eff_MC", "SF = data/MC (not appl.)");
     for (int i = 1; i <= kNAbsY; ++i)
     {
       std::string sfStr = "        --          ";
@@ -1195,7 +1213,7 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
                         "|y|3 -> |y|3 x pT2 (2D)", "", dI, nI, TMath::Prob(std::max(dI, 0.0), nI),
                         TMath::Prob(std::max(dI, 0.0), nI) < 0.05 ? "<-- 2D needed" : "(1D in |y| suffices)");
     }
-    PrintFlatness("SF vs |y| (6 bins)  <-- APPLIED", oData.H1("den_absy_" + S), oData.H1("num_absy_" + S),
+    PrintFlatness("SF vs |y| (6 bins)  MEASURED, NOT APPLIED", oData.H1("den_absy_" + S), oData.H1("num_absy_" + S),
                   M["den_absy_" + S], M["num_absy_" + S]);
     PrintFlatness("SF vs signed y (12 bins)", oData.H1("den_y_" + S), oData.H1("num_y_" + S),
                   M["den_y_" + S], M["num_y_" + S]);
@@ -1214,7 +1232,7 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
       const FlatFit fm = FlatnessLRT(oData.H1("den_absy_" + S + "_minus"), oData.H1("num_absy_" + S + "_minus"),
                                      M["den_absy_" + S + "_minus"], M["num_absy_" + S + "_minus"]);
       const char *lp = isMu ? "mu" : "e ";
-      std::cout << Form("  %-30s SF(%s+) %.4f  SF(%s-) %.4f  (charge-inclusive SF applied; see the charge split above)\n",
+      std::cout << Form("  %-30s SF(%s+) %.4f  SF(%s-) %.4f  (the SF is charge-inclusive; see the charge split above)\n",
                         "per-charge |y| common SFs", lp, fp.sf, lp, fm.sf);
     }
 
@@ -1307,11 +1325,12 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
                  {{0, 2, "Data / MC, " + lepSym + "^{+}", kBlack, 20}, {1, 3, "Data / MC, " + lepSym + "^{-}", kBlue + 1, 21}},
                  outDir + "/eff_y_" + S + "_charge", "y = -#eta_{lab}", "Data / MC",
                  hdr, sub1 + ", p_{T} > 25 GeV", sub2, {}, kYEdges[0], kYEdges[kNY], 0.6, 1.25, 0.85, 1.15, kNoLine, "Trigger efficiency", 0.16);
-    // vs |y| (pT > 25) -- THE applied binning; the ratio pad IS the applied SF
+    // vs |y| (pT > 25) -- the ratio pad IS the rapidity-dependent SF. Measured
+    // and kept as the justification for applying the inclusive one instead.
     DrawEffRatio({{eD_ay, "Data (MB-triggered)", kBlack, 20}, {eM_ay, "W signal MC", kRed + 1, 24}},
                  {{0, 1, "Data / MC = SF", kBlack, 20}},
                  outDir + "/eff_absy_" + S, "|y| = |#eta_{lab}|", "Data / MC = SF",
-                 hdr, sub1 + ", p_{T} > 25 GeV", "the SF applied by skim/muon_sf.h", box,
+                 hdr, sub1 + ", p_{T} > 25 GeV", "rapidity-dependent SF (measured; an inclusive SF is applied)", box,
                  kAbsYEdges[0], kAbsYEdges[kNAbsY], 0.6, 1.25, 0.90, 1.10);
     DrawEffRatio({{eD_ayP, "Data " + lepSym + "^{+}", kBlack, 20}, {eD_ayM, "Data " + lepSym + "^{-}", kBlue + 1, 21},
                   {eM_ayP, "MC " + lepSym + "^{+}", kRed + 1, 24}, {eM_ayM, "MC " + lepSym + "^{-}", kOrange + 7, 25}},

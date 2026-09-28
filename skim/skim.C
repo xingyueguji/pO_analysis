@@ -2327,7 +2327,7 @@ int skim_Zee(const char *fname, SampleType sample)
   const bool   applyHiBin     = false;
   const int    hiBinMin       = 0;
   const int    hiBinMax       = 200;
-  const double isoMax         = 0.095; // FIXME: tune for electrons (PU correction missing)
+  const double isoMax         = 0.095; // = skim_Wel's cut on the Delta-beta PF relIso (RelIsoPF); J(QCD) optimum of correction/isolation_ele.C
 
   std::string outPrefix = "ZToEE_pO2025";
 
@@ -2658,7 +2658,6 @@ int skim_Zee(const char *fname, SampleType sample)
       */
       const double isoLead = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
       if (isoLead >= isoMax) passIsolead = false;
-      // FIXME: redo electron isolation study; not using a working point.
 
       for (int j = i + 1; j < nEle; ++j)
       {

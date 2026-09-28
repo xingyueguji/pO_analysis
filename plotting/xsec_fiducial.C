@@ -16,9 +16,12 @@
 
 #include "TGraph.h"
 #include "TFile.h"
+#include "TLine.h"
+#include "TMath.h"
 #include "plotting_helper.C"           // PlotStyle, ApplyCanvasStyle/HistStyle, DrawHeader, CMS_lumi
 #include "../skim/mc_norm.h"           // pONorm::kLumi_invnb (single-source data lumi)
 #include "disc_variants.h"             // pODisc::Spec/GraphFile (W-discriminant tags)
+#include "fit_variants.h"              // pOFit::Spec (which fit: comb / mu-only / e-only)
 
 // -----------------------------------------------------------------------------
 // Charge-series markers (2026-09-15) -- one place, so the W / W+ / W- glyphs
@@ -49,298 +52,27 @@ static const double kMkWSz = 1.3, kMkWpSz = 1.5, kMkWmSz = 2.0;
 static const int    kMkWOpen = 24, kMkWmOpen = 27;       // open circle / open diamond
 
 // =============================================================================
-// xsec_fiducial.C -- fiducial W cross sections (W+, W-, W inclusive) from the
-// fitted signal yields in the Combine summary CSVs, muon and electron overlaid.
+// xsec_fiducial.C -- fiducial W cross sections (W+, W-, W inclusive, and
+// d(sigma)/d(eta_CM)) from the simultaneous fits:
 //
-//   sigma_fid = N_fit / L_int        (N_fit = fitted signal yield from the CSV)
+//   sigma_meas,i = r_i x sigma_gen-fid,i        (r_i = the fitted POI of bin i)
 //
-// `disc` = met|leppt|leppt_mt40 selects WHICH fit's yields are used
-// (2026-08-03): it drives the default CSV / charge-asym paths (out-tree
-// pO_fit_out<suffix>/) and the output folder plots/xsec/<disc>/, and is
-// stamped into the plot header. Runner: analysis/run_observables.sh.
+//   xsec_fiducial_comb(disc)   the GRAND fit (mu + e, r shared)  -> plots/comb/xsec/<disc>/
+//   xsec_fiducial_diag(disc)   its per-flavour extraction diagnostic (A x eps)
+//   xsec_fiducial_flav(disc)   the MU-ONLY and E-ONLY fits OVERLAID (fork mode
+//                              flavfit, 2026-09-22)       -> plots/flavfit/xsec/<disc>/
+//   xsec_fiducial(disc)        all three
 //
-// NOTE: this is the fiducial cross section BEFORE the lepton efficiency
-// correction (eff/reco/ID/iso/trigger not yet applied), i.e. sigma_fid x eps.
-// That is exactly why muon and electron disagree here -- the gap is the channel
-// efficiency difference; once eps is applied they should converge (universality).
-// Stat (fit) uncertainty only; lumi uncertainty not included.
-//
-//   root -l -q 'xsec_fiducial.C+'              // met; +("leppt") etc. for variants
+// The LEGACY N_fit/L cross sections of the per-flavour per-bin fits
+// (xsec_fiducial(disc, muCsv, eleCsv) and xsec_fiducial_diff) were removed
+// with those fits on 2026-09-22; xsec_fiducial_flav is the mu-vs-e view now.
+// POLICY (user, 2026-09-22): every observable is built from r x sigma_gen,
+// never from raw counts (no dedicated efficiency/acceptance correction
+// exists); the count-based r x S = N_fit numbers survive only as console
+// cross-checks and in xsec_fiducial_diag, whose point is to SHOW the A x eps
+// that r x sigma_gen applies.
+// Runner: analysis/run_observables.sh.
 // =============================================================================
-
-// read fitted_yield (col 5) + fitted_yield_err (col 6) for a region row.
-static bool readYield(const char *csv, const char *region, double &y, double &e)
-{
-    std::ifstream in(csv);
-    if (!in) { std::cerr << "[ERROR] cannot open CSV: " << csv << "\n"; return false; }
-    std::string line;
-    std::getline(in, line); // header
-    while (std::getline(in, line))
-    {
-        std::stringstream ss(line);
-        std::string f;
-        std::vector<std::string> c;
-        while (std::getline(ss, f, ',')) c.push_back(f);
-        if (c.size() >= 7 && c[0] == region && c[1] == "r")
-        {
-            y = std::atof(c[5].c_str());
-            e = std::atof(c[6].c_str());
-            return true;
-        }
-    }
-    std::cerr << "[WARN] region '" << region << "' not found in " << csv << "\n";
-    return false;
-}
-
-void xsec_fiducial(
-    const char *disc   = "met",    // met|leppt|leppt_mt40 (drives defaults + out folder)
-    const char *muCsv  = nullptr,  // default: pO_fit_out<suffix>/mu/summary/mu_summary.csv
-    const char *eleCsv = nullptr,  // default: pO_fit_out<suffix>/ele/summary/ele_summary.csv
-    double Lint = pONorm::kLumi_invnb /* 46.5 nb^-1 */)
-{
-    gStyle->SetEndErrorSize(4);
-
-    TString dsuf, discLabel;
-    if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-    const TString sMuCsv = muCsv ? TString(muCsv)
-        : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/mu/summary/mu_summary.csv", dsuf.Data());
-    const TString sEleCsv = eleCsv ? TString(eleCsv)
-        : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/ele/summary/ele_summary.csv", dsuf.Data());
-
-    const char *regions[3] = {"Wp_incl", "Wm_incl", "W_incl"};
-    const char *xlab[3]    = {"W^{+}", "W^{-}", "W"};
-
-    double yMu[3] = {0, 0, 0}, eMu[3] = {0, 0, 0};
-    double yEl[3] = {0, 0, 0}, eEl[3] = {0, 0, 0};
-    bool haveMu = false, haveEl = false;
-    for (int i = 0; i < 3; ++i)
-    {
-        double y, e;
-        if (readYield(sMuCsv.Data(), regions[i], y, e))  { yMu[i] = y / Lint; eMu[i] = e / Lint; haveMu = true; }
-        if (readYield(sEleCsv.Data(), regions[i], y, e)) { yEl[i] = y / Lint; eEl[i] = e / Lint; haveEl = true; }
-        printf("[xsec] %-8s  mu = %6.2f +/- %5.2f nb   e = %6.2f +/- %5.2f nb\n",
-               regions[i], yMu[i], eMu[i], yEl[i], eEl[i]);
-    }
-    if (!haveMu && !haveEl) { std::cerr << "[ERROR] no yields read -- check the CSV paths.\n"; return; }
-
-    // points, offset slightly in x so mu/e error bars don't overlap
-    double xMu[3] = {1 - 0.08, 2 - 0.08, 3 - 0.08};
-    double xEl[3] = {1 + 0.08, 2 + 0.08, 3 + 0.08};
-    double ex[3]  = {0, 0, 0};
-    TGraphErrors *gMu = new TGraphErrors(3, xMu, yMu, ex, eMu);
-    TGraphErrors *gEl = new TGraphErrors(3, xEl, yEl, ex, eEl);
-
-    PlotStyle ps;
-    ps.logy = false;
-    TCanvas *c = new TCanvas("c_xsec_fid", "", ps.w, ps.h);
-    ApplyCanvasStyle(c, ps);
-    c->cd();
-
-    double ymax = 0.0;
-    for (int i = 0; i < 3; ++i)
-    {
-        if (haveMu) ymax = std::max(ymax, yMu[i] + eMu[i]);
-        if (haveEl) ymax = std::max(ymax, yEl[i] + eEl[i]);
-    }
-
-    TH1F *fr = new TH1F("fr_xsec", "", 3, 0.5, 3.5); // category frame
-    for (int i = 0; i < 3; ++i) fr->GetXaxis()->SetBinLabel(i + 1, xlab[i]);
-    fr->SetStats(0);
-    ApplyHistStyle(fr, ps, "", "#sigma^{fid}_{W} (nb)");
-    fr->GetXaxis()->SetLabelSize(0.065);
-    fr->GetXaxis()->SetNdivisions(3);
-    fr->SetMinimum(0.0);
-    fr->SetMaximum(1.45 * ymax);
-    fr->Draw();
-
-    if (haveMu)
-    {
-        gMu->SetMarkerStyle(20); gMu->SetMarkerSize(1.5);
-        gMu->SetMarkerColor(kBlack); gMu->SetLineColor(kBlack); gMu->SetLineWidth(2);
-        gMu->Draw("P SAME");
-    }
-    if (haveEl)
-    {
-        gEl->SetMarkerStyle(21); gEl->SetMarkerSize(1.5);
-        gEl->SetMarkerColor(kRed + 1); gEl->SetLineColor(kRed + 1); gEl->SetLineWidth(2);
-        gEl->Draw("P SAME");
-    }
-
-    DrawHeader(ps, "", "W #rightarrow l #nu", "fiducial cross section");
-    // Discriminant tag as a short 4th header line (long labels overflow sub2)
-    TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
-    ltag.SetTextSize(ps.boxTextSize);
-    ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy,
-                   Form("%s fit", discLabel.Data()));
-
-    // caveat note (this is sigma_fid x eps, no efficiency correction yet)
-    TLatex tx;
-    tx.SetNDC();
-    tx.SetTextFont(42);
-    tx.SetTextSize(0.030);
-    tx.DrawLatex(0.18, 0.255, "stat. unc. only"); // L is already in the CMS_lumi label
-    tx.DrawLatex(0.18, 0.21, "no eff and acc. correction");
-
-    TLegend *leg = new TLegend(0.20, 0.66, 0.44, 0.82); // upper-left (header is upper-right)
-    leg->SetBorderSize(0);
-    leg->SetFillStyle(0);
-    leg->SetTextFont(42);
-    leg->SetTextSize(0.038);
-    if (haveMu) leg->AddEntry(gMu, "Muon", "lep");
-    if (haveEl) leg->AddEntry(gEl, "Electron", "lep");
-    leg->Draw();
-
-    CMS_lumi(c, 13, 10);
-    c->RedrawAxis();
-    c->Modified();
-    c->Update();
-
-    // Per-discriminant output folder so met / leppt / leppt_mt40 coexist.
-    const std::string outDir = std::string("./plots/xsec/") + disc;
-    gSystem->mkdir(outDir.c_str(), kTRUE);
-    c->SaveAs((outDir + "/W_fiducial.png").c_str());
-    c->SaveAs((outDir + "/W_fiducial.pdf").c_str());
-    std::cout << "[OK] Saved " << outDir << "/W_fiducial.{png,pdf}  (disc=" << disc
-              << ", L = " << Lint << " nb^-1)\n";
-}
-
-// -----------------------------------------------------------------------------
-// per-bin yields for one charge+binning from <chan>_W_yields.csv:
-//   region,charge,binning,ybin,r,rErr,signal_prefit,fitted_yield(7),fitted_yield_err(8),...
-static bool readBinYields(const char *csv, const char *charge, const char *binning,
-                          double y[12], double e[12])
-{
-    for (int i = 0; i < 12; ++i) { y[i] = 0; e[i] = 0; }
-    std::ifstream in(csv);
-    if (!in) { std::cerr << "[ERROR] cannot open CSV: " << csv << "\n"; return false; }
-    std::string line;
-    std::getline(in, line); // header
-    int found = 0;
-    while (std::getline(in, line))
-    {
-        std::stringstream ss(line);
-        std::string f;
-        std::vector<std::string> c;
-        while (std::getline(ss, f, ',')) c.push_back(f);
-        if (c.size() < 9) continue;
-        if (c[1] == charge && c[2] == binning)
-        {
-            int iy = std::atoi(c[3].c_str());
-            if (iy >= 0 && iy < 12) { y[iy] = std::atof(c[7].c_str()); e[iy] = std::atof(c[8].c_str()); ++found; }
-        }
-    }
-    return found > 0;
-}
-
-// =============================================================================
-// xsec_fiducial_diff -- differential fiducial cross section d(sigma_fid)/d(eta_CM)
-// for W+, W-, and W inclusive, vs the CM-frame lepton pseudorapidity, ONE channel.
-// Per bin: d(sigma)/d(eta) = N_fit / (L * d-eta). The eta bin centers/widths are
-// taken from g_chargeAsym (charge_asym_fit_<chan>_<disc>.root; legacy alias
-// g_chargeAsym_mt accepted) so the axis matches the charge-asymmetry plot
-// exactly (lab bins shifted to the CM frame). Same caveats as xsec_fiducial:
-// sigma_fid x eps (no efficiency correction), stat unc only.
-//
-//   root -l -q 'xsec_fiducial.C+' -e 'xsec_fiducial_diff(false)'   // muon; (true)=electron
-//   (2nd arg = disc, e.g. xsec_fiducial_diff(false, "leppt"))
-// =============================================================================
-void xsec_fiducial_diff(bool isElec = false,
-                        const char *disc = "met",
-                        const char *csv = nullptr,
-                        const char *chargeFile = nullptr,
-                        double Lint = pONorm::kLumi_invnb)
-{
-    gStyle->SetEndErrorSize(3);
-    const char *chan = isElec ? "ele" : "mu";
-    const char *lepSym = isElec ? "e" : "#mu";
-
-    TString dsuf, discLabel;
-    if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-    const TString sCsv = csv ? TString(csv)
-        : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/%s/summary/%s_W_yields.csv", dsuf.Data(), chan, chan);
-    const TString sCharge = chargeFile ? TString(chargeFile)
-        : pODisc::GraphFile("charge_asym", chan, disc);
-
-    // eta bin centers + half-widths from the charge-asym graph (CM frame);
-    // primary name first, legacy "_mt" alias as fallback (see naming audit).
-    TFile *fC = TFile::Open(sCharge, "READ");
-    TGraphErrors *gA = (fC && !fC->IsZombie()) ? (TGraphErrors *)fC->Get("g_chargeAsym") : nullptr;
-    if (!gA && fC && !fC->IsZombie()) gA = (TGraphErrors *)fC->Get("g_chargeAsym_mt");
-    if (!gA) { std::cerr << "[ERROR] need g_chargeAsym(_mt) in " << sCharge
-                         << " for the CM eta bin positions (run charge_asym.C on the fitted yields first).\n"; return; }
-    const int NY = gA->GetN();
-    std::vector<double> xc(NY), exc(NY);
-    for (int i = 0; i < NY; ++i) { xc[i] = gA->GetPointX(i); exc[i] = gA->GetErrorX(i); }
-
-    double yWp[12], eWp[12], yWm[12], eWm[12];
-    if (!readBinYields(sCsv, "Wp", "lab", yWp, eWp) || !readBinYields(sCsv, "Wm", "lab", yWm, eWm))
-    { std::cerr << "[ERROR] could not read per-bin yields from " << sCsv << "\n"; return; }
-
-    std::vector<double> sP(NY), esP(NY), sM(NY), esM(NY), sI(NY), esI(NY);
-    double ymax = 0.0;
-    for (int i = 0; i < NY && i < 12; ++i)
-    {
-        double dEta = 2.0 * exc[i];
-        if (dEta <= 0) dEta = 0.4;
-        sP[i] = yWp[i] / (Lint * dEta);  esP[i] = eWp[i] / (Lint * dEta);
-        sM[i] = yWm[i] / (Lint * dEta);  esM[i] = eWm[i] / (Lint * dEta);
-        const double yi = yWp[i] + yWm[i];
-        const double ei = std::sqrt(eWp[i] * eWp[i] + eWm[i] * eWm[i]);
-        sI[i] = yi / (Lint * dEta);      esI[i] = ei / (Lint * dEta);
-        ymax = std::max(ymax, std::max(sI[i] + esI[i], std::max(sP[i] + esP[i], sM[i] + esM[i])));
-    }
-
-    TGraphErrors *gI = new TGraphErrors(NY, xc.data(), sI.data(), exc.data(), esI.data());
-    TGraphErrors *gP = new TGraphErrors(NY, xc.data(), sP.data(), exc.data(), esP.data());
-    TGraphErrors *gM = new TGraphErrors(NY, xc.data(), sM.data(), exc.data(), esM.data());
-
-    PlotStyle ps; ps.logy = false;
-    TCanvas *c = new TCanvas(Form("c_dsig_%s", chan), "", ps.w, ps.h);
-    ApplyCanvasStyle(c, ps);
-    c->cd();
-
-    const double xlo = xc[0] - exc[0] - 0.1, xhi = xc[NY - 1] + exc[NY - 1] + 0.1;
-    TH1F *fr = new TH1F(Form("fr_dsig_%s", chan), "", 100, xlo, xhi);
-    fr->SetStats(0);
-    ApplyHistStyle(fr, ps, Form("#eta^{%s}_{CM}", lepSym), "d#sigma^{fid}_{W}/d#eta (nb)");
-    fr->SetMinimum(0.0);
-    fr->SetMaximum(1.55 * ymax);
-    fr->Draw();
-
-    gI->SetMarkerStyle(kMkW);  gI->SetMarkerSize(kMkWSz);  gI->SetMarkerColor(kBlack);     gI->SetLineColor(kBlack);     gI->SetLineWidth(2);
-    gP->SetMarkerStyle(kMkWp); gP->SetMarkerSize(kMkWpSz); gP->SetMarkerColor(kAzure + 2); gP->SetLineColor(kAzure + 2); gP->SetLineWidth(2);
-    gM->SetMarkerStyle(kMkWm); gM->SetMarkerSize(kMkWmSz); gM->SetMarkerColor(kRed + 1);   gM->SetLineColor(kRed + 1);   gM->SetLineWidth(2);
-    gI->Draw("P SAME"); gP->Draw("P SAME"); gM->Draw("P SAME");
-
-    DrawHeader(ps, "", Form("W #rightarrow %s #nu", lepSym), "fiducial cross section");
-    // Discriminant tag as a short 4th header line (long labels overflow sub2)
-    TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
-    ltag.SetTextSize(ps.boxTextSize);
-    ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy,
-                   Form("%s fit", discLabel.Data()));
-
-    TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.030);
-    tx.DrawLatex(0.18, 0.235, "stat. unc. only"); // L is already in the CMS_lumi label
-    tx.DrawLatex(0.18, 0.190, "no eff and acc. correction");
-
-    TLegend *leg = new TLegend(0.18, 0.61, 0.40, 0.79); // upper-left, below CMS (header is upper-right)
-    leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.036);
-    leg->AddEntry(gI, "W (incl.)", "lep");
-    leg->AddEntry(gP, "W^{+}", "lep");
-    leg->AddEntry(gM, "W^{-}", "lep");
-    leg->Draw();
-
-    CMS_lumi(c, 13, 10);
-    c->RedrawAxis(); c->Modified(); c->Update();
-
-    // Per-discriminant output folder so met / leppt / leppt_mt40 coexist.
-    const std::string outDir = std::string("./plots/xsec/") + disc;
-    gSystem->mkdir(outDir.c_str(), kTRUE);
-    c->SaveAs(Form("%s/W_dsigma_deta_%s.png", outDir.c_str(), chan));
-    c->SaveAs(Form("%s/W_dsigma_deta_%s.pdf", outDir.c_str(), chan));
-    std::cout << "[OK] Saved " << outDir << "/W_dsigma_deta_" << chan << ".{png,pdf}  (disc="
-              << disc << ", L = " << Lint << " nb^-1)\n";
-}
 
 // -----------------------------------------------------------------------------
 // per-bin PREFIT MC signal (mu+e summed template integrals, col 6
@@ -579,18 +311,19 @@ static double systFrom(double tot, double stat, bool haveStat)
 // the lepton SFs). The fork's extractor also writes the STATISTICAL part
 // (CSV column rErr_stat + h_cov_yield_stat: the post-fit covariance
 // conditioned on the constrained nuisances -- what a refit with them frozen
-// at their post-fit values gives, without the refit); the plots then draw an
-// inner thick bar = stat and an outer thin bar = total, and xsec_comb.csv
-// splits the error into sigma_meas_stat_nb / sigma_meas_syst_nb (syst =
-// sqrt(total^2 - stat^2)); without the column a single (total) bar is drawn
-// and labelled as such.
+// at their post-fit values gives, without the refit; since 2026-09-15b the
+// --statonly companion fit itself); the plots then draw the point + the
+// STATISTICAL bar + the systematic as a TBox (MakeSystBoxes), and
+// xsec_comb.csv splits the error into sigma_meas_stat_nb / sigma_meas_syst_nb
+// (syst = sqrt(total^2 - stat^2)); without the column a single (total) bar is
+// drawn and labelled as such.
 //
 //   root -l -q -e 'gROOT->LoadMacro("xsec_fiducial.C+"); xsec_fiducial_comb("met");'
 // =============================================================================
 void xsec_fiducial_comb(const char *disc = "met",
                         const char *summaryCsv = nullptr, // default: simfit/summary/comb_summary.csv
                         const char *binsCsv    = nullptr, // default: simfit/summary/comb_W_yields.csv
-                        const char *chargeFile = nullptr, // default: charge_asym_fit_comb_<disc>.root
+                        const char *chargeFile = nullptr, // default: charge_asym_fid_comb_<disc>.root (eta bin positions)
                         const char *yieldsRoot = nullptr, // default: simfit/summary/comb_fitted_yields.root
                         const char *genFile    = "../skim/rootfile/gen_xsec.root", // skim/gen_xsec.C output (disc-independent); missing -> overlay skipped
                         double Lint = pONorm::kLumi_invnb)
@@ -599,8 +332,9 @@ void xsec_fiducial_comb(const char *disc = "met",
 
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-    const TString base = TString::Format(
-        "../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit/summary", dsuf.Data());
+    pOFit::Spec comb;
+    pOFit::Get("comb", comb);
+    const TString base = pOFit::WorkDir(dsuf, comb) + "/summary";   // honours $FORK_TEST
     const TString sSum    = summaryCsv ? TString(summaryCsv) : base + "/comb_summary.csv";
     const TString sBins   = binsCsv    ? TString(binsCsv)    : base + "/comb_W_yields.csv";
     const TString sRoot   = yieldsRoot ? TString(yieldsRoot) : base + "/comb_fitted_yields.root";
@@ -965,7 +699,7 @@ static bool readFlavourPrefit(const char *file, double s[24])
 void xsec_fiducial_diag(const char *disc = "met",
                         const char *binsCsv    = nullptr, // default: simfit/summary/comb_W_yields.csv
                         const char *yieldsRoot = nullptr, // default: simfit/summary/comb_fitted_yields.root
-                        const char *chargeFile = nullptr, // default: charge_asym_fit_comb_<disc>.root (eta bin positions)
+                        const char *chargeFile = nullptr, // default: charge_asym_fid_comb_<disc>.root (eta bin positions)
                         const char *genFile    = "../skim/rootfile/gen_xsec.root",
                         double Lint = pONorm::kLumi_invnb)
 {
@@ -973,8 +707,9 @@ void xsec_fiducial_diag(const char *disc = "met",
 
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-    const TString base = TString::Format(
-        "../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit/summary", dsuf.Data());
+    pOFit::Spec comb;
+    pOFit::Get("comb", comb);
+    const TString base = pOFit::WorkDir(dsuf, comb) + "/summary";   // honours $FORK_TEST
     const TString sBins = binsCsv    ? TString(binsCsv)    : base + "/comb_W_yields.csv";
     const TString sRoot = yieldsRoot ? TString(yieldsRoot) : base + "/comb_fitted_yields.root";
     const TString sCharge = chargeFile ? TString(chargeFile) : pODisc::GraphFile("charge_asym", "comb", disc);
@@ -1274,4 +1009,444 @@ void xsec_fiducial_diag(const char *disc = "met",
            sumCount[0], sumCount[1], sumCount[2]);
     std::cout << "[OK] Wrote " << outDir << "/xsec_diag.csv + xsec_diag_bins.csv\n";
     if (fC) { fC->Close(); delete fC; }
+}
+
+// =============================================================================
+// xsec_fiducial_flav -- the MU-ONLY and E-ONLY simultaneous fits (fork
+// run_pO_fits.sh mode flavfit, 2026-09-22) OVERLAID, each extracted exactly as
+// xsec_fiducial_comb extracts the grand fit:
+//
+//     sigma_meas,i = r_i x sigma_gen-fid,i ,  inclusive = Sum_i with the full
+//     r-covariance (h_cov_yield), the stat part from h_cov_yield_stat /
+//     rErr_stat, drawn as point + stat bar + syst box (MakeSystBoxes)
+//
+// with the SAME (mu+e pooled) gen fiducial cross sections for every fit, so all
+// results are quoted in ONE fiducial volume (bare lepton pT > 25 GeV,
+// |eta_lab| < 2.4) and sigma_e / sigma_mu = r_e / r_mu exactly -- a pure
+// data-vs-MC comparison; the ~1-2% bare-lepton FSR difference between the
+// flavours sits in each flavour's MC acceptance, where it belongs.
+//
+//   W_fiducial.{png,pdf}              W+, W-, W: mu only, e only [+ the grand
+//                                     fit, withComb], the r = 1 gen-fiducial
+//                                     expectation as a dashed segment
+//   W_dsigma_deta_{Wp,Wm,W}.{png,pdf} d(sigma)/d(eta_CM) per charge, mu vs e
+//                                     [+ the grand fit, withCombDiff]
+//   xsec_flavfit.csv                  per fit: per-bin + inclusive rows (the
+//                                     xsec_comb.csv columns + a fit column)
+//   xsec_flavfit_ratio.csv            sigma_e / sigma_mu, per bin + inclusive
+//
+// COMPARING: the two fits' STATISTICAL errors are independent (disjoint event
+// samples); the systematics are largely common -- the lumi 3% (most of the
+// inclusive syst box) and the theory shapes move both flavours together and
+// cancel in sigma_e / sigma_mu. The ratio is therefore quoted with the
+// stat-only error, and the per-bin mu-vs-e chi2 is printed both against the
+// stat errors and, as a conservative bound, against the total ones. The
+// flavour-specific systematics (in-fit ABCD QCD, muSF) are in neither ratio
+// error.
+// Outputs: ./plots/flavfit/xsec/<disc>/
+//   root -l -b -q -e 'gROOT->LoadMacro("xsec_fiducial.C+"); xsec_fiducial_flav("leppt_mt40");'
+// =============================================================================
+void xsec_fiducial_flav(const char *disc = "leppt_mt40",
+                        bool withComb = true,       // the grand fit in the inclusive plot
+                        bool withCombDiff = false,  // ... and in the d(sigma)/d(eta) ones
+                        const char *genFile = "../skim/rootfile/gen_xsec.root")
+{
+    gStyle->SetEndErrorSize(4);
+
+    TString dsuf, discLabel;
+    if (!pODisc::Spec(disc, dsuf, discLabel)) return;
+    const std::string outDir = std::string("./plots/flavfit/xsec/") + disc;
+
+    // ---- the fits, left to right: mu, [comb], e -- each through the SAME
+    // ingredient loader and covariance propagation as the grand fit
+    struct FitX
+    {
+        pOFit::Spec spec;
+        CombIngredients in;
+        double yv[3] = {0, 0, 0}, ev[3] = {0, 0, 0}, evS[3] = {0, 0, 0}; // W+, W-, W
+    };
+    const int klo[3] = {0, 12, 0}, khi[3] = {12, 24, 24};
+    std::vector<FitX> fits;
+    const char *tags[3] = {"simfit_mu", "comb", "simfit_ele"};
+    for (int t = 0; t < 3; ++t)
+    {
+        FitX f;
+        if (!pOFit::Get(tags[t], f.spec)) continue;
+        const bool isComb = (f.spec.flav == "");
+        if (isComb && !withComb && !withCombDiff) continue;
+        if (!pOFit::Available(dsuf, f.spec))
+        {
+            std::cerr << "[WARN] xsec_fiducial_flav: no " << pOFit::SummaryFile(dsuf, f.spec, "fitted_yields.root")
+                      << " -> '" << f.spec.label << "' not drawn"
+                      << (isComb ? "\n" : TString::Format(" (fork: ./run_pO_fits.sh both flavfit --disc %s)\n", disc).Data());
+            continue;
+        }
+        if (!loadCombIngredients(pOFit::SummaryFile(dsuf, f.spec, "W_yields.csv").Data(),
+                                 pOFit::SummaryFile(dsuf, f.spec, "fitted_yields.root").Data(),
+                                 genFile, f.in))
+            continue;
+        for (int k = 0; k < 3; ++k)
+        {
+            sumWithCov(f.in, f.in.G, klo[k], khi[k], f.yv[k], f.ev[k]);
+            double dummy;
+            sumWithCov(f.in, f.in.G, klo[k], khi[k], dummy, f.evS[k], true);
+        }
+        fits.push_back(f);
+    }
+    const FitX *fm = nullptr, *fe = nullptr;
+    for (const FitX &f : fits)
+    {
+        if (f.spec.flav == "mu") fm = &f;
+        if (f.spec.flav == "ele") fe = &f;
+    }
+    if (!fm && !fe)
+    {
+        std::cerr << "[ERROR] xsec_fiducial_flav: neither the mu-only nor the e-only fit is available for disc="
+                  << disc << " -- fork: ./run_pO_fits.sh both flavfit --disc " << disc << " (+ sync_lxplus.sh download).\n";
+        return;
+    }
+    gSystem->mkdir(outDir.c_str(), kTRUE);
+
+    // the gen fiducial cross sections are the same for every fit (pooled mu+e)
+    const double *G = fits[0].in.G;
+    double genTot[3] = {0, 0, 0};
+    for (int k = 0; k < 3; ++k)
+        for (int i = klo[k]; i < khi[k]; ++i) genTot[k] += G[i];
+
+    // ---- console: every fit, then the e/mu ratios ----------------------------
+    const char *cn3[3] = {"Wp", "Wm", "W"};
+    const char *xlab[3] = {"W^{+}", "W^{-}", "W"};
+    for (const FitX &f : fits)
+        for (int k = 0; k < 3; ++k)
+        {
+            if (f.in.haveStat)
+                printf("[xsec-flav] %-10s %-3s measured = %6.2f +/- %4.2f (stat) +/- %4.2f (syst) = +/- %4.2f (total) nb   (gen fid %6.2f nb, eff. r = %.3f)\n",
+                       f.spec.tag.Data(), cn3[k], f.yv[k], f.evS[k], systFrom(f.ev[k], f.evS[k], true), f.ev[k],
+                       genTot[k], genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0);
+            else
+                printf("[xsec-flav] %-10s %-3s measured = %6.2f +/- %4.2f nb (total; no stat split)   (eff. r = %.3f)\n",
+                       f.spec.tag.Data(), cn3[k], f.yv[k], f.ev[k], genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0);
+        }
+    // sigma_e / sigma_mu with the STAT error (independent samples; lumi and the
+    // theory shapes cancel) -- the total-error version only when no stat split
+    const bool haveRatio = fm && fe;
+    const bool ratioStat = haveRatio && fm->in.haveStat && fe->in.haveStat;
+    double rat[3] = {0, 0, 0}, ratE[3] = {0, 0, 0};
+    if (haveRatio)
+        for (int k = 0; k < 3; ++k)
+        {
+            if (fm->yv[k] <= 0 || fe->yv[k] <= 0) continue;
+            rat[k] = fe->yv[k] / fm->yv[k];
+            const double em = ratioStat ? fm->evS[k] : fm->ev[k], ee = ratioStat ? fe->evS[k] : fe->ev[k];
+            ratE[k] = rat[k] * std::sqrt(std::pow(em / fm->yv[k], 2) + std::pow(ee / fe->yv[k], 2));
+            printf("[xsec-flav] sigma_e / sigma_mu  %-3s = %.4f +/- %.4f (%s)  -> %+.1f sigma from 1\n",
+                   cn3[k], rat[k], ratE[k], ratioStat ? "stat" : "total", ratE[k] > 0 ? (rat[k] - 1.0) / ratE[k] : 0.0);
+        }
+
+    // ---- 1) inclusive W+ / W- / W ---------------------------------------------
+    std::vector<const FitX *> incl;
+    for (const FitX &f : fits)
+        if (f.spec.flav != "" || withComb) incl.push_back(&f);
+    {
+        const int nF = (int)incl.size();
+        const double off2[2] = {-0.14, 0.14}, off3[3] = {-0.22, 0.0, 0.22};
+        PlotStyle ps; ps.logy = false;
+        ps.systBoxHalfWidthAbs = (nF >= 3) ? 0.06 : (nF == 2) ? 0.07 : 0.13;
+        ps.systBoxFillAlpha = 0.30;
+        TCanvas *c = new TCanvas("c_xsec_fid_flav", "", ps.w, ps.h);
+        ApplyCanvasStyle(c, ps);
+        c->cd();
+        double ymax = 0.0;
+        for (const FitX *f : incl)
+            for (int k = 0; k < 3; ++k) ymax = std::max(ymax, f->yv[k] + f->ev[k]);
+        for (int k = 0; k < 3; ++k) ymax = std::max(ymax, genTot[k]);
+        TH1F *fr = new TH1F("fr_xsec_flav", "", 3, 0.5, 3.5);
+        for (int k = 0; k < 3; ++k) fr->GetXaxis()->SetBinLabel(k + 1, xlab[k]);
+        fr->SetStats(0);
+        ApplyHistStyle(fr, ps, "", "#sigma^{fid}_{W#rightarrowl#nu} (nb)");
+        fr->GetXaxis()->SetLabelSize(0.065);
+        fr->GetXaxis()->SetNdivisions(3);
+        fr->SetMinimum(0.0);
+        fr->SetMaximum(1.75 * ymax); // headroom: legend upper left, ratios under the header
+        fr->Draw();
+
+        // the r = 1 expectation (same for every fit): a dashed segment per category
+        TLine *lGen = nullptr;
+        for (int k = 0; k < 3; ++k)
+        {
+            lGen = new TLine(k + 1 - 0.40, genTot[k], k + 1 + 0.40, genTot[k]);
+            lGen->SetLineStyle(2); lGen->SetLineWidth(3); lGen->SetLineColor(kGreen + 2);
+            lGen->Draw();
+        }
+        // every fit's boxes first, then all points on top
+        std::vector<TGraphErrors *> gDraw;
+        bool anyBox = false;
+        for (int j = 0; j < nF; ++j)
+        {
+            const FitX *f = incl[j];
+            const double o = (nF == 1) ? 0.0 : (nF == 2) ? off2[j] : off3[j];
+            double x[3], y[3], e[3], es[3], ex0[3] = {0, 0, 0};
+            for (int k = 0; k < 3; ++k) { x[k] = k + 1 + o; y[k] = f->yv[k]; e[k] = f->ev[k]; es[k] = f->evS[k]; }
+            TGraphErrors *gT = new TGraphErrors(3, x, y, ex0, e);   // TOTAL error
+            TGraphErrors *gS = new TGraphErrors(3, x, y, ex0, es);  // STATISTICAL error
+            PlotStyle pb = ps;
+            pb.systBoxFillColor = f->spec.color; pb.systBoxLineColor = f->spec.color;
+            if (f->in.haveStat)
+                for (TBox *b : MakeSystBoxes(gT, gS, pb)) { b->Draw(); anyBox = true; }
+            TGraphErrors *gd = f->in.haveStat ? gS : gT;
+            gd->SetMarkerStyle(f->spec.marker); gd->SetMarkerSize(f->spec.markerSize);
+            gd->SetMarkerColor(f->spec.color); gd->SetLineColor(f->spec.color); gd->SetLineWidth(2);
+            gDraw.push_back(gd);
+        }
+        for (TGraphErrors *gd : gDraw) gd->Draw("P SAME");
+
+        DrawHeader(ps, "", "W #rightarrow l #nu", "fiducial cross section");
+        TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
+        ltag.SetTextSize(ps.boxTextSize);
+        ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
+
+        const int nLeg = nF + 1 + (anyBox ? 1 : 0);
+        TLegend *leg = new TLegend(0.18, 0.785 - 0.042 * nLeg, 0.56, 0.785);
+        leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.031);
+        for (int j = 0; j < nF; ++j)
+            leg->AddEntry(gDraw[j], Form("%s (simfit)", incl[j]->spec.label.Data()), "lep");
+        leg->AddEntry(lGen, "#sigma^{gen}_{fid} (POWHEG, r = 1)", "l");
+        if (anyBox)
+        {
+            TBox *key = new TBox(0, 0, 1, 1); // legend glyph only
+            key->SetFillColorAlpha(kGray + 1, ps.systBoxFillAlpha); key->SetLineColor(kGray + 3);
+            leg->AddEntry(key, "bars: stat.,  boxes: syst.", "f");
+        }
+        leg->Draw();
+
+        // e/mu ratios under the legend, one short line per charge: that
+        // column is free above the W+ points and left of the W- ones (a single
+        // long line would cross the W category's r = 1 segment)
+        TLatex tx; tx.SetNDC(); tx.SetTextFont(42);
+        if (haveRatio)
+        {
+            const double yr = 0.785 - 0.042 * nLeg - 0.040;
+            tx.SetTextSize(0.029);
+            tx.DrawLatex(0.19, yr, Form("#sigma_{e} / #sigma_{#mu} (%s unc.):", ratioStat ? "stat." : "total"));
+            for (int k = 0; k < 3; ++k)
+                tx.DrawLatex(0.21, yr - 0.037 * (k + 1), Form("%s:  %.3f #pm %.3f", xlab[k], rat[k], ratE[k]));
+        }
+        tx.SetTextSize(0.028);
+        tx.DrawLatex(0.18, 0.255, "one fiducial volume: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
+        tx.DrawLatex(0.18, 0.215, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} per fit, summed with its r-covariance");
+        tx.DrawLatex(0.18, 0.175, "syst. = profiled fit nuisances (lumi 3% common to all fits)");
+
+        CMS_lumi(c, 13, 10);
+        c->RedrawAxis(); c->Modified(); c->Update();
+        c->SaveAs((outDir + "/W_fiducial.png").c_str());
+        c->SaveAs((outDir + "/W_fiducial.pdf").c_str());
+        std::cout << "[OK] Saved " << outDir << "/W_fiducial.{png,pdf}  (disc=" << disc << ")\n";
+    }
+
+    // ---- 2) d(sigma)/d(eta_CM) per charge --------------------------------------
+    // eta_CM bin positions from the (fiducial) charge-asymmetry graph of any fit
+    // (the same lab edges shifted to the CM frame in every one of them)
+    std::vector<double> xc(12, 0.0), exc(12, 0.0);
+    bool haveEta = false;
+    for (const FitX &f : fits)
+    {
+        const TString sC = pODisc::GraphFile("charge_asym", f.spec.tag.Data(), disc);
+        if (gSystem->AccessPathName(sC)) continue;
+        TFile *fC = TFile::Open(sC, "READ");
+        TGraphErrors *gA = (fC && !fC->IsZombie()) ? (TGraphErrors *)fC->Get("g_chargeAsym") : nullptr;
+        if (gA && gA->GetN() == 12)
+        {
+            for (int i = 0; i < 12; ++i) { xc[i] = gA->GetPointX(i); exc[i] = gA->GetErrorX(i); }
+            haveEta = true;
+        }
+        if (fC) { fC->Close(); delete fC; }
+        if (haveEta) break;
+    }
+    // per-bin value of fit f, charge k (0 W+, 1 W-, 2 W = both, with their
+    // covariance) through the same sumWithCov as the inclusive numbers
+    auto binVal = [&](const FitX &f, int k, int i, double &v, double &e, double &es) {
+        double w[24];
+        for (int t = 0; t < 24; ++t) w[t] = 0.0;
+        if (k != 1) w[i] = f.in.G[i];
+        if (k != 0) w[12 + i] = f.in.G[12 + i];
+        sumWithCov(f.in, w, 0, 24, v, e);
+        double dummy;
+        sumWithCov(f.in, w, 0, 24, dummy, es, true);
+    };
+    std::ofstream rcsv((outDir + "/xsec_flavfit_ratio.csv").c_str());
+    rcsv << "charge,ybin,etaCM_center,ratio_e_over_mu,err_stat,err_total\n";
+    if (!haveEta)
+        std::cerr << "[WARN] xsec_fiducial_flav: no 12-point g_chargeAsym in any charge_asym_fid_<fit>_" << disc
+                  << ".root -> d(sigma)/d(eta) plots skipped (analysis/run_observables.sh makes them first)\n";
+    else
+    {
+        std::vector<const FitX *> diff;
+        for (const FitX &f : fits)
+            if (f.spec.flav != "" || withCombDiff) diff.push_back(&f);
+        const int nF = (int)diff.size();
+        const double sh2[2] = {-0.35, 0.35}, sh3[3] = {-0.60, 0.0, 0.60};
+        for (int k = 0; k < 3; ++k)
+        {
+            std::vector<std::vector<double>> v(nF, std::vector<double>(12)), e(nF, std::vector<double>(12)),
+                es(nF, std::vector<double>(12));
+            std::vector<double> gen(12), zero(12, 0.0);
+            double ymax = 0.0;
+            for (int i = 0; i < 12; ++i)
+            {
+                double dEta = 2.0 * exc[i];
+                if (dEta <= 0) dEta = 0.4;
+                gen[i] = ((k != 1 ? G[i] : 0.0) + (k != 0 ? G[12 + i] : 0.0)) / dEta;
+                ymax = std::max(ymax, gen[i]);
+                for (int j = 0; j < nF; ++j)
+                {
+                    binVal(*diff[j], k, i, v[j][i], e[j][i], es[j][i]);
+                    v[j][i] /= dEta; e[j][i] /= dEta; es[j][i] /= dEta;
+                    ymax = std::max(ymax, v[j][i] + e[j][i]);
+                }
+            }
+
+            PlotStyle ps; ps.logy = false;
+            ps.systBoxWidthFrac = (nF >= 3) ? 0.17 : 0.20;
+            ps.systBoxFillAlpha = 0.30;
+            TCanvas *c = new TCanvas(Form("c_dsig_flav_%s", cn3[k]), "", ps.w, ps.h);
+            ApplyCanvasStyle(c, ps);
+            c->cd();
+            const double xlo = xc[0] - exc[0] - 0.1, xhi = xc[11] + exc[11] + 0.1;
+            TH1F *fr = new TH1F(Form("fr_dsig_flav_%s", cn3[k]), "", 100, xlo, xhi);
+            fr->SetStats(0);
+            ApplyHistStyle(fr, ps, "#eta^{l}_{CM}", "d#sigma^{fid}_{W#rightarrowl#nu}/d#eta (nb)");
+            fr->SetMinimum(0.0);
+            // annotations in the band above NDC kAnnoY (as xsec_fiducial_comb)
+            const double kAnnoY = 0.55;
+            const double fAnno = (kAnnoY - ps.bm) / (1.0 - ps.bm - ps.tm);
+            double yMaxFrame = 1.55 * ymax;
+            if (fAnno > 0.05) yMaxFrame = std::max(yMaxFrame, 1.06 * ymax / fAnno);
+            fr->SetMaximum(yMaxFrame);
+            fr->Draw();
+
+            TGraph *gGen = new TGraph(12, xc.data(), gen.data());
+            gGen->SetLineStyle(2); gGen->SetLineWidth(3); gGen->SetLineColor(kGreen + 2);
+            gGen->Draw("L SAME");
+
+            std::vector<TGraphErrors *> gDraw;
+            bool anyBox = false;
+            for (int j = 0; j < nF; ++j)
+            {
+                const FitX *f = diff[j];
+                const double s = (nF == 1) ? 0.0 : (nF == 2) ? sh2[j] : sh3[j];
+                std::vector<double> xs(12);
+                for (int i = 0; i < 12; ++i) xs[i] = xc[i] + s * exc[i];
+                // box sources keep the bin half-widths (MakeSystBoxes sizes the
+                // boxes from them); the drawn graph has no horizontal bars
+                TGraphErrors *gT = new TGraphErrors(12, xs.data(), v[j].data(), exc.data(), e[j].data());
+                TGraphErrors *gS = new TGraphErrors(12, xs.data(), v[j].data(), exc.data(), es[j].data());
+                PlotStyle pb = ps;
+                pb.systBoxFillColor = f->spec.color; pb.systBoxLineColor = f->spec.color;
+                if (f->in.haveStat)
+                    for (TBox *b : MakeSystBoxes(gT, gS, pb)) { b->Draw(); anyBox = true; }
+                TGraphErrors *gd = new TGraphErrors(12, xs.data(), v[j].data(), zero.data(),
+                                                    f->in.haveStat ? es[j].data() : e[j].data());
+                gd->SetMarkerStyle(f->spec.marker); gd->SetMarkerSize(f->spec.markerSize);
+                gd->SetMarkerColor(f->spec.color); gd->SetLineColor(f->spec.color); gd->SetLineWidth(2);
+                gDraw.push_back(gd);
+            }
+            for (TGraphErrors *gd : gDraw) gd->Draw("P SAME");
+
+            const char *proc = (k == 0) ? "W^{+} #rightarrow l^{+} #nu" : (k == 1) ? "W^{-} #rightarrow l^{-} #bar{#nu}"
+                                                                               : "W #rightarrow l #nu";
+            DrawHeader(ps, "", proc, "fiducial cross section");
+            TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
+            ltag.SetTextSize(ps.boxTextSize);
+            ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
+
+            TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.029);
+            tx.DrawLatex(0.55, kAnnoY + 0.050, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} (p_{T}^{l} > 25 GeV)");
+            tx.DrawLatex(0.55, kAnnoY + 0.005, "bars: stat.,  boxes: syst. (profiled)");
+
+            const int nLeg = nF + 1;
+            TLegend *leg = new TLegend(0.18, 0.79 - 0.045 * nLeg, 0.50, 0.79);
+            leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.031);
+            for (int j = 0; j < nF; ++j)
+                leg->AddEntry(gDraw[j], Form("%s (simfit)", diff[j]->spec.label.Data()), "lep");
+            leg->AddEntry(gGen, "#sigma^{gen}_{fid} (POWHEG, r = 1)", "l");
+            leg->Draw();
+            (void)anyBox;
+
+            CMS_lumi(c, 13, 10);
+            c->RedrawAxis(); c->Modified(); c->Update();
+            c->SaveAs(Form("%s/W_dsigma_deta_%s.png", outDir.c_str(), cn3[k]));
+            c->SaveAs(Form("%s/W_dsigma_deta_%s.pdf", outDir.c_str(), cn3[k]));
+
+            // mu vs e, bin by bin: chi2 against the stat and the total errors,
+            // and the per-bin e/mu ratio (stat error) for the CSV
+            if (fm && fe)
+            {
+                double vm, emT, emS, ve, eeT, eeS, c2s = 0, c2t = 0;
+                int n = 0;
+                for (int i = 0; i < 12; ++i)
+                {
+                    binVal(*fm, k, i, vm, emT, emS);
+                    binVal(*fe, k, i, ve, eeT, eeS);
+                    const double vt = emT * emT + eeT * eeT, vs = emS * emS + eeS * eeS;
+                    if (vt <= 0 || vm <= 0 || ve <= 0) continue;
+                    c2t += (vm - ve) * (vm - ve) / vt;
+                    if (vs > 0) c2s += (vm - ve) * (vm - ve) / vs;
+                    ++n;
+                    const double rr = ve / vm;
+                    rcsv << Form("%s,%d,%.4f,%.5f,%.5f,%.5f\n", cn3[k], i, xc[i], rr,
+                                 rr * std::sqrt(std::pow(emS / vm, 2) + std::pow(eeS / ve, 2)),
+                                 rr * std::sqrt(std::pow(emT / vm, 2) + std::pow(eeT / ve, 2)));
+                }
+                if (n > 0)
+                    printf("[mu-vs-e] d(sigma)/d(eta) %-3s chi2/ndf = %5.1f/%d (stat only, p = %.3f)   %5.1f/%d (total, p = %.3f)\n",
+                           cn3[k], c2s, n, TMath::Prob(c2s, n), c2t, n, TMath::Prob(c2t, n));
+            }
+        }
+        std::cout << "[OK] Saved " << outDir << "/W_dsigma_deta_{Wp,Wm,W}.{png,pdf}\n";
+    }
+    if (haveRatio)
+        for (int k = 0; k < 3; ++k)
+            rcsv << Form("%s,incl,,%.5f,%.5f,%.5f\n", cn3[k], rat[k], ratioStat ? ratE[k] : -1.0,
+                         rat[k] * std::sqrt(std::pow(fm->ev[k] / fm->yv[k], 2) + std::pow(fe->ev[k] / fe->yv[k], 2)));
+    rcsv.close();
+
+    // ---- 3) the sigma table, every fit (the xsec_comb.csv columns + fit) ------
+    {
+        std::ofstream out((outDir + "/xsec_flavfit.csv").c_str());
+        out << "fit,charge,ybin,etaCM_center,etaCM_halfwidth,r,rErr,sigma_gen_fid_nb,sigma_meas_nb,sigma_meas_err_nb,"
+               "sigma_meas_stat_nb,sigma_meas_syst_nb\n";
+        const char *cn2[2] = {"Wp", "Wm"};
+        for (const FitX &f : fits)
+        {
+            for (int q = 0; q < 2; ++q)
+                for (int i = 0; i < 12; ++i)
+                {
+                    const int k = 12 * q + i;
+                    const double st = f.in.haveStat ? f.in.ERs[k] * G[k] : -1.0;
+                    out << Form("%s,%s,%d,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n",
+                                f.spec.tag.Data(), cn2[q], i, haveEta ? xc[i] : -1.0, haveEta ? exc[i] : -1.0,
+                                f.in.R[k], f.in.ER[k], G[k], f.in.R[k] * G[k], f.in.ER[k] * G[k],
+                                st, f.in.haveStat ? systFrom(f.in.ER[k] * G[k], st, true) : -1.0);
+                }
+            for (int k = 0; k < 3; ++k) // r column = effective (gen-weighted mean) r
+                out << Form("%s,%s,incl,,,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n", f.spec.tag.Data(), cn3[k],
+                            genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0, genTot[k] > 0 ? f.ev[k] / genTot[k] : 0.0,
+                            genTot[k], f.yv[k], f.ev[k], f.in.haveStat ? f.evS[k] : -1.0,
+                            f.in.haveStat ? systFrom(f.ev[k], f.evS[k], true) : -1.0);
+        }
+    }
+    std::cout << "[OK] Wrote " << outDir << "/xsec_flavfit.csv + xsec_flavfit_ratio.csv\n";
+}
+
+// =============================================================================
+// xsec_fiducial(disc) -- every cross-section view of one discriminant: the
+// grand fit (xsec_fiducial_comb + its per-flavour diagnostic
+// xsec_fiducial_diag) and the mu-vs-e overlay (xsec_fiducial_flav).
+//   root -l -b -q 'xsec_fiducial.C+("leppt_mt40")'
+// =============================================================================
+void xsec_fiducial(const char *disc = "leppt_mt40")
+{
+    xsec_fiducial_comb(disc);
+    xsec_fiducial_diag(disc);
+    xsec_fiducial_flav(disc);
 }

@@ -71,15 +71,20 @@ inline constexpr double Y_SHIFT_pO_CM = 0.3466;
 // single run by exporting DATA_FILE). Change the data file here, and the MC
 // files in ResolveMCSample below -- both live in this header.
 //
-// Currently the LOCAL copy of the July-29 production under ~/pO_2026_July_29/
-// (absolute path so ROOT's TFile::Open and run_all.sh resolve it without ~
-// expansion; switched from the May-26 production 2026-07-30 -- new ntuples
-// carry extra branches, harmless to the skim which enables only what it uses).
-// To read from EOS/lxplus again, point this and `inputBase` in ResolveMCSample
-// at the prefix
-//   root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_July_29/
+// Everything lives under ~/pO_2026_Aug_20/ since 2026-09-21: the MC is the
+// Aug-20 EMBEDDED production (POWHEG + Angantyr underlying event), and the
+// data file sits beside it as a HARD LINK to the July-29 copy (same inode,
+// no second 45 GB on disk; `ls -li` shows link count 2). The Aug-20
+// production ships MC only, so the DATA IS STILL THE JULY-29
+// RECONSTRUCTION -- the filename keeps saying so on purpose.
+// Absolute paths so ROOT's TFile::Open and run_all.sh resolve them without
+// ~ expansion. To read from EOS/lxplus again, point this and `inputBase` in
+// ResolveMCSample at
+//   root://eoscms.cern.ch//eos/cms/store/group/phys_heavyions/zheng/pO_2026_Aug_20/
+// (the data still lives under .../pO_2026_July_29/ on EOS -- there is no
+// hard link there, so the data path needs the July-29 prefix remotely).
 inline const char *kDefaultDataFile =
-    "/Users/zhenghuang/pO_2026_July_29/July_29_DATA.root";
+    "/Users/zhenghuang/pO_2026_Aug_20/July_29_DATA.root";
 
 // ============================================================
 // Branch / tree introspection helpers
@@ -360,8 +365,8 @@ inline bool PassGenRecoMatchingWithAncestor(
 // ============================================================
 
 // The W skims overwrite the input file path per MC sample. The DY MC file
-// name is flavour-dependent: muon channels read July_29_MC_DY_mu_Z.root,
-// electron channels read July_29_MC_DY_ele_Z.root.
+// name is flavour-dependent: muon channels read Aug_20_MC_DY_mu_Z.root,
+// electron channels read Aug_20_MC_DY_ele_Z.root.
 //
 // `flavour` should be "mu" or "ele".
 //
@@ -376,14 +381,22 @@ struct SampleFileInfo
 inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
 {
   SampleFileInfo info;
-  // Local copy of the July-29 production under ~/pO_2026_July_29/ (absolute
-  // path; see the kDefaultDataFile note above for how to switch back to EOS).
+  // Local copy of the Aug-20 EMBEDDED production (POWHEG + Angantyr) under
+  // ~/pO_2026_Aug_20/ (absolute path; see the kDefaultDataFile note above for
+  // how to switch back to EOS). MC ONLY -- the data stays on July-29.
+  // Verified 2026-09-21 before the switch: all 7 trees present and
+  // entry-aligned, hltobject carries the Oxy paths, ttbar_w is 217 long with
+  // the July-29 layout, and <weight> = 6376.1 / 5463 / 1174.5 reproduces
+  // sigma = 6.376 / 5.464 / 1.175 nb, so mc_norm.h is unchanged.
   const std::string inputBase =
-      "/Users/zhenghuang/pO_2026_July_29/";
+      "/Users/zhenghuang/pO_2026_Aug_20/";
+  // Production tag carried by every MC filename (mirrored by LabelFromFname
+  // in count_ngen.C, which strips it to recover the canonical ngen labels).
+  const std::string mcPrefix = "Aug_20_MC_";
 
   const std::string flav = flavour;
 
-  // July-29 naming uses the SAME flavour token for DY and W ("mu"/"ele"/"tau");
+  // The filenames use the SAME flavour token for DY and W ("mu"/"ele"/"tau");
   // normalize the legacy "ee"/"e" spellings to "ele". (The May-26 production
   // used "ee" for DY -- that translation is gone with the new filenames.)
   const std::string tok = (flav == "ee" || flav == "e") ? "ele" : flav;
@@ -393,27 +406,27 @@ inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
     case kData:
       return info;
     case kDY:
-      info.fname     = inputBase + "July_29_MC_DY_" + tok + "_Z.root";  // July_29_MC_DY_ele_Z.root
+      info.fname     = inputBase + mcPrefix + "DY_" + tok + "_Z.root";  // Aug_20_MC_DY_ele_Z.root
       info.outSuffix = "_DY";
       return info;
     case kWp:
-      info.fname     = inputBase + "July_29_MC_Wp_" + tok + ".root";
+      info.fname     = inputBase + mcPrefix + "Wp_" + tok + ".root";
       info.outSuffix = "_Wp";
       return info;
     case kWm:
-      info.fname     = inputBase + "July_29_MC_Wm_" + tok + ".root";
+      info.fname     = inputBase + mcPrefix + "Wm_" + tok + ".root";
       info.outSuffix = "_Wm";
       return info;
     case kDYtau:
-      info.fname     = inputBase + "July_29_MC_DY_tau_Z.root";
+      info.fname     = inputBase + mcPrefix + "DY_tau_Z.root";
       info.outSuffix = "_DYtau";
       return info;
     case kWptau:
-      info.fname     = inputBase + "July_29_MC_Wp_tau.root";
+      info.fname     = inputBase + mcPrefix + "Wp_tau.root";
       info.outSuffix = "_Wptau";
       return info;
     case kWmtau:
-      info.fname     = inputBase + "July_29_MC_Wm_tau.root";
+      info.fname     = inputBase + mcPrefix + "Wm_tau.root";
       info.outSuffix = "_Wmtau";
       return info;
   }

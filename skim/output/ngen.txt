@@ -3,12 +3,12 @@
 # Columns: label  N_raw  N_gen  err(N_gen)  <w>  w_min  w_max  N_neg  file
 #-------------------------------------------------------------------------------
 # label          N_raw           N_gen    err(N_gen)       <w>     w_min     w_max     N_neg  file
-DYmu           1135679   1334158396.21    1274396.28 1174.7672-1195.8500 1195.8500     10011  /Users/zhenghuang/pO_2026_July_29/July_29_MC_DY_mu_Z.root
-Wp_mu          1167677   7445065673.41    6969877.12 6375.9633-6450.0601 6450.0601      6707  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wp_mu.root
-Wm_mu          1165659   6367752189.58    5979971.21 5462.7916-5538.7700 5538.7700      7995  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wm_mu.root
-DYee           1197655   1406916300.43    1308707.42 1174.7259-1195.8500 1195.8500     10578  /Users/zhenghuang/pO_2026_July_29/July_29_MC_DY_ele_Z.root
-Wp_ele         1199679   7648384466.58    7064741.68 6375.3591-6450.0601 6450.0601      6947  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wp_ele.root
-Wm_ele         1197626   6544023545.46    6061413.90 5464.1629-5538.7700 5538.7700      8066  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wm_ele.root
-DYtau          1123677   1319822546.70    1267644.41 1174.5569-1195.8500 1195.8500     10004  /Users/zhenghuang/pO_2026_July_29/July_29_MC_DY_tau_Z.root
-Wp_tau         1163666   7418871979.51    6957895.97 6375.4307-6450.0601 6450.0601      6732  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wp_tau.root
-Wm_tau         1183656   6467322658.23    6025957.78 5463.8532-5538.7700 5538.7700      8005  /Users/zhenghuang/pO_2026_July_29/July_29_MC_Wm_tau.root
+DYmu           1191661   1399535514.38    1305428.42 1174.4410-1195.8500 1195.8500     10667  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_DY_mu_Z.root
+Wp_mu          1197714   7636755008.29    7058953.51 6376.1090-6450.0601 6450.0601      6866  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wp_mu.root
+Wm_mu          1195619   6531156982.70    6056332.87 5462.5738-5538.7700 5538.7700      8224  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wm_mu.root
+DYee           1159701   1362392414.14    1287803.84 1174.7790-1195.8500 1195.8500     10217  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_DY_ele_Z.root
+Wp_ele         1199640   7648300615.80    7064626.85 6375.4965-6450.0601 6450.0601      6934  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wp_ele.root
+Wm_ele         1195640   6532923850.34    6056386.05 5463.9556-5538.7700 5538.7700      8075  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wm_ele.root
+DYtau          1193654   1401952327.18    1306519.60 1174.5048-1195.8500 1195.8500     10653  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_DY_tau_Z.root
+Wp_tau         1179680   7521789137.81    7005608.55 6376.1267-6450.0601 6450.0601      6761  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wp_tau.root
+Wm_tau         1197634   6544555267.38    6061434.15 5464.5704-5538.7700 5538.7700      8022  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_Wm_tau.root

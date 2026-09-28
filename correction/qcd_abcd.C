@@ -92,14 +92,19 @@
 #include "TH2D.h"
 #include "TBox.h"
 #include "TCanvas.h"
+#include "TGraph.h"
+#include "TGraphAsymmErrors.h"
 #include "TLine.h"
 #include "TLatex.h"
+#include "TMath.h"
+#include "TRandom3.h"
 #include "TStyle.h"
 #include "TSystem.h"
 #include "TString.h"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -783,6 +788,8 @@ struct ChargeInfo
   double tiltNom = 0, tilt40 = 0;      // anti-iso pT-shape tilt, %
   double dataAll = 0, data40 = 0;      // iso-pass data yields of the two selections
   double ffShift = 0;                  // FF-weighted vs flat-T total, % (runFFCheck)
+  double ffShiftErr = 0;               // its statistical uncertainty (toys), %
+  std::string ffShiftP = "= 1";        // toy p(shift this far out | F flat in pT), with its relation
 };
 
 // Iso-pass data yield of a lepton-pT plane (the denominator of the QCD fraction).
@@ -791,6 +798,208 @@ double isoPassData(TFile *fData, const std::string &hname, double isoCut)
   TH2D *h = (TH2D *)fData->Get(hname.c_str());
   if (!h) return 0.0;
   return count2D(h, 0.0, isoCut, 0.0, 1e9).n;
+}
+
+// ----------------------------------------------------------------------------
+// FAKE-FACTOR STATISTICS (2026-09-24, after a question on the F(pT) error
+// bars; the numbers quoted here come from a 5000-toy study of the actual
+// per-bin counts of all four charges).
+//
+// Per pT bin F = N/D, with N, D the EWK-subtracted iso-pass / anti-iso counts
+// at m_T < yCut. The two come from DISJOINT relIso windows (the skim fills
+// h_pt_mt_* for relIso < isoCut and h_pt_mt_antiiso_* for [isoFailLo,
+// isoFailHi); an event lands in at most one), so N and D are independent and
+// TH1::Divide's default (uncorrelated) propagation is the correct FIRST-ORDER
+// error. It is also exactly the "binomial" one: conditioning on
+// n = n_p + n_f, n_p ~ Binomial(n, e) with F = e/(1-e), and the delta method
+// gives sigma_F^2 = F^2 (1/n_p + 1/n_f), the same number. What would be WRONG
+// is TH1::Divide(..., "B"), sigma^2 = F(1-F)/D: it assumes the numerator is a
+// SUBSET of the denominator (an efficiency, not a pass/fail ratio),
+// underestimates by 20-60% here and is meaningless for F > 1.
+//
+// Where the Gaussian bar fails is its SHAPE in the thin high-pT bins: above
+// 40 GeV 20-60% (mu) / 13-35% (e) of the iso-pass data is EWK MC that gets
+// subtracted, N is a difference of a few events, the sampling distribution of
+// F is skewed, and sqrt(n_obs) shrinks the bar exactly when n fluctuated low.
+// Toys at the observed values: the TOTAL coverage of +-sigma is right
+// (0.67-0.73 vs 0.683 in every bin), but in the low-count bins (pT >= 50)
+// the true F lies ABOVE the bar 19-32% of the time and BELOW it only 2-12%
+// (16/16 is nominal), and mu- [55,60) (n_p = 1 < b_p = 2.4) gets F = -0.11 +- 0.09
+// with 0.59 coverage (and was clipped off the old plot by its y = 0 floor).
+// The profile-likelihood interval below misses 13-20% on each side and is
+// physical (F >= 0).
+//
+// Model per bin (b = the prefit r = 1 EWK MC, treated as a KNOWN background;
+// its MC statistics are <= 0.6% of the numerator variance and neglected):
+//     n_p ~ Pois(F mu + b_p)    iso-pass,  m_T < yCut
+//     n_f ~ Pois(mu + b_f)      anti-iso,  m_T < yCut
+// mu is profiled in closed form (lnL is concave in mu and dlnL/dmu = 0 is a
+// quadratic). The MLE is the subtraction estimate (n_p-b_p)/(n_f-b_f)
+// whenever that is >= 0, so the POINTS do not move -- only the intervals do.
+// For b -> 0 the likelihood-ratio interval is the Poisson-ratio ("binomial")
+// interval: this is the binomial treatment, generalized to the subtraction.
+// ----------------------------------------------------------------------------
+inline double ffXlogy(double x, double y) { return x == 0.0 ? 0.0 : x * std::log(y); }
+
+// argmax over mu >= 0 of one bin's log-likelihood at fixed F. The
+// stationarity condition is Q(mu) = a mu^2 + bq mu + c = 0; c < 0 <=> an
+// interior maximum at the larger root (written in the cancellation-free form).
+double ffMuHat(double F, double np, double nf, double bp, double bf)
+{
+  const double a = (1.0 + F) * F;
+  const double bq = (1.0 + F) * (F * bf + bp) - F * (np + nf);
+  const double c = (1.0 + F) * bp * bf - F * np * bf - nf * bp;
+  if (c >= 0.0) return 0.0; // the maximum sits on the mu = 0 boundary
+  const double disc = std::sqrt(std::max(bq * bq - 4.0 * a * c, 0.0));
+  const double mu = (bq > 0.0) ? -2.0 * c / (bq + disc) : (-bq + disc) / (2.0 * a);
+  return std::max(mu, 0.0);
+}
+
+// profile log-likelihood of one bin in F (constants dropped; b > 0 required)
+double ffLnL(double F, double np, double nf, double bp, double bf)
+{
+  const double mu = ffMuHat(F, np, nf, bp, bf);
+  const double lp = F * mu + bp, lf = mu + bf;
+  return ffXlogy(np, lp) - lp + ffXlogy(nf, lf) - lf;
+}
+
+// sup over F >= 0, mu >= 0 of one bin: the "every bin its own F" model
+double ffLnLFree(double np, double nf, double bp, double bf)
+{
+  const double a = (np >= bp) ? ffXlogy(np, np) - np : ffXlogy(np, bp) - bp;
+  const double b = (nf >= bf) ? ffXlogy(nf, nf) - nf : ffXlogy(nf, bf) - bf;
+  return a + b;
+}
+
+struct FFInterval
+{
+  double mle = 0.0, lo = 0.0, hi = 0.0;
+  bool capped = false; // the upper edge hit the end of the scan (F = 20)
+};
+
+// 68.27% CL profile-likelihood interval in F >= 0 (2 DeltalnL = 1): grid scan,
+// 0.0025 steps to F = 2 and 0.02 steps to 20, crossings refined linearly.
+FFInterval ffInterval(double np, double nf, double bp, double bf)
+{
+  static std::vector<double> grid;
+  if (grid.empty())
+  {
+    for (int k = 0; k < 800; ++k) grid.push_back(0.0025 * k);
+    for (int k = 0; k <= 900; ++k) grid.push_back(2.0 + 0.02 * k);
+  }
+  const int n = (int)grid.size();
+  std::vector<double> L(n);
+  FFInterval r;
+  double Lmax = -1e300;
+  for (int k = 0; k < n; ++k)
+  {
+    L[k] = ffLnL(grid[k], np, nf, bp, bf);
+    if (L[k] > Lmax) { Lmax = L[k]; r.mle = grid[k]; }
+  }
+  if (nf > bf) // the analytic interior MLE (the grid straddles the peak)
+  {
+    const double Fh = std::min(std::max((np - bp) / (nf - bf), 0.0), grid.back());
+    const double Lh = ffLnL(Fh, np, nf, bp, bf);
+    if (Lh >= Lmax) { Lmax = Lh; r.mle = Fh; }
+  }
+  auto q = [&](int k) { return 2.0 * (Lmax - L[k]) - 1.0; }; // <= 0 inside
+  int first = -1, last = -1;
+  for (int k = 0; k < n; ++k)
+    if (q(k) <= 0.0) { if (first < 0) first = k; last = k; }
+  if (first < 0) { r.lo = r.hi = r.mle; return r; }
+  r.lo = (first == 0) ? grid[0]
+                      : grid[first - 1] + (grid[first] - grid[first - 1]) *
+                                              q(first - 1) / (q(first - 1) - q(first));
+  if (last == n - 1) { r.hi = grid[n - 1]; r.capped = true; }
+  else r.hi = grid[last] + (grid[last + 1] - grid[last]) * q(last) / (q(last) - q(last + 1));
+  r.lo = std::min(r.lo, r.mle);
+  r.hi = std::max(r.hi, r.mle);
+  return r;
+}
+
+// Maximize a 1D function on [a, b]: coarse grid, then golden section around
+// the best grid point (the profile likelihoods here are unimodal).
+double ffMaximize(const std::function<double(double)> &f, double a, double b, int ngrid,
+                  double &fbest)
+{
+  double best = a, fb = -1e300;
+  const double step = (b - a) / ngrid;
+  for (int k = 0; k <= ngrid; ++k)
+  {
+    const double x = a + k * step, v = f(x);
+    if (v > fb) { fb = v; best = x; }
+  }
+  double lo = std::max(a, best - step), hi = std::min(b, best + step);
+  const double gr = 0.5 * (std::sqrt(5.0) - 1.0);
+  double x1 = hi - gr * (hi - lo), x2 = lo + gr * (hi - lo);
+  double f1 = f(x1), f2 = f(x2);
+  for (int it = 0; it < 40; ++it)
+  {
+    if (f1 < f2) { lo = x1; x1 = x2; f1 = f2; x2 = lo + gr * (hi - lo); f2 = f(x2); }
+    else         { hi = x2; x2 = x1; f2 = f1; x1 = hi - gr * (hi - lo); f1 = f(x1); }
+  }
+  const double xm = 0.5 * (lo + hi), fm = f(xm);
+  if (fm > fb) { fb = fm; best = xm; }
+  fbest = fb;
+  return best;
+}
+
+// Is F flat in pT? Likelihood-ratio tests over a set of bins, same per-bin
+// model: H0 = one common F; "free" = every bin its own F (q ~ chi2(n-1));
+// "slope" = F_i = F0 exp(s (pT_i - 40)/10) (q ~ chi2(1): the natural
+// one-parameter alternative, exp keeping F >= 0). runFFCheck prints the
+// calibration from its own H0 toys: on the drawn bins the asymptotic 5% cut
+// fires in 3.3-5.9% (free) / 4.2-5.5% (slope) of them (2026-09-24), i.e. both
+// are calibrated at these counts. The chi2 of the Gaussian bars against the
+// flat line is NOT (its 5% cut fires in 15-26%: low-count bins with
+// sqrt(n_obs) errors give a heavy tail), so it must not be used as the
+// flatness test -- that is what these replace.
+struct FFFlatness
+{
+  double F0 = 0.0, lnH0 = 0.0, lnFree = 0.0, lnSlope = 0.0, s = 0.0, F0s = 0.0;
+  double qFree() const { return 2.0 * (lnFree - lnH0); }
+  double qSlope() const { return 2.0 * (lnSlope - lnH0); }
+};
+
+FFFlatness ffFlatness(const std::vector<double> &x, const std::vector<double> &np,
+                      const std::vector<double> &nf, const std::vector<double> &bp,
+                      const std::vector<double> &bf, bool doSlope)
+{
+  FFFlatness r;
+  const size_t n = x.size();
+  auto common = [&](double F) {
+    double t = 0.0;
+    for (size_t k = 0; k < n; ++k) t += ffLnL(F, np[k], nf[k], bp[k], bf[k]);
+    return t;
+  };
+  r.F0 = ffMaximize(common, 0.0, 2.0, 200, r.lnH0);
+  for (size_t k = 0; k < n; ++k) r.lnFree += ffLnLFree(np[k], nf[k], bp[k], bf[k]);
+  if (!doSlope) return r;
+  auto atSlope = [&](double s, double &F0best) {
+    auto inner = [&](double F0) {
+      double t = 0.0;
+      for (size_t k = 0; k < n; ++k)
+        t += ffLnL(F0 * std::exp(s * (x[k] - 40.0) / 10.0), np[k], nf[k], bp[k], bf[k]);
+      return t;
+    };
+    double best = 0.0;
+    F0best = ffMaximize(inner, 0.0, 2.0, 60, best);
+    return best;
+  };
+  double scratch = 0.0;
+  r.s = ffMaximize([&](double s) { return atSlope(s, scratch); }, -1.5, 1.5, 40, r.lnSlope);
+  atSlope(r.s, r.F0s);
+  r.lnSlope = std::max(r.lnSlope, r.lnH0); // nested models: s = 0 is H0
+  return r;
+}
+
+// a p-value for a TLatex label: 0.123 or 5.7#times10^{-4}
+std::string ffFmtP(double p)
+{
+  if (p >= 1e-3) return Form("%.3f", p);
+  if (p <= 0.0) return "0";
+  const int e = (int)std::floor(std::log10(p));
+  return Form("%.1f#times10^{%d}", p / std::pow(10.0, e), e);
 }
 
 // ----------------------------------------------------------------------------
@@ -812,10 +1021,29 @@ double isoPassData(TFile *fData, const std::string &hname, double isoCut)
 // to the nominal one). No (pT x MET) plane exists, so the MET-sideband
 // counterpart of F(pT) is only available pT-integrated (= T_MET). Everything
 // below pT 25 (outside the W selection) is dropped.
-void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &chg,
-                const ABCDConfig &cfg, const std::string &outDir,
+//
+// UNCERTAINTIES (2026-09-24; the statistics are the FAKE-FACTOR STATISTICS
+// block above):
+//  - the ff_pt_* PLOT shows the 68% profile-likelihood interval per bin
+//    (ffInterval), asymmetric and physical; the TH1D ff_pt_* in the rootfile
+//    and the table keep the Gaussian TH1::Divide error for reference, and the
+//    graph is written as ff_pt_pl_*;
+//  - "is F flat?" is answered by likelihood-ratio tests over the drawn bins
+//    (ffFlatness), NOT by eye/chi2 against the flat line: that line T is the
+//    pooled ratio of the SAME events (the [25,30) bin alone is ~60% of it),
+//    and the chi2 of the Gaussian bars is miscalibrated at these counts;
+//  - the FF-vs-flat total shift gets its own uncertainty from toys: the two
+//    totals share the anti-iso m_T > 40 counts and T shares the events of
+//    every F bin, so their printed errors must NOT be combined in quadrature
+//    (same reason the closure ratio pad now shows the F error alone);
+//  - the prefit (r = 1) EWK subtraction is a COHERENT systematic, moving every
+//    bin together (most at high pT, where the EWK fraction is largest); it is
+//    printed as one line at r_W = 1.2, the scale the m_T and MET planes agree
+//    at (the r-scan in the channel report), and is not in the bars.
+void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::vector<MCFile> &mcW,
+                const std::string &chg, const ABCDConfig &cfg, const std::string &outDir,
                 const std::string &chgLatex, const std::string &lep,
-                ChargeInfo &ci, TFile *fout) // non-const: stores ffShift
+                ChargeInfo &ci, TFile *fout) // non-const: stores ffShift*
 {
   const std::string hpass = Form("h_pt_mt_%s%s", lep.c_str(), chg.c_str());
   const std::string hanti = Form("h_pt_mt_antiiso_%s%s", lep.c_str(), chg.c_str());
@@ -831,8 +1059,16 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
   dPass->SetDirectory(nullptr);
   dAnti = (TH2D *)dAnti->Clone(Form("%s_ffdata", hanti.c_str()));
   dAnti->SetDirectory(nullptr);
+  // raw data copies: the likelihood needs the COUNTS, not the differences
+  TH2D *rPass = (TH2D *)dPass->Clone(Form("%s_ffraw", hpass.c_str()));
+  rPass->SetDirectory(nullptr);
+  TH2D *rAnti = (TH2D *)dAnti->Clone(Form("%s_ffraw", hanti.c_str()));
+  rAnti->SetDirectory(nullptr);
   TH2D *ePass = sumEWK2D(mc, hpass.c_str(), Form("%s_ffewk", hpass.c_str()));
   TH2D *eAnti = sumEWK2D(mc, hanti.c_str(), Form("%s_ffewk", hanti.c_str()));
+  // W-related part alone: only it scales with the signal strength (r-line)
+  TH2D *wPass = sumEWK2D(mcW, hpass.c_str(), Form("%s_ffw", hpass.c_str()));
+  TH2D *wAnti = sumEWK2D(mcW, hanti.c_str(), Form("%s_ffw", hanti.c_str()));
   if (ePass) dPass->Add(ePass, -1.0); // QCD-only (prefit r=1 subtraction)
   if (eAnti) dAnti->Add(eAnti, -1.0);
 
@@ -899,27 +1135,246 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
     }
   }
 
+  // ---- per-bin RAW counts for the likelihood (same binning as numLow) -----
+  // Kept apart from the subtracted histograms above, which feed ff_pt_*, the
+  // prediction and the printed totals exactly as before.
+  auto projOrNull = [&](TH2D *h, double lo, double hi, const char *nm) -> TH1D * {
+    return h ? projPt(h, lo, hi, nm) : nullptr;
+  };
+  TH1D *nP = projPt(rPass, 0.0, cfg.yCut, Form("ff_np_%s", tagc.c_str()));
+  TH1D *nF = projPt(rAnti, 0.0, cfg.yCut, Form("ff_nf_%s", tagc.c_str()));
+  TH1D *nA = projPt(rAnti, kSRMtCut, 1e9, Form("ff_na_%s", tagc.c_str()));
+  TH1D *bP = projOrNull(ePass, 0.0, cfg.yCut, Form("ff_bp_%s", tagc.c_str()));
+  TH1D *bF = projOrNull(eAnti, 0.0, cfg.yCut, Form("ff_bf_%s", tagc.c_str()));
+  TH1D *bA = projOrNull(eAnti, kSRMtCut, 1e9, Form("ff_ba_%s", tagc.c_str()));
+  TH1D *wP = projOrNull(wPass, 0.0, cfg.yCut, Form("ff_wp_%s", tagc.c_str()));
+  TH1D *wF = projOrNull(wAnti, 0.0, cfg.yCut, Form("ff_wf_%s", tagc.c_str()));
+  TH1D *wA = projOrNull(wAnti, kSRMtCut, 1e9, Form("ff_wa_%s", tagc.c_str()));
+  auto val = [](TH1D *h, int i) { return h ? h->GetBinContent(i) : 0.0; };
+  const double kBFloor = 1e-9; // the Poisson terms need b > 0 (an MC-empty bin)
+  // every bin >= 25 GeV incl. the overflow; drawn = measurable (the prediction's
+  // own D >= kMinDen rule) and inside the plotted [25, 100) range
+  struct FFBin
+  {
+    int i;
+    double x, np, nf, na, bp, bf, ba, wp, wf, wa;
+    bool drawn;
+  };
+  std::vector<FFBin> B;
+  for (int i = 1; i <= nb + 1; ++i)
+  {
+    if (i <= nb && ff->GetXaxis()->GetBinUpEdge(i) <= kPtMin + eps) continue;
+    FFBin b;
+    b.i = i;
+    b.x = ff->GetXaxis()->GetBinCenter(i);
+    b.np = nP->GetBinContent(i);
+    b.nf = nF->GetBinContent(i);
+    b.na = nA->GetBinContent(i);
+    b.bp = std::max(val(bP, i), kBFloor);
+    b.bf = std::max(val(bF, i), kBFloor);
+    b.ba = val(bA, i);
+    b.wp = val(wP, i);
+    b.wf = val(wF, i);
+    b.wa = val(wA, i);
+    b.drawn = (i <= nb) && denLow->GetBinContent(i) >= kMinDen;
+    B.push_back(b);
+  }
+
+  // ---- 68% profile-likelihood interval per drawn bin = the plotted graph ---
+  TGraphAsymmErrors *gPL = new TGraphAsymmErrors();
+  gPL->SetName(Form("ff_pt_pl_%s", tagc.c_str()));
+  gPL->SetTitle(ff->GetTitle());
+  std::vector<FFInterval> ivl(B.size());
+  for (size_t k = 0; k < B.size(); ++k)
+  {
+    if (!B[k].drawn) continue;
+    ivl[k] = ffInterval(B[k].np, B[k].nf, B[k].bp, B[k].bf);
+    const double hw = 0.5 * ff->GetXaxis()->GetBinWidth(B[k].i);
+    const int ip = gPL->GetN();
+    gPL->SetPoint(ip, B[k].x, ivl[k].mle);
+    gPL->SetPointError(ip, hw, hw, ivl[k].mle - ivl[k].lo, ivl[k].hi - ivl[k].mle);
+  }
+
+  // ---- is F flat in pT? likelihood-ratio tests over the drawn bins --------
+  std::vector<double> dx, dnp, dnf, dbp, dbf;
+  for (const FFBin &b : B)
+    if (b.drawn)
+    {
+      dx.push_back(b.x);
+      dnp.push_back(b.np);
+      dnf.push_back(b.nf);
+      dbp.push_back(b.bp);
+      dbf.push_back(b.bf);
+    }
+  const FFFlatness fl = ffFlatness(dx, dnp, dnf, dbp, dbf, true);
+  const int dofFree = std::max((int)dx.size() - 1, 1);
+  const double pFree = TMath::Prob(fl.qFree(), dofFree);
+  const double pSlope = TMath::Prob(fl.qSlope(), 1);
+
+  // The FF-vs-flat total from per-bin COUNTS, built exactly like pred/flat
+  // (F = T where D < kMinDen), with T = sum N / sum D over the same bins
+  // (== ci.mt.T: the same events in the other binning) and the W-related EWK
+  // scaled by rW (rW = 1: nominal). Re-evaluated on every toy below.
+  auto shiftOf = [&](const std::vector<double> &np, const std::vector<double> &nf,
+                     const std::vector<double> &na, double rW, double *Tout) {
+    double SN = 0.0, SD = 0.0;
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      SN += np[k] - (B[k].bp + (rW - 1.0) * B[k].wp);
+      SD += nf[k] - (B[k].bf + (rW - 1.0) * B[k].wf);
+    }
+    const double T = (SD != 0.0) ? SN / SD : 0.0;
+    double P = 0.0, A = 0.0;
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      const double D = nf[k] - (B[k].bf + (rW - 1.0) * B[k].wf);
+      const double a = na[k] - (B[k].ba + (rW - 1.0) * B[k].wa);
+      P += ((D >= kMinDen) ? (np[k] - (B[k].bp + (rW - 1.0) * B[k].wp)) / D : T) * a;
+      A += a;
+    }
+    if (Tout) *Tout = T;
+    return (T * A != 0.0) ? P / (T * A) - 1.0 : 0.0;
+  };
+  // For the record only: the chi2 a reader forms from the Gaussian bars
+  // against the flat line (T from the same toy). Not a valid test here.
+  auto chi2Bars = [&](const std::vector<double> &np, const std::vector<double> &nf) {
+    double SN = 0.0, SD = 0.0;
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      SN += np[k] - B[k].bp;
+      SD += nf[k] - B[k].bf;
+    }
+    const double T = (SD != 0.0) ? SN / SD : 0.0;
+    double chi2 = 0.0;
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      if (!B[k].drawn) continue;
+      const double N = np[k] - B[k].bp, D = nf[k] - B[k].bf;
+      if (D <= 0.0) continue;
+      const double e = std::sqrt((np[k] * D * D + nf[k] * N * N) / (D * D * D * D));
+      if (e > 0.0) chi2 += (N / D - T) * (N / D - T) / (e * e);
+    }
+    return chi2;
+  };
+  std::vector<double> onp, onf, ona;
+  for (const FFBin &b : B)
+  {
+    onp.push_back(b.np);
+    onf.push_back(b.nf);
+    ona.push_back(b.na);
+  }
+  double Tcnt = 0.0;
+  const double shiftCnt = shiftOf(onp, onf, ona, 1.0, &Tcnt);
+  const double chi2Obs = chi2Bars(onp, onf);
+  const double chi2Cut = TMath::ChisquareQuantile(0.95, dofFree);
+
+  // Toys, fixed seed per channel. H0 = one common F in every bin (the drawn-
+  // bin MLE F0, mu_k profiled at it): calibrates the two LRTs and gives the
+  // p-value of the FF shift under a flat F. Bootstrap (Poisson around every
+  // observed count): the statistical spread of the shift itself.
+  const int kNToy = 1000;
+  TRandom3 rnd(20260924u + (lep == "ele" ? 2u : 0u) + (chg == "Minus" ? 1u : 0u));
+  std::vector<double> lamP(B.size()), lamF(B.size());
+  for (size_t k = 0; k < B.size(); ++k)
+  {
+    const double mu = ffMuHat(fl.F0, B[k].np, B[k].nf, B[k].bp, B[k].bf);
+    lamP[k] = fl.F0 * mu + B[k].bp;
+    lamF[k] = mu + B[k].bf;
+  }
+  int geFree = 0, geSlope = 0, geShift = 0, geChi2 = 0, fpChi2 = 0, fpFree = 0, fpSlope = 0;
+  const double cutFree = TMath::ChisquareQuantile(0.95, dofFree);
+  const double cutSlope = TMath::ChisquareQuantile(0.95, 1);
+  std::vector<double> tp(B.size()), tf(B.size()), ta(B.size()), snp, snf;
+  for (int t = 0; t < kNToy; ++t)
+  {
+    snp.clear();
+    snf.clear();
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      tp[k] = rnd.Poisson(lamP[k]);
+      tf[k] = rnd.Poisson(lamF[k]);
+      ta[k] = rnd.Poisson(std::max(B[k].na, 0.0));
+      if (B[k].drawn)
+      {
+        snp.push_back(tp[k]);
+        snf.push_back(tf[k]);
+      }
+    }
+    const FFFlatness f = ffFlatness(dx, snp, snf, dbp, dbf, true);
+    if (f.qFree() >= fl.qFree()) ++geFree;
+    if (f.qSlope() >= fl.qSlope()) ++geSlope;
+    if (f.qFree() > cutFree) ++fpFree; // calibration of the asymptotic p-values
+    if (f.qSlope() > cutSlope) ++fpSlope;
+    const double c2 = chi2Bars(tp, tf);
+    if (c2 >= chi2Obs) ++geChi2;
+    if (c2 > chi2Cut) ++fpChi2;
+    const double sh = shiftOf(tp, tf, ta, 1.0, nullptr);
+    if ((shiftCnt >= 0.0) ? (sh >= shiftCnt) : (sh <= shiftCnt)) ++geShift;
+  }
+  double s1 = 0.0, s2 = 0.0;
+  for (int t = 0; t < kNToy; ++t)
+  {
+    for (size_t k = 0; k < B.size(); ++k)
+    {
+      tp[k] = rnd.Poisson(std::max(B[k].np, 0.0));
+      tf[k] = rnd.Poisson(std::max(B[k].nf, 0.0));
+      ta[k] = rnd.Poisson(std::max(B[k].na, 0.0));
+    }
+    const double sh = shiftOf(tp, tf, ta, 1.0, nullptr);
+    s1 += sh;
+    s2 += sh * sh;
+  }
+  ci.ffShiftErr = 100.0 * std::sqrt(std::max(s2 / kNToy - (s1 / kNToy) * (s1 / kNToy), 0.0));
+  // a toy p-value with its relation: "= 0.461", or "< 0.001" when no toy got there
+  auto toyP = [&](int ge) -> std::string {
+    return ge > 0 ? std::string(Form("= %.3f", (double)ge / kNToy))
+                  : std::string(Form("< %.3f", 1.0 / kNToy));
+  };
+  ci.ffShiftP = toyP(geShift);
+
+  // ---- the COHERENT systematic: EWK subtracted at r_W = 1.2 instead of 1 ---
+  const double kRW = 1.2; // where the m_T and MET planes agree (channel report r-scan)
+  double Tr = 0.0;
+  const double shiftR = shiftOf(onp, onf, ona, kRW, &Tr);
+  double dFlo = 1e9, dFhi = -1e9;
+  for (const FFBin &b : B)
+  {
+    if (!b.drawn) continue;
+    const double F1 = (b.np - b.bp) / (b.nf - b.bf);
+    const double F2 = (b.np - b.bp - (kRW - 1.0) * b.wp) / (b.nf - b.bf - (kRW - 1.0) * b.wf);
+    if (F1 <= 0.0) continue;
+    dFlo = std::min(dFlo, 100.0 * (F2 / F1 - 1.0));
+    dFhi = std::max(dFhi, 100.0 * (F2 / F1 - 1.0));
+  }
+
   // ---- printed table + totals (the log is the AN's source) ----
   std::cout << "\n=== per-pT-bin fake factor (diagnostic)  " << lep << " " << chg
             << "  [m_T plane] ===\n"
             << Form("  F(pT) from m_T < %.0f (QCD-only, prefit EWK subtraction),"
                     " applied to anti-iso m_T > %.0f;  flat reference T_mT = %.4f\n",
                     cfg.yCut, kSRMtCut, ci.mt.T);
-  std::cout << "     pT bin       N(iso,mTlow)  D(anti,mTlow)   F(pT)              F/T_mT-1\n";
-  for (int i = 1; i <= nb; ++i)
+  std::cout << "  N = data - EWK(r=1) in the iso-pass numerator; F +/- sigma = TH1::Divide (Gaussian,"
+               " the ff_pt_* TH1D); [lo, hi] = 68% profile-likelihood interval (the PLOTTED one)\n";
+  std::cout << "     pT bin     data  EWK   N(iso,mTlow)  D(anti,mTlow)   F(pT) +/- sigma      "
+               "F [68% prof.-lik.]          F/T_mT-1\n";
+  for (size_t k = 0; k < B.size(); ++k)
   {
-    if (ff->GetXaxis()->GetBinUpEdge(i) <= kPtMin + eps) continue;
+    const int i = B[k].i;
+    if (i > nb) continue; // the overflow: never drawn (its fallback share is in the totals)
     if (denLow->GetBinContent(i) <= 0.0 && numLow->GetBinContent(i) <= 0.0) continue;
-    if (denLow->GetBinContent(i) >= kMinDen)
-      std::cout << Form("   [%3.0f,%3.0f)    %10.1f    %10.1f     %.4f +/- %.4f   %+7.1f%%\n",
+    if (B[k].drawn)
+      std::cout << Form("   [%3.0f,%3.0f)  %5.0f %5.1f  %10.1f    %10.1f     %.4f +/- %.4f   "
+                        "%.4f [%.4f, %.4f]%s  %+7.1f%%\n",
                         ff->GetXaxis()->GetBinLowEdge(i), ff->GetXaxis()->GetBinUpEdge(i),
-                        numLow->GetBinContent(i), denLow->GetBinContent(i),
+                        B[k].np, B[k].bp, numLow->GetBinContent(i), denLow->GetBinContent(i),
                         ff->GetBinContent(i), ff->GetBinError(i),
+                        ivl[k].mle, ivl[k].lo, ivl[k].hi, ivl[k].capped ? "*" : " ",
                         ci.mt.T != 0.0 ? 100.0 * (ff->GetBinContent(i) / ci.mt.T - 1.0) : 0.0);
     else
-      std::cout << Form("   [%3.0f,%3.0f)    %10.1f    %10.1f     -- (D < %.0f: flat-T fallback)\n",
+      std::cout << Form("   [%3.0f,%3.0f)  %5.0f %5.1f  %10.1f    %10.1f     -- (D < %.0f: flat-T fallback)\n",
                         ff->GetXaxis()->GetBinLowEdge(i), ff->GetXaxis()->GetBinUpEdge(i),
-                        numLow->GetBinContent(i), denLow->GetBinContent(i), kMinDen);
+                        B[k].np, B[k].bp, numLow->GetBinContent(i), denLow->GetBinContent(i),
+                        kMinDen);
   }
   double eP = 0, eF = 0, eA = 0;
   const double sP = pred->IntegralAndError(1, nb + 1, eP); // incl pT>100 overflow
@@ -929,6 +1384,15 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
   std::cout << Form("  totals (pT >= %.0f, incl overflow):  FF-weighted = %.1f +/- %.1f"
                     "   flat-T = %.1f +/- %.1f   ->  FF/flat - 1 = %+.1f%%\n",
                     kPtMin, sP, eP, sF, eF, ci.ffShift);
+  std::cout << Form("  -> FF/flat - 1 = %+.1f +/- %.1f%% (stat., %d bootstrap toys). The two totals"
+                    " share the anti-iso m_T>%.0f counts and T shares every F bin's events, so their\n"
+                    "     errors above must NOT be combined in quadrature.  p(a shift at least this"
+                    " %s | F flat in pT) %s  (%d H0 toys)\n",
+                    ci.ffShift, ci.ffShiftErr, kNToy, kSRMtCut,
+                    ci.ffShift >= 0.0 ? "large" : "negative", toyP(geShift).c_str(), kNToy);
+  std::cout << Form("     [count-level recomputation: T = %.4f, FF/flat - 1 = %+.2f%%  (histogram"
+                    " path: %.4f, %+.2f%%)]\n",
+                    Tcnt, 100.0 * shiftCnt, ci.mt.T, ci.ffShift);
   std::cout << Form("  (%.1f%% of the anti-iso m_T>%.0f yield used the flat-T fallback:"
                     " F unmeasurable there)\n",
                     sA != 0.0 ? 100.0 * fbYield / sA : 0.0, kSRMtCut);
@@ -938,39 +1402,123 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
   std::cout << Form("  NB no (pT x MET) skim plane exists -> the MET-sideband F(pT) is only"
                     " available pT-integrated: T_MET = %.4f (vs T_mT = %.4f)\n",
                     ci.met.T, ci.mt.T);
+  std::cout << Form("  is F flat in pT?  likelihood-ratio tests over the %d drawn bins (per-bin"
+                    " Poisson likelihood, EWK(r=1) as a known background; %d H0 toys):\n",
+                    (int)dx.size(), kNToy)
+            << Form("    common F (H0 MLE) = %.4f   (flat T_mT = %.4f)\n", fl.F0, ci.mt.T)
+            << Form("    vs a free F per bin     : -2dlnL = %6.2f  (%2d dof)   p = %.2e   p(toys) %s"
+                    "   [asympt. 5%% cut fires in %.1f%% of H0 toys]\n",
+                    fl.qFree(), dofFree, pFree, toyP(geFree).c_str(), 100.0 * fpFree / kNToy)
+            << Form("    vs F0 exp(s(pT-40)/10)  : -2dlnL = %6.2f  ( 1 dof)   p = %.2e   p(toys) %s"
+                    "   [%.1f%%]   -> F x %.2f per 10 GeV, sqrt(q) = %.1f sigma\n",
+                    fl.qSlope(), pSlope, toyP(geSlope).c_str(), 100.0 * fpSlope / kNToy,
+                    std::exp(fl.s), std::sqrt(fl.qSlope()))
+            << Form("    [record only: the chi2 of the Gaussian bars vs the flat line = %.1f for %d bins"
+                    " (p = %.3f as chi2(%d)) is NOT a valid test here --\n"
+                    "     under H0 its asymptotic 5%% cut fires in %.1f%% of the toys; toy p %s]\n",
+                    chi2Obs, (int)dx.size(), TMath::Prob(chi2Obs, dofFree), dofFree,
+                    100.0 * fpChi2 / kNToy, toyP(geChi2).c_str());
+  std::cout << Form("  coherent EWK-subtraction systematic (NOT in the bars; every bin moves the same way):"
+                    " W-related EWK x %.1f ->\n"
+                    "    T %.4f -> %.4f (%+.1f%%),  drawn F bins %+.1f%% ... %+.1f%%,"
+                    "  FF/flat - 1 %+.1f%% -> %+.1f%%\n",
+                    kRW, Tcnt, Tr, Tcnt != 0.0 ? 100.0 * (Tr / Tcnt - 1.0) : 0.0, dFlo, dFhi,
+                    100.0 * shiftCnt, 100.0 * shiftR);
 
-  // ---- F(pT) with the flat-T line ----
+  // ---- F(pT): profile-likelihood intervals, the flat line, the slope fit ----
+  // The statistics sit in a top margin above the frame (not inside it): the
+  // high-pT intervals reach the top of the frame in either corner.
   {
     gStyle->SetOptStat(0);
     gStyle->SetOptTitle(0);
-    TCanvas *c = new TCanvas(Form("cff_%s", tagc.c_str()), "", 800, 650);
+    TCanvas *c = new TCanvas(Form("cff_%s", tagc.c_str()), "", 800, 700);
     c->SetLeftMargin(0.13);
-    ff->GetXaxis()->SetRangeUser(kPtMin, 100.0);
-    ff->SetMinimum(0.0);
-    ff->SetMaximum(std::max(3.0 * ci.mt.T, 1.3 * ff->GetMaximum()));
-    ff->SetLineColor(kBlue + 1);
-    ff->SetMarkerColor(kBlue + 1);
-    ff->SetMarkerStyle(20);
-    ff->Draw("E1");
+    c->SetRightMargin(0.04);
+    c->SetTopMargin(0.17);
+    double maxMle = 0.0, xLast = kPtMin;
+    for (int ip = 0; ip < gPL->GetN(); ++ip)
+    {
+      maxMle = std::max(maxMle, gPL->GetPointY(ip));
+      xLast = std::max(xLast, gPL->GetPointX(ip) + gPL->GetErrorXhigh(ip));
+    }
+    // as before: the frame follows the POINTS; the widest high-pT intervals
+    // may run off the top (their edges are in the log table)
+    const double yTop = std::max(3.0 * ci.mt.T, 1.3 * maxMle);
+    TH1D *frame = (TH1D *)ff->Clone(Form("ff_frame_%s", tagc.c_str()));
+    frame->SetDirectory(nullptr);
+    frame->Reset("ICESM");
+    frame->GetXaxis()->SetRangeUser(kPtMin, 100.0);
+    frame->SetMinimum(0.0);
+    frame->SetMaximum(yTop);
+    frame->GetYaxis()->SetTitleOffset(1.3);
+    frame->Draw("AXIS");
+    TBox *band = new TBox(kPtMin, std::max(ci.mt.T - ci.mt.Terr, 0.0), 100.0, ci.mt.T + ci.mt.Terr);
+    band->SetFillColorAlpha(kRed - 9, 0.35);
+    band->SetLineWidth(0);
+    band->Draw();
     TLine *l = new TLine(kPtMin, ci.mt.T, 100.0, ci.mt.T);
     l->SetLineColor(kRed + 1);
     l->SetLineWidth(2);
     l->SetLineStyle(2);
     l->Draw();
+    TGraph *gFit = new TGraph();
+    for (int k = 0; k <= 100; ++k)
+    {
+      const double x = kPtMin + (xLast - kPtMin) * k / 100.0;
+      gFit->SetPoint(k, x, fl.F0s * std::exp(fl.s * (x - 40.0) / 10.0));
+    }
+    // solid: ROOT's PNG backend restarts a dot/dash pattern on every short
+    // segment of a dense polyline, which left a dotted curve nearly invisible
+    gFit->SetLineColor(kGreen + 2);
+    gFit->SetLineWidth(2);
+    gFit->Draw("L SAME");
+    gPL->SetLineColor(kBlue + 1);
+    gPL->SetMarkerColor(kBlue + 1);
+    gPL->SetMarkerStyle(20);
+    gPL->SetLineWidth(2);
+    gPL->Draw("P SAME");
+    frame->Draw("AXIS SAME");
     TLatex t;
     t.SetNDC();
     t.SetTextFont(42);
-    t.SetTextSize(0.035);
-    t.DrawLatex(0.16, 0.86, Form("F(p_{T}) at m_{T} < %.0f GeV, %s", cfg.yCut, chgLatex.c_str()));
-    t.DrawLatex(0.16, 0.80, Form("#color[633]{dashed: flat T_{m_{T}} = %.4f}", ci.mt.T));
+    t.SetTextSize(0.031);
+    t.DrawLatex(0.13, 0.950, Form("F(p_{T}) at m_{T} < %.0f GeV, %s:  68%% CL profile-likelihood"
+                                  " intervals", cfg.yCut, chgLatex.c_str()));
+    t.DrawLatex(0.13, 0.907, Form("#color[633]{dashed: flat T_{m_{T}} = %.4f #pm %.4f}"
+                                  "     #color[418]{fit F_{0}e^{s(p_{T}-40)/10}: #times%.2f per 10 GeV}",
+                                  ci.mt.T, ci.mt.Terr, std::exp(fl.s)));
+    t.DrawLatex(0.13, 0.864, Form("flat F: p = %s (LRT, %d dof)      slope: p = %s (%.1f#sigma)",
+                                  ffFmtP(pFree).c_str(), dofFree, ffFmtP(pSlope).c_str(),
+                                  std::sqrt(fl.qSlope())));
     c->SaveAs((outDir + Form("/ff_pt_%s.png", tagc.c_str())).c_str());
     c->SaveAs((outDir + Form("/ff_pt_%s.pdf", tagc.c_str())).c_str());
+    delete gFit;
     delete l;
+    delete band;
+    delete frame;
     delete c;
   }
 
   // ---- FF-weighted vs flat-T prediction, with ratio pad ----
+  // Both curves are (anti-iso m_T>40 count a_i) x (F_i or T): a_i is COMMON,
+  // so the comparison -- and the ratio pad, which is exactly F_i/T -- carries
+  // the F uncertainty alone. Passing the full-error histograms made
+  // TH1::Divide add a_i's Poisson error twice (bars up to 45% too large) and put
+  // bars on the fallback bins, whose ratio is identically 1 (fixed
+  // 2026-09-24). The PLOTTED copies therefore carry a_i x sigma_F (fallback
+  // bins: 0) and an error-free flat-T curve; the printed totals above keep
+  // each prediction's full error.
   {
+    TH1D *predF = (TH1D *)pred->Clone(Form("ff_predF_%s", tagc.c_str()));
+    predF->SetDirectory(nullptr);
+    TH1D *flat0 = (TH1D *)flat->Clone(Form("ff_flat0_%s", tagc.c_str()));
+    flat0->SetDirectory(nullptr);
+    for (int i = 1; i <= nb + 1; ++i)
+    {
+      const bool ok = denLow->GetBinContent(i) >= kMinDen;
+      predF->SetBinError(i, ok ? std::fabs(anti40->GetBinContent(i)) * ff->GetBinError(i) : 0.0);
+      flat0->SetBinError(i, 0.0);
+    }
     PlotStyle ps;
     ps.logy = true;
     ps.yTitleOffset = 1.55;
@@ -980,19 +1528,26 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
     ps.xRangeLo = kPtMin; // 5-GeV rebinned scan bins: 25 is a true edge
     ps.xRangeHi = kPtAxisHi;
     // Both inputs are data-derived (the helper's data/MC styles are cosmetics).
-    SaveDataMCRatio(pred, flat,
+    SaveDataMCRatio(predF, flat0,
                     outDir + Form("/ff_closure_pt_%s", tagc.c_str()),
                     Form("p_{T}^{%s} [GeV]", lep == "ele" ? "e" : "#mu"),
                     "QCD events",
                     Form("QCD prediction (anti-iso, m_{T}>%.0f), %s", kSRMtCut, chgLatex.c_str()),
-                    "fake-factor vs flat-T", "", ps, /*normToData=*/false,
+                    "fake-factor vs flat-T", "bars: #sigma_{F} only",
+                    ps, /*normToData=*/false,
                     "F(p_{T})-weighted", Form("flat T_{m_{T}} = %.4f", ci.mt.T),
                     "FF / flat");
+    delete predF;
+    delete flat0;
   }
 
   fout->cd();
   ff->Write(ff->GetName(), TObject::kOverwrite);
+  gPL->Write(gPL->GetName(), TObject::kOverwrite);
 
+  for (TH1D *h : {nP, nF, nA, bP, bF, bA, wP, wF, wA})
+    delete h; // (deleting a null pointer is a no-op)
+  delete gPL;
   delete numLow;
   delete denLow;
   delete anti40;
@@ -1001,8 +1556,12 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::string &
   delete flat;
   delete dPass;
   delete dAnti;
+  delete rPass;
+  delete rAnti;
   if (ePass) delete ePass;
   if (eAnti) delete eAnti;
+  if (wPass) delete wPass;
+  if (wAnti) delete wAnti;
 }
 
 // ----------------------------------------------------------------------------
@@ -1792,6 +2351,13 @@ void printChannelReport(const std::string &lep, const ABCDConfig &cfg,
   // differ (2026-08-23: mu ~identical, ele FF shift ~13% > tilt 7-9%).
   const double ffs[2] = {std::fabs(P.ffShift), std::fabs(M.ffShift)};
   row("alt: FF total shift (per-pT F)", ffs);
+  // The shift is itself a measurement: quote its statistical precision and
+  // how often a flat F produces one this large (runFFCheck toys), so a shift
+  // that is only noise is not mistaken for a measured correlation.
+  auto bare = [](const std::string &s) { return s.rfind("= ", 0) == 0 ? s.substr(2) : s; };
+  std::cout << Form("     (its stat. uncertainty: +/-%.1f%% / +/-%.1f%%;  one-sided p of a shift at"
+                    " least this far out if F is flat: %s / %s)\n",
+                    P.ffShiftErr, M.ffShiftErr, bare(P.ffShiftP).c_str(), bare(M.ffShiftP).c_str());
   double totFF[2];
   for (int i = 0; i < 2; ++i)
     totFF[i] = std::sqrt(window40[i] * window40[i] + ffs[i] * ffs[i]);
@@ -2069,8 +2635,8 @@ void qcd_abcd(bool isElec = false)
   }
 
   // --- per-pT-bin fake-factor diagnostic (flat-T shape-assumption check) ---
-  runFFCheck(fData, mc, "Plus", cfg, outPt, lepP, lep, infoPlus, fout);
-  runFFCheck(fData, mc, "Minus", cfg, outPt, lepM, lep, infoMinus, fout);
+  runFFCheck(fData, mc, mcW, "Plus", cfg, outPt, lepP, lep, infoPlus, fout);
+  runFFCheck(fData, mc, mcW, "Minus", cfg, outPt, lepM, lep, infoMinus, fout);
 
   // --- in-fit ABCD prediction check: horizontal/vertical SR stacks (r = 1) ---
   runInfitCheck(fData, mcW, mcZ, "Plus", cfg, outPt, lepP, lep, infoPlus);

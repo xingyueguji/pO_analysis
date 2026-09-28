@@ -1,0 +1,10 @@
+.vscode
+*.aux
+*.fdb*
+*.log
+*.out
+*.fls
+.devcontainer/
+.ssh/
+**/__pycache__/
+

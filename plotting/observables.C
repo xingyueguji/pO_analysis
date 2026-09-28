@@ -5,15 +5,18 @@
 #include "TLegend.h"
 #include "TLine.h"
 #include "TString.h"
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <cmath>
 #include <functional>
 
-#include "plotting_helper.C"               // PlotStyle, SaveNiceGraph[_ErrorBand][_TwoData]
+#include "plotting_helper.C"               // PlotStyle, SaveNiceGraph[_ErrorBand|_Overlay]
 #include "../analysis/analysis_helpers.h"  // pOAnalysis::YieldInRange (Sumw2-aware yields)
 #include "disc_variants.h"                 // pODisc::Spec/GraphFile (W-discriminant tags)
+#include "fit_variants.h"                  // pOFit::Spec (which fit: comb / mu-only / e-only)
+#include "TMath.h"
 
 // =============================================================================
 // observables.C -- final charge-asymmetry + forward/backward plots from the
@@ -21,21 +24,25 @@
 //
 //   observables_comb(disc)           PRIMARY: the simfit grand fit's mu+e-combined
 //                                    observables (plots/comb/..., 2026-08-04)
-//   observables(isElec, disc)        per-channel plots from the LEGACY per-bin
-//                                    fits (data + all-4-model theory bands)
-//   observables_overlay(disc)        MERGED muon+electron overlay (legacy fits)
+//   observables_flav(disc)           the MU-ONLY and E-ONLY simultaneous fits
+//                                    (fork mode flavfit, 2026-09-22) OVERLAID,
+//                                    each with stat bars + syst boxes
+//                                    (plots/flavfit/...), + a mu-vs-e chi2
+//   observables(disc)                both of the above
 //
-// `disc` = met|leppt|leppt_mt40 selects WHICH fit's yields are plotted
+// `disc` = met|leppt_mt40 selects WHICH fit's yields are plotted
 // (2026-08-03): it drives every default input path (the fork out-tree
-// pO_fit_out<suffix>/, the tagged charge_asym/FBratio_fit_<chan>_<disc>.root)
-// AND the output folders (plots[/Elec]/{charge_asym,FBratio}/<disc>/,
-// plots/merged/<disc>/), so the three variants coexist without overwriting.
-// The discriminant is also stamped into the plot info box. One-command runner
-// for the whole chain: analysis/run_observables.sh (README Module 5).
+// pO_fit_out<suffix>/, the tagged charge_asym/FBratio_fid_<fit>_<disc>.root --
+// FIDUCIAL, r x sigma_gen, never raw counts: user directive 2026-09-22)
+// AND the output folders (plots/{comb,flavfit}/{charge_asym,FBratio}/<disc>/),
+// so the variants coexist without overwriting. The discriminant is also
+// stamped into the plot info box. One-command runner for the whole chain:
+// analysis/run_observables.sh (README Module 5).
 //
-// All theory bands now show ALL FOUR nPDF sets (EPPS21, nCTEQ15HQ, nNNPDF3.0,
-// TUJU21nlo) and the obsolete "Projection with Electrons" pseudo-band is gone --
-// the real electron measurement is overlaid instead (observables_overlay).
+// All theory bands show ALL FOUR nPDF sets (EPPS21, nCTEQ15HQ, nNNPDF3.0,
+// TUJU21nlo). The LEGACY per-flavour plots (observables(isElec, disc) and the
+// mu+e observables_overlay, from the per-bin legacy fits) were removed with
+// those fits on 2026-09-22 -- observables_flav is the mu-vs-e comparison now.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -178,14 +185,15 @@ static GraphTuner withDiscTag(GraphTuner base, const TString &tagText, const Plo
 }
 
 // -----------------------------------------------------------------------------
-// Shared implementation behind observables() / observables_comb(): everything
-// channel-specific arrives as arguments.
-//   chan      "mu" | "ele" | "comb"   (comb = the simfit grand fit, 2026-08-04)
-//   lepSym    "#mu" | "e" | "l"       (lepton symbol used in the plot titles)
-//   outBase   "./plots" | "./plots/Elec" | "./plots/comb"
-//   sYieldDef default fitted-yields file (per-flavour out-tree, or the simfit
-//             comb_fitted_yields.root) -- supplies the sum-theory weights
-//   sub2      3rd header line ("post-fit signal yield" / the simfit label)
+// Implementation behind observables_comb(): everything fit-specific arrives as
+// arguments (it served the legacy per-flavour plots too until 2026-09-22).
+//   chan      the fit tag in the graph file names ("comb")
+//   lepSym    "l"                     (lepton symbol used in the plot titles)
+//   outBase   "./plots/comb"
+//   sYieldDef default yields file = the fit's FIDUCIAL yields r x sigma_gen,
+//             ../skim/rootfile/fidyields_comb_<disc>.root (analysis/
+//             fiducial_yields.C) -- supplies the sum-theory weights
+//   sub2      3rd header line (the simfit label)
 // -----------------------------------------------------------------------------
 static void observables_run(const char *chan, const char *lepSym,
                             const char *outBase, const TString &sYieldDef,
@@ -204,11 +212,11 @@ static void observables_run(const char *chan, const char *lepSym,
 
     TFile *fCharge = TFile::Open(sCharge, "READ");
     if (!fCharge || fCharge->IsZombie())
-    { std::cerr << "[ERROR] Cannot open charge-asym file: " << sCharge << "\n        (run charge_asym.C on the fitted-yields file first.)\n"; return; }
+    { std::cerr << "[ERROR] Cannot open charge-asym file: " << sCharge << "\n        (analysis/run_observables.sh makes it: fiducial_yields.C -> charge_asym.C.)\n"; return; }
 
     TFile *fFB = TFile::Open(sFB, "READ");
     if (!fFB || fFB->IsZombie())
-    { std::cerr << "[ERROR] Cannot open FB-ratio file: " << sFB << "\n        (run FBratio.C on the fitted-yields file first.)\n"; return; }
+    { std::cerr << "[ERROR] Cannot open FB-ratio file: " << sFB << "\n        (analysis/run_observables.sh makes it: fiducial_yields.C -> FBratio.C.)\n"; return; }
 
     TFile *fFB_theory = TFile::Open(theoryFile, "READ");
     if (!fFB_theory || fFB_theory->IsZombie())
@@ -234,12 +242,13 @@ static void observables_run(const char *chan, const char *lepSym,
     auto *g_RFB_Wm = GetGraph(fFB, "g_RFB_Wm", "g_RFB_mt_Wm");
 
     // Statistical twins (2026-09-15): same points, statistical error only,
-    // written by charge_asym.C / FBratio.C whenever the fitted-yields file
-    // carries the conditioned covariance h_cov_yield[_FB]_stat. When present,
-    // the plotted error bars become the STATISTICAL ones and the systematic --
+    // written by charge_asym.C / FBratio.C whenever their input yields file
+    // carries the stat covariance h_cov_yield[_FB]_stat (fiducial_yields.C
+    // writes it from the fit's h_cov_poi[_FB]_stat). When present, the
+    // plotted error bars become the STATISTICAL ones and the systematic --
     // sqrt(total^2 - stat^2) -- is drawn as a TBox per point. Absent (raw
-    // skim, legacy per-flavour fits, pre-2026-09-14 extractions) -> a single
-    // total-error bar, exactly as before.
+    // skim files, pre-2026-09-14 extractions) -> a single total-error bar,
+    // exactly as before.
     auto *g_charge_stat = (TGraphErrors *)fCharge->Get("g_chargeAsym_stat");
     auto *g_RFB_sum_stat = (TGraphErrors *)fFB->Get("g_RFB_sum_stat");
     auto *g_RFB_Wp_stat = (TGraphErrors *)fFB->Get("g_RFB_Wp_stat");
@@ -247,8 +256,8 @@ static void observables_run(const char *chan, const char *lepSym,
     if (!g_charge_stat && !g_RFB_sum_stat)
         std::cerr << "[WARN] no *_stat graphs in " << sCharge << " / " << sFB
                   << "\n        -> single total-error bars (no systematic boxes)."
-                  << "\n        Re-run the fork extraction (run_pO_fits.sh --extract-only)"
-                  << " so comb_fitted_yields.root carries h_cov_yield[_FB]_stat.\n";
+                  << "\n        Re-run the fork extraction (run_pO_fits.sh --extract-only) so the"
+                  << " fit's <tag>_fitted_yields.root carries the stat covariance, then run_observables.sh.\n";
 
     // theory graphs (boson-level -> same for e and mu)
     TGraphErrors *thWp[4], *thWm[4];
@@ -276,19 +285,19 @@ static void observables_run(const char *chan, const char *lepSym,
                       {}, ps, tuneChargeTag,
                       nullptr, nullptr, nullptr, nullptr, g_charge_stat);
 
-    // ---- sum-channel theory (count-weighted by the fitted yields) ----
+    // ---- sum-channel theory (W+/W- weighted by the fit's FIDUCIAL yields r x sigma_gen) ----
     std::vector<TGraphErrors *> sumTheory(4, nullptr);
     {
         TFile *fW = TFile::Open(sYield, "READ");
         if (!fW || fW->IsZombie())
-            std::cerr << "[WARN] Cannot open fitted-yields file for sum-theory weights: " << sYield << " -> sum theory skipped\n";
+            std::cerr << "[WARN] Cannot open fiducial-yields file for sum-theory weights: " << sYield << " -> sum theory skipped\n";
         else if (!fFB_theory)
             std::cerr << "[INFO] No theory file -> sum-theory curves skipped (data still plotted).\n";
         else
         {
             using pOAnalysis::YieldInRange;
             auto count = [&](const char *chg, int iy) -> double {
-                // primary fitted-yield name; h_mt_* is the deprecated alias
+                // h_yield_* (the name fiducial_yields.C writes); h_mt_* is the deprecated alias
                 TH1D *h = (TH1D *)fW->Get(Form("h_yield_%s_y%d_FB", chg, iy));
                 if (!h) h = (TH1D *)fW->Get(Form("h_mt_%s_y%d_FB", chg, iy));
                 return YieldInRange(h, 30.0, 200.0, true).value;
@@ -321,38 +330,18 @@ static void observables_run(const char *chan, const char *lepSym,
 }
 
 // =============================================================================
-// observables -- per-flavour plots (legacy per-bin fit out-trees).
-// =============================================================================
-void observables(bool isElec = false,
-                 const char *disc = "met",
-                 const char *fittedYieldsFile = nullptr,
-                 const char *chargeFile = nullptr,
-                 const char *fbFile = nullptr,
-                 const char *theoryFile = "./RpO_rootfile/RpO_FB_graphs.root")
-{
-    TString dsuf, discLabel;
-    if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-
-    const char *chan = isElec ? "ele" : "mu";
-    const TString sYieldDef = TString::Format(
-        "../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/%s/summary/%s_fitted_yields.root",
-        dsuf.Data(), chan, chan);
-    observables_run(chan, isElec ? "e" : "#mu",
-                    isElec ? "./plots/Elec" : "./plots", sYieldDef,
-                    disc, discLabel, fittedYieldsFile, chargeFile, fbFile,
-                    theoryFile, "post-fit signal yield");
-}
-
-// =============================================================================
 // observables_comb -- the PRIMARY observables of the simfit GRAND SIMULTANEOUS
 // FIT (2026-08-04): mu/e-shared per-(charge, y-bin) signal strengths r_<C>_y<i>
-// + global r_Z, one likelihood. Yields (and their covariance, used upstream in
-// charge_asym.C / FBratio.C) come from the fork's
-// pO_fit_out<suffix>/simfit/summary/comb_fitted_yields.root.
+// + global r_Z, one likelihood. The r's and their covariance come from the
+// fork's pO_fit_out<suffix>/simfit/summary/comb_{W_yields.csv,fitted_yields.root}
+// and are turned into r x sigma_gen by analysis/fiducial_yields.C (below).
 // Outputs: ./plots/comb/{charge_asym,FBratio}/<disc>/.
-// NB with the shared r's the per-flavour observables of observables() are 100%
-// correlated with these -- the comb plots are the result; per-flavour ones are
-// only the legacy per-bin-fit cross-check.
+// NB with the shared r's the mu and e observables are 100% correlated inside
+// this fit -- the independent per-flavour results are observables_flav's.
+// FIDUCIAL since 2026-09-22 (user: every observable from r x sigma_gen, never
+// raw counts): the graphs are charge_asym.C / FBratio.C on the fit's
+// fiducial yields ../skim/rootfile/fidyields_comb_<disc>.root
+// (analysis/fiducial_yields.C), which also supply the sum-theory weights.
 // =============================================================================
 void observables_comb(const char *disc = "met",
                       const char *fittedYieldsFile = nullptr,
@@ -363,141 +352,261 @@ void observables_comb(const char *disc = "met",
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
 
-    const TString sYieldDef = TString::Format(
-        "../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/simfit/summary/comb_fitted_yields.root",
-        dsuf.Data());
+    const TString sYieldDef = TString::Format("../skim/rootfile/fidyields_comb_%s.root", disc);
     observables_run("comb", "l", "./plots/comb", sYieldDef,
                     disc, discLabel, fittedYieldsFile, chargeFile, fbFile,
-                    theoryFile, "#mu + e combined (simfit)");
+                    theoryFile, "#mu + e simfit, fiducial");
 }
 
 // =============================================================================
-// Merged muon + electron overlay (keeps the individual per-channel plots from
-// observables(false)/(true); this just adds the combined view).  Run AFTER you
-// have produced both channels' charge_asym_fit_<chan>_<disc>.root +
-// FBratio_fit_<chan>_<disc>.root for the SAME disc.
-//   disc                met|leppt|leppt_mt40 (drives defaults + output folder)
-//   muYields/eleYields  fitted-yields files (combined abundance weights for sum)
-//   *Charge/*FB         per-channel charge_asym/FBratio outputs (defaults below)
-//   theoryFile          RpO_FB_graphs.root (missing -> data-only overlays)
-// Output: ./plots/merged/<disc>/{chargeAsym,RFB_sum,RFB_Wp,RFB_Wm}_overlay.{png,pdf}
+// observables_flav -- the MU-ONLY and E-ONLY simultaneous fits (fork
+// run_pO_fits.sh mode flavfit, 2026-09-22) OVERLAID: charge asymmetry and R_FB
+// (sum, W+, W-). Every fit is drawn exactly as observables_comb draws the grand
+// one -- point + statistical bar + the systematic, sqrt(total^2 - stat^2), as a
+// box -- from the charge_asym.C / FBratio.C graphs and their *_stat twins, side
+// by side in each bin (mu left, e right; the grand fit in the middle with
+// withComb, off by default: in these per-bin plots it mostly crowds the bins,
+// and it has its own plots in plots/comb/).
+//
+// FIDUCIAL (acceptance-corrected) inputs, NOT the count-based ones: the graphs
+// are charge_asym.C / FBratio.C run on analysis/fiducial_yields.C's
+// r_i x sigma_gen-fid,i yields (with the full r covariance, total + stat).
+// The count-based R_FB of the two flavours is NOT comparable -- F and B are
+// different |eta_lab| regions, so each flavour's A x eps (the electron ECAL
+// crack above all) enters the ratio and does not cancel: on IDENTICAL r's the
+// mu and e count-based R_FB differ by up to 60% (see fiducial_yields.C).
+// In one fiducial volume the only difference left is the data.
+//
+// COMPARING THEM: the mu and e STATISTICAL errors are independent (disjoint
+// event samples); their systematics are not -- lumi and the theory shapes act
+// coherently on both (lumi cancels in A and R_FB anyway), muSF and the QCD
+// nuisances on one flavour only. The console therefore prints, per observable,
+//   chi2 = Sum_i (x_mu,i - x_e,i)^2 / (stat_mu,i^2 + stat_e,i^2)
+// and the same with the TOTAL errors (bins treated as independent): the first
+// is the tension against statistics alone, the second a conservative bound
+// (it counts the common systematics as if they were independent). Same numbers
+// in plots/flavfit/{charge_asym,FBratio}/<disc>/mu_vs_e_chi2.csv.
+//
+// Inputs:  ../skim/rootfile/{charge_asym,FBratio}_fid_simfit_{mu,ele}_<disc>.root
+//          [+ _fid_comb_<disc>] (pODisc::GraphFile), made by
+//          analysis/run_observables.sh (fiducial_yields.C -> charge_asym.C /
+//          FBratio.C), and for the sum-theory weights
+//          ../skim/rootfile/fidyields_<tag>_<disc>.root
+// Outputs: ./plots/flavfit/charge_asym/<disc>/chargeAsym.{png,pdf}
+//          ./plots/flavfit/FBratio/<disc>/RFB_{sum,Wp,Wm}.{png,pdf}
 // =============================================================================
-void observables_overlay(const char *disc = "met",
-                         const char *muYields = nullptr,
-                         const char *eleYields = nullptr,
-                         const char *muCharge = nullptr,
-                         const char *muFB = nullptr,
-                         const char *eleCharge = nullptr,
-                         const char *eleFB = nullptr,
-                         const char *theoryFile = "./RpO_rootfile/RpO_FB_graphs.root")
+void observables_flav(const char *disc = "leppt_mt40",
+                      bool withComb = false,
+                      const char *theoryFile = "./RpO_rootfile/RpO_FB_graphs.root")
 {
     gStyle->SetEndErrorSize(4);
 
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
 
-    const TString sMuCharge  = muCharge  ? TString(muCharge)  : pODisc::GraphFile("charge_asym", "mu", disc);
-    const TString sMuFB      = muFB      ? TString(muFB)      : pODisc::GraphFile("FBratio", "mu", disc);
-    const TString sElCharge  = eleCharge ? TString(eleCharge) : pODisc::GraphFile("charge_asym", "ele", disc);
-    const TString sElFB      = eleFB     ? TString(eleFB)     : pODisc::GraphFile("FBratio", "ele", disc);
-    const TString sMuYield   = muYields  ? TString(muYields)  : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/mu/summary/mu_fitted_yields.root", dsuf.Data());
-    const TString sElYield   = eleYields ? TString(eleYields) : TString::Format("../../HiggsAnalysis-CombinedLimit/test/pO_fit_out%s/ele/summary/ele_fitted_yields.root", dsuf.Data());
+    // the fits to overlay, in drawing order left -> right
+    std::vector<std::string> tags = {"simfit_mu"};
+    if (withComb) tags.push_back("comb");
+    tags.push_back("simfit_ele");
 
-    TFile *fCmu = TFile::Open(sMuCharge, "READ");
-    TFile *fCel = TFile::Open(sElCharge, "READ");
-    TFile *fFmu = TFile::Open(sMuFB, "READ");
-    TFile *fFel = TFile::Open(sElFB, "READ");
-    auto bad = [](TFile *f) { return !f || f->IsZombie(); };
-    if (bad(fCmu) || bad(fCel) || bad(fFmu) || bad(fFel))
+    struct Fit { pOFit::Spec spec; TFile *fC = nullptr, *fF = nullptr; };
+    std::vector<Fit> fits;
+    for (const std::string &t : tags)
     {
-        std::cerr << "[ERROR] overlay needs BOTH channels' charge_asym + FBratio outputs\n"
-                  << "        for disc=" << disc << ". Run charge_asym.C / FBratio.C on both\n"
-                  << "        channels' fitted yields first -- easiest via\n"
-                  << "        analysis/run_observables.sh " << disc << " (README Module 5).\n";
+        Fit f;
+        if (!pOFit::Get(t.c_str(), f.spec)) continue;
+        const TString sC = pODisc::GraphFile("charge_asym", t.c_str(), disc);
+        const TString sF = pODisc::GraphFile("FBratio", t.c_str(), disc);
+        if (gSystem->AccessPathName(sC) || gSystem->AccessPathName(sF)) // true = missing
+        {
+            std::cerr << "[WARN] observables_flav: no " << sC << " / " << sF << " -> '"
+                      << f.spec.label << "' not drawn (fit not run, or its fiducial yields not"
+                      << " made: analysis/run_observables.sh " << disc << ")\n";
+            continue;
+        }
+        f.fC = TFile::Open(sC, "READ");
+        f.fF = TFile::Open(sF, "READ");
+        if (!f.fC || f.fC->IsZombie() || !f.fF || f.fF->IsZombie())
+        {
+            std::cerr << "[WARN] observables_flav: cannot open " << sC << " / " << sF << "\n";
+            continue;
+        }
+        fits.push_back(f);
+    }
+    int nFlav = 0;
+    for (const Fit &f : fits)
+        if (f.spec.flav != "") ++nFlav;
+    if (nFlav == 0)
+    {
+        std::cerr << "[ERROR] observables_flav: neither the mu-only nor the e-only fit is available for disc="
+                  << disc << " -- fork: ./run_pO_fits.sh both flavfit --disc " << disc
+                  << ", then analysis/run_observables.sh " << disc << ".\n";
+        for (Fit &f : fits) { f.fC->Close(); f.fF->Close(); }
         return;
     }
 
     TFile *fT = TFile::Open(theoryFile, "READ");
     if (!fT || fT->IsZombie()) { std::cerr << "[WARN] no theory file -> data-only overlays\n"; fT = nullptr; }
-
-    const std::string outDir = std::string("./plots/merged/") + disc;
-    gSystem->mkdir(outDir.c_str(), kTRUE);
-
-    PlotStyle ps; ps.showStats = false; ps.logy = false;
-    GraphTuner tuneCharge = makeTuneCharge();
-    GraphTuner tuneRFB = makeTuneRFB();
-
-    // data graphs, both channels
-    auto *gC_mu = GetGraph(fCmu, "g_chargeAsym", "g_chargeAsym_mt");
-    auto *gC_el = GetGraph(fCel, "g_chargeAsym", "g_chargeAsym_mt");
-    auto *gS_mu = GetGraph(fFmu, "g_RFB_sum", "g_RFB_mt_sum");
-    auto *gS_el = GetGraph(fFel, "g_RFB_sum", "g_RFB_mt_sum");
-    auto *gP_mu = GetGraph(fFmu, "g_RFB_Wp", "g_RFB_mt_Wp");
-    auto *gP_el = GetGraph(fFel, "g_RFB_Wp", "g_RFB_mt_Wp");
-    auto *gM_mu = GetGraph(fFmu, "g_RFB_Wm", "g_RFB_mt_Wm");
-    auto *gM_el = GetGraph(fFel, "g_RFB_Wm", "g_RFB_mt_Wm");
-
-    // theory (shared, boson-level)
     TGraphErrors *thWp[4], *thWm[4];
     readTheoryCharge(fT, "WPlus", thWp);
     readTheoryCharge(fT, "WMinus", thWm);
 
-    // sum-channel theory weighted by the COMBINED (mu+ele) fitted yields
+    // sum-channel theory weighted by the W+/W- abundances of the per-flavour
+    // fits' FIDUCIAL yields (only the relative weights matter; the grand fit's
+    // would double count them)
     std::vector<TGraphErrors *> sumTheory(4, nullptr);
     {
-        TFile *fYmu = TFile::Open(sMuYield, "READ");
-        TFile *fYel = TFile::Open(sElYield, "READ");
-        TGraphErrors *gS_ref = gS_mu ? gS_mu : gS_el;
-        if (fT && gS_ref && !bad(fYmu) && !bad(fYel))
+        TGraphErrors *gSumRef = nullptr;
+        std::vector<TFile *> fY;
+        for (const Fit &f : fits)
+        {
+            if (f.spec.flav == "") continue;
+            if (!gSumRef) gSumRef = GetGraph(f.fF, "g_RFB_sum", "g_RFB_mt_sum");
+            TFile *y = TFile::Open(TString::Format("../skim/rootfile/fidyields_%s_%s.root", f.spec.tag.Data(), disc), "READ");
+            if (y && !y->IsZombie()) fY.push_back(y);
+            else std::cerr << "[WARN] no fiducial yields of '" << f.spec.label << "' -> left out of the sum-theory weights\n";
+        }
+        if (fT && gSumRef && !fY.empty())
         {
             using pOAnalysis::YieldInRange;
-            // primary fitted-yield name; h_mt_* is the deprecated alias
-            auto getY = [](TFile *fy, const char *chg, int iy) -> TH1D * {
-                TH1D *h = (TH1D *)fy->Get(Form("h_yield_%s_y%d_FB", chg, iy));
-                if (!h) h = (TH1D *)fy->Get(Form("h_mt_%s_y%d_FB", chg, iy));
-                return h;
-            };
             auto count = [&](const char *chg, int iy) -> double {
-                return YieldInRange(getY(fYmu, chg, iy), 30.0, 200.0, true).value
-                     + YieldInRange(getY(fYel, chg, iy), 30.0, 200.0, true).value;
+                double s = 0;
+                for (TFile *y : fY)
+                {
+                    // h_yield_* (the name fiducial_yields.C writes); h_mt_* is the deprecated alias
+                    TH1D *h = (TH1D *)y->Get(Form("h_yield_%s_y%d_FB", chg, iy));
+                    if (!h) h = (TH1D *)y->Get(Form("h_mt_%s_y%d_FB", chg, iy));
+                    s += YieldInRange(h, 30.0, 200.0, true).value;
+                }
+                return s;
             };
-            sumTheory = buildSumTheorySet(count, gS_ref, thWp, thWm);
+            sumTheory = buildSumTheorySet(count, gSumRef, thWp, thWm);
         }
-        else
-            std::cerr << "[WARN] combined fitted-yields unavailable -> sum-overlay theory skipped\n";
-        if (fYmu) { fYmu->Close(); delete fYmu; }
-        if (fYel) { fYel->Close(); delete fYel; }
+        for (TFile *y : fY) { y->Close(); delete y; }
     }
 
-    const char *muLab = "Muon", *elLab = "Electron";
-    // Discriminant stamped as a 4th header line so a saved plot self-identifies.
+    // ---- the overlaid series of one observable ------------------------------
+    // shifts in units of the bin half-width: 2 fits at -+0.35, 3 at -0.6/0/+0.6,
+    // with box half-widths (systBoxWidthFrac) that keep neighbours apart
+    PlotStyle ps; ps.showStats = false; ps.logy = false;
+    ps.systBoxWidthFrac = (fits.size() > 2) ? 0.17 : 0.20;
+    ps.systBoxFillAlpha = 0.30;
+    const double shift2[2] = {-0.35, 0.35}, shift3[3] = {-0.60, 0.0, 0.60};
+    bool warnedStat = false;
+    auto series = [&](bool isCharge, const char *name, const char *legacy) {
+        std::vector<OverlaySeries> out;
+        for (size_t k = 0; k < fits.size(); ++k)
+        {
+            TFile *f = isCharge ? fits[k].fC : fits[k].fF;
+            OverlaySeries s;
+            s.gTot = GetGraph(f, name, legacy);
+            if (!s.gTot) { std::cerr << "[WARN] no " << name << " in " << f->GetName() << "\n"; continue; }
+            s.gStat = (TGraphErrors *)f->Get(Form("%s_stat", name));
+            if (!s.gStat && !warnedStat)
+            {
+                std::cerr << "[WARN] no " << name << "_stat in " << f->GetName()
+                          << " -> that fit gets one total bar (no box); re-run the fork extraction"
+                          << " so its fitted yields carry h_cov_yield[_FB]_stat\n";
+                warnedStat = true;
+            }
+            s.label = std::string(fits[k].spec.label.Data()) + " (simfit)";
+            s.color = fits[k].spec.color;
+            s.marker = fits[k].spec.marker;
+            s.markerSize = fits[k].spec.markerSize;
+            s.xShift = (fits.size() == 1) ? 0.0 : (fits.size() == 2) ? shift2[k] : shift3[k];
+            out.push_back(s);
+        }
+        return out;
+    };
+
+    const std::string outC = std::string("./plots/flavfit/charge_asym/") + disc;
+    const std::string outF = std::string("./plots/flavfit/FBratio/") + disc;
+    gSystem->mkdir(outC.c_str(), kTRUE);
+    gSystem->mkdir(outF.c_str(), kTRUE);
+
     const TString fitTag = TString::Format("%s fit", discLabel.Data());
-    GraphTuner tuneChargeTag = withDiscTag(tuneCharge, fitTag, ps);
-    GraphTuner tuneRFBTag = withDiscTag(tuneRFB, fitTag, ps);
+    GraphTuner tuneCharge = withDiscTag(makeTuneCharge(), fitTag, ps);
+    GraphTuner tuneRFB = withDiscTag(makeTuneRFB(), fitTag, ps);
+    // "fiducial": from r x sigma_gen, NOT the count-based yields (see the header)
+    const char *sub2 = withComb ? "#mu / comb. / e, fiducial" : "#mu vs e fits, fiducial";
 
-    // charge asymmetry overlay (no theory bands)
-    SaveNiceGraph_ErrorBand_TwoData(gC_mu, muLab, gC_el, elLab,
-        outDir + "/chargeAsym_overlay", "#eta_{CM}", "A_{ch}", "",
-        "W charge asymmetry", "#mu + e (post-fit)", {}, ps, tuneChargeTag);
+    SaveNiceGraph_Overlay(series(true, "g_chargeAsym", "g_chargeAsym_mt"), outC + "/chargeAsym",
+                          "#eta^{l}_{CM}", "A_{ch}", "", "W #rightarrow l #nu", sub2, {}, ps, tuneCharge);
+    SaveNiceGraph_Overlay(series(false, "g_RFB_sum", "g_RFB_mt_sum"), outF + "/RFB_sum",
+                          "#eta^{l}_{CM}", "R_{FB}", "", "W #rightarrow l #nu", sub2, {}, ps, tuneRFB,
+                          sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
+    SaveNiceGraph_Overlay(series(false, "g_RFB_Wp", "g_RFB_mt_Wp"), outF + "/RFB_Wp",
+                          "#eta^{l}_{CM}", "R_{FB}", "", "W^{+} #rightarrow l^{+} #nu", sub2, {}, ps, tuneRFB,
+                          thWp[0], thWp[1], thWp[2], thWp[3]);
+    SaveNiceGraph_Overlay(series(false, "g_RFB_Wm", "g_RFB_mt_Wm"), outF + "/RFB_Wm",
+                          "#eta^{l}_{CM}", "R_{FB}", "", "W^{-} #rightarrow l^{-} #bar{#nu}", sub2, {}, ps, tuneRFB,
+                          thWm[0], thWm[1], thWm[2], thWm[3]);
 
-    // R_FB overlays (data both channels + all-4-model bands)
-    SaveNiceGraph_ErrorBand_TwoData(gS_mu, muLab, gS_el, elLab,
-        outDir + "/RFB_sum_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W #rightarrow l #nu", "#mu + e (post-fit)", {}, ps, tuneRFBTag,
-        sumTheory[0], sumTheory[1], sumTheory[2], sumTheory[3]);
+    // ---- mu vs e compatibility (see the header) -----------------------------
+    const Fit *fm = nullptr, *fe = nullptr;
+    for (const Fit &f : fits)
+    {
+        if (f.spec.flav == "mu") fm = &f;
+        if (f.spec.flav == "ele") fe = &f;
+    }
+    if (fm && fe)
+    {
+        auto compat = [&](bool isCharge, const char *name, const char *legacy, const char *what,
+                          std::ofstream &out) {
+            TFile *am = isCharge ? fm->fC : fm->fF, *ae = isCharge ? fe->fC : fe->fF;
+            TGraphErrors *tm = GetGraph(am, name, legacy), *te = GetGraph(ae, name, legacy);
+            TGraphErrors *sm = (TGraphErrors *)am->Get(Form("%s_stat", name));
+            TGraphErrors *se = (TGraphErrors *)ae->Get(Form("%s_stat", name));
+            if (!tm || !te || tm->GetN() != te->GetN()) return;
+            const bool haveS = sm && se && sm->GetN() == tm->GetN() && se->GetN() == te->GetN();
+            double c2s = 0, c2t = 0;
+            int n = 0;
+            for (int i = 0; i < tm->GetN(); ++i)
+            {
+                const double d = tm->GetPointY(i) - te->GetPointY(i);
+                const double vt = std::pow(tm->GetErrorY(i), 2) + std::pow(te->GetErrorY(i), 2);
+                if (vt <= 0) continue;
+                c2t += d * d / vt;
+                if (haveS)
+                {
+                    const double vs = std::pow(sm->GetErrorY(i), 2) + std::pow(se->GetErrorY(i), 2);
+                    if (vs > 0) c2s += d * d / vs;
+                }
+                ++n;
+            }
+            if (n == 0) return;
+            if (haveS)
+                printf("[mu-vs-e] %-12s chi2/ndf = %5.1f/%d (stat only, p = %.3f)   %5.1f/%d (total, p = %.3f)\n",
+                       what, c2s, n, TMath::Prob(c2s, n), c2t, n, TMath::Prob(c2t, n));
+            else
+                printf("[mu-vs-e] %-12s chi2/ndf = %5.1f/%d (total, p = %.3f)   [no stat twins]\n",
+                       what, c2t, n, TMath::Prob(c2t, n));
+            out << what << "," << n << "," << (haveS ? c2s : -1.0) << ","
+                << (haveS ? TMath::Prob(c2s, n) : -1.0) << "," << c2t << "," << TMath::Prob(c2t, n) << "\n";
+        };
+        std::ofstream cC((outC + "/mu_vs_e_chi2.csv").c_str()), cF((outF + "/mu_vs_e_chi2.csv").c_str());
+        cC << "observable,ndf,chi2_stat,p_stat,chi2_total,p_total\n";
+        cF << "observable,ndf,chi2_stat,p_stat,chi2_total,p_total\n";
+        compat(true, "g_chargeAsym", "g_chargeAsym_mt", "A_ch", cC);
+        compat(false, "g_RFB_sum", "g_RFB_mt_sum", "R_FB (sum)", cF);
+        compat(false, "g_RFB_Wp", "g_RFB_mt_Wp", "R_FB (W+)", cF);
+        compat(false, "g_RFB_Wm", "g_RFB_mt_Wm", "R_FB (W-)", cF);
+    }
+    else
+        std::cout << "[mu-vs-e] only one flavour available -> no compatibility numbers\n";
 
-    SaveNiceGraph_ErrorBand_TwoData(gP_mu, muLab, gP_el, elLab,
-        outDir + "/RFB_Wp_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W^{+} #rightarrow l^{+} #nu", "#mu + e (post-fit)", {}, ps, tuneRFBTag,
-        thWp[0], thWp[1], thWp[2], thWp[3]);
-
-    SaveNiceGraph_ErrorBand_TwoData(gM_mu, muLab, gM_el, elLab,
-        outDir + "/RFB_Wm_overlay", "#eta_{CM}", "R_{FB}", "",
-        "W^{-} #rightarrow l^{-} #bar{#nu}", "#mu + e (post-fit)", {}, ps, tuneRFBTag,
-        thWm[0], thWm[1], thWm[2], thWm[3]);
-
-    fCmu->Close(); fCel->Close(); fFmu->Close(); fFel->Close();
-    delete fCmu; delete fCel; delete fFmu; delete fFel;
+    for (Fit &f : fits) { f.fC->Close(); f.fF->Close(); delete f.fC; delete f.fF; }
     if (fT) { fT->Close(); delete fT; }
-    std::cout << "[OK] Saved merged mu+ele overlays (disc=" << disc << ") to: " << outDir << "\n";
+    std::cout << "[OK] Saved mu-vs-e overlays (disc=" << disc << ") to: " << outC << " and " << outF << "\n";
+}
+
+// =============================================================================
+// observables(disc) -- both views of one discriminant: the grand fit
+// (observables_comb) and the mu-vs-e overlay (observables_flav).
+//   root -l -b -q 'observables.C+("leppt_mt40")'
+// =============================================================================
+void observables(const char *disc = "leppt_mt40")
+{
+    observables_comb(disc);
+    observables_flav(disc);
 }

@@ -1,0 +1,72 @@
+image: gitlab-registry.cern.ch/ci-tools/ci-worker:cc7
+
+stages:
+  - test
+
+testJob:
+  stage: test
+  environment:
+    name: testing
+  when: manual
+  tags:
+    # Want cvmfs mounted for TeXLive
+    - cvmfs
+  
+  variables:
+    # example
+    CMS_LOCAL_ROOT_BASE: /cvmfs/cms.cern.ch/
+    GIT_SUBMODULE_STRATEGY: recursive
+  
+  script:
+    - mkdir output
+    - pwd
+    - perl utils/tdr --style paper  --temp_dir=output b 
+  artifacts:
+    paths:
+      - output
+
+buildJob:
+  stage: test
+  environment:
+    name: building
+  when: manual
+  tags:
+    # Want cvmfs mounted for TeXLive
+    - cvmfs
+  
+  variables:
+    # example
+    CMS_LOCAL_ROOT_BASE: /cvmfs/cms.cern.ch/
+    GIT_SUBMODULE_STRATEGY: recursive
+  
+  script:
+    - yum install -y -q perl-libwww-perl perl-IO-Socket-SSL perl-XML-Twig ImageMagick
+    - mkdir output
+    - pwd
+    - perl utils/tdr --style paper --verbose --preview --temp_dir=output b 
+  artifacts:
+    paths:
+      - output
+
+paperJob:
+  stage: test
+  environment:
+    name: building
+  when: manual
+  tags:
+    # Want cvmfs mounted for TeXLive
+    - cvmfs
+  
+  variables:
+    # example
+    CMS_LOCAL_ROOT_BASE: /cvmfs/cms.cern.ch/
+    GIT_SUBMODULE_STRATEGY: recursive
+  
+  script:
+    - yum install -y -q perl-libwww-perl perl-LWP-Protocol-https perl-IO-Socket-SSL perl-XML-Twig ImageMagick
+    - mkdir output
+    - pwd
+    - perl utils/tdr --style paper --arxiv --cernNo='2019-000' --message='test'  --temp_dir=output b 
+  artifacts:
+    paths:
+      - output
