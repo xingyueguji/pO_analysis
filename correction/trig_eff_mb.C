@@ -68,6 +68,13 @@
 //                                       bit_vs_match_pt_<sel>,
 //                                       trig_eff_<sel>.csv (per-bin table)
 //
+// ELECTRON SELECTION (2026-09-29): the replica follows skim_common.h -- ID
+// eleMVAIdWP90 (kEleIDBranch), iso eleMVAIsoWP90 && relIso < 0.3 (was
+// eleMVAIdWP95 + relIso < 0.095), for the leading electron AND the DY-veto
+// legs. skim/electron_sf.h applies the inclusive mt40 electron SF from
+// rootfile/trig_eff_mb_ele.root (user: "a uniform electron trigger SF"), so
+// run ./run_trig_eff_mb.sh ele BEFORE the electron MC skim.
+//
 // WHAT IS APPLIED (2026-09-21, user decision): ONE INCLUSIVE SF -- skim/muon_sf.h
 // runs with kTrigBinning = kTrigInclusive, i.e. 0.9971 (+0.0020 -0.0024) for
 // every muon. This macro nevertheless measures, prints and plots the full
@@ -450,7 +457,10 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
 {
   const bool   isMC      = IsMC(sample);
   const double dyPtMin   = isMu ? 15.0 : 10.0;   // DY-veto leg pT (intentionally asymmetric)
-  const double isoMax    = isMu ? 0.15 : 0.095;
+  // Isolation (tracking skim.C): muon relIso < 0.15; electron (since
+  // 2026-09-29) kEleIsoBranch (eleMVAIsoWP90) && relIso < kEleIsoRelMax (0.3)
+  // -- skim_common.h, the selection whose EGM wp90iso SF is applied.
+  const double isoMax    = isMu ? 0.15 : kEleIsoRelMax;
   const double lepMass   = isMu ? MU_MASS : ELE_MASS;
   const char  *tagLep    = isMu ? "muon" : "electron";
 
@@ -496,7 +506,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   const char *bEta = isMu ? "muEta"      : "eleEta";
   const char *bPhi = isMu ? "muPhi"      : "elePhi";
   const char *bChg = isMu ? "muCharge"   : "eleCharge";
-  const char *bID  = isMu ? "muIDTight"  : "eleMVAIdWP95";
+  const char *bID  = isMu ? "muIDTight"  : kEleIDBranch; // e: eleMVAIdWP90 since 2026-09-29
   const char *bCh  = isMu ? "muPFChIso"  : "elePFChIso";
   const char *bNeu = isMu ? "muPFNeuIso" : "elePFNeuIso";
   const char *bPho = isMu ? "muPFPhoIso" : "elePFPhoIso";
@@ -527,11 +537,21 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
 
   // ECAL-gap veto input (electrons only, 2026-09-14) -- tracks the skim's eleIDNoGap
   std::vector<float> *scEta = nullptr;
+  // the electron MVA isolation decision (2026-09-29) -- tracks the skim's eleIsoPass
+  std::vector<int> *eleMVAIso = nullptr;
   if (!isMu)
   {
     if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunTrig: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
     tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+    if (!HasBranch(tLep, kEleIsoBranch)) { std::cerr << "[FATAL] RunTrig: missing EventTree branch " << kEleIsoBranch << " (electron iso)\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus(kEleIsoBranch, 1); tLep->SetBranchAddress(kEleIsoBranch, &eleMVAIso);
   }
+  // the isolation decision of lepton i: relIso < isoMax, AND for electrons the MVA iso WP
+  auto passIso = [&](int i) -> bool
+  {
+    if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) return false;
+    return isMu || (eleMVAIso && eleMVAIso->at(i) != 0);
+  };
 
   const bool has_puIso = HasBranch(tLep, bPU);
   if (has_puIso) { tLep->SetBranchStatus(bPU, 1); tLep->SetBranchAddress(bPU, &puIso); }
@@ -693,7 +713,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
         if (lepID->at(i) == 0) continue;
         if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
         if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
-        if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+        if (!passIso(i)) continue;
         cand.push_back(i);
       }
       bool veto = false;
@@ -725,8 +745,8 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
     if (lepPt->at(iLead) <= kPtFloor) continue;
     if (std::abs(lepEta->at(iLead)) > kEtaMax) continue;
 
-    // (7) leading-lepton isolation
-    if (RelIsoPF(iLead, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+    // (7) leading-lepton isolation (e: MVA iso WP90 && relIso < 0.3)
+    if (!passIso(iLead)) continue;
 
     // (8) trigger match -- NOT applied: numerator condition, evaluated below
 

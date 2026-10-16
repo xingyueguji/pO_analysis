@@ -33,6 +33,9 @@
 #     observables_flav(disc)          {charge_asym,FBratio}/<disc>/   (+ mu-vs-e chi2)
 #     xsec_fiducial_flav(disc)        xsec/<disc>/  (sigma W+/W-/W incl. the grand
 #                                     fit, d(sigma)/d(eta) per charge, e/mu ratios)
+#     xsec_summary(disc)              xsec/<disc>/xsec_summary_vertical  (2026-10-06:
+#                                     W+/W-/W/Z panels, fits as rows + the mu+e band,
+#                                     POWHEG x EPPS21 + theory_fid_predictions.txt rows)
 #     xsec_contour_WZ_flav(disc, bn)  xsec/<disc>/xsec_contour_WZ_<bn>  (lab AND fb)
 #   and each fit's own plots: xsec_contour_WZ_fit -> xsec/<disc>/..._<bn>_<flav>,
 #   postfit_incl_fit -> postfit_incl/<disc>/postfit_<flav>_{Wp,Wm,W}.
@@ -47,6 +50,9 @@
 #             produced by run_pO_fits.sh both flavfit [--disc <disc>]  (or mode all)
 # With 'all', variants with no outputs at all are SKIPPED with a warning; a
 # single named variant errors out instead.
+#
+# Log: analysis/logs/run_observables_<arg>.log = the whole console output
+# (2026-09-29; the record of every quoted number, see the bottom of the file).
 #
 # FORK_TEST env var overrides the fork location (default: sibling checkout);
 # it is exported ABSOLUTE, so the ROOT macros (plotting/fit_variants.h) read
@@ -94,7 +100,8 @@ fid_observables() {
   CA="../skim/rootfile/charge_asym_fid_${T}_${d}.root"
   FB="../skim/rootfile/FBratio_fid_${T}_${d}.root"
   echo "[observables] $T: fiducial yields (r x sigma_gen) -> charge_asym + FBratio"
-  (cd "$HERE" && root -l -b -q "fiducial_yields.C+(\"$SUMD/${T}_W_yields.csv\",\"$SUMD/${T}_fitted_yields.root\",\"$FY\")") || exit 1
+  # $d also picks the gen fiducial set (pODisc::GenFid: m_T > 40 for leppt_mt40)
+  (cd "$HERE" && root -l -b -q "fiducial_yields.C+(\"$SUMD/${T}_W_yields.csv\",\"$SUMD/${T}_fitted_yields.root\",\"$FY\",\"$d\")") || exit 1
   require_file "$HERE/$FY" "fiducial_yields.C failed -- see its [ERROR] above"
   (cd "$HERE" && root -l -b -q "charge_asym.C+(\"$FY\",\"$CA\")") || exit 1
   (cd "$HERE" && root -l -b -q "FBratio.C+(\"$FY\",\"$FB\")")     || exit 1
@@ -195,6 +202,11 @@ run_one() {
     require_file "$HERE/../plotting/plots/flavfit/charge_asym/$disc/chargeAsym.png" "observables_flav produced no plot"
     (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_flav(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/flavfit/xsec/$disc/W_fiducial.png" "xsec_fiducial_flav produced no plot"
+    # ---- the vertical summary (ttbar-in-PbPb Fig. 9 style): W+/W-/W/Z panels,
+    # fits as rows + the mu+e band, theory rows (POWHEG x EPPS21 + any extra
+    # predictions in plotting/theory_fid_predictions.txt); reads xsec_flavfit.csv
+    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_summary.C+\"); xsec_summary(\"$disc\");") || exit 1
+    require_file "$HERE/../plotting/plots/flavfit/xsec/$disc/xsec_summary_vertical.png" "xsec_summary produced no plot"
     # ---- the (sigma_W, sigma_Z) plane, BOTH binnings (see the comb block):
     # the overlay + each fit's own plot (Gaussian vs profiled, stat-only)
     for bn in lab fb; do
@@ -233,12 +245,7 @@ run_one() {
 
 DISC_ARG="${1:-met}"
 case "$DISC_ARG" in
-  all)
-    for d in met leppt_mt40; do run_one "$d" skip; done
-    ;;
-  met|leppt_mt40)
-    run_one "$DISC_ARG" strict
-    ;;
+  all|met|leppt_mt40) ;;
   leppt)
     echo "[ERROR] disc 'leppt' (plain W selection, no m_T cut) was dropped as a"
     echo "        discriminant 2026-08-16 and retired 2026-09-21: mtandmet.C no"
@@ -251,4 +258,24 @@ case "$DISC_ARG" in
     exit 1
     ;;
 esac
-echo "[observables] all requested variants processed."
+
+main() {
+  case "$DISC_ARG" in
+    all)            for d in met leppt_mt40; do run_one "$d" skip; done ;;
+    met|leppt_mt40) run_one "$DISC_ARG" strict ;;
+  esac
+  echo "[observables] all requested variants processed."
+}
+
+# THE record (2026-09-29): the macros print the numbers the plots are quoted
+# with -- sigma per fit with stat/syst, the e/mu ratios, the mu-vs-e chi2, the
+# r-covariance source lines -- to stdout only, so the whole run is teed to a
+# log named from the argument (one per variant; the next run of the same
+# variant overwrites it). run_one's `exit 1` ends the pipeline's subshell, so
+# the script's exit status is main's (PIPESTATUS), not tee's.
+mkdir -p "$HERE/logs"
+LOG="$HERE/logs/run_observables_${DISC_ARG}.log"
+main 2>&1 | tee "$LOG"
+st=${PIPESTATUS[0]}
+echo "[observables] log: $LOG"
+exit "$st"

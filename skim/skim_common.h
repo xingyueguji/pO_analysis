@@ -447,6 +447,16 @@ inline bool IsMC(SampleType sample) { return sample != kData; }
 inline constexpr double kPtScanFloor = 20.0;
 
 // ============================================================
+// m_T cut of the lepton-pT discriminant (2026-10-13)
+// ============================================================
+// m_T > kPtDiscMtCut defines the leppt_mt40 selection: at RECO in skim.C (the
+// `_mt40` histograms, m_T from the PF MET) and at GEN in skim/gen_xsec.C (the
+// `_mt40` fiducial set, m_T from the W's own lepton and neutrino). One number
+// for both, so the fiducial volume is the gen twin of the reco cut. The `mt40`
+// in the histogram names states this value -- rename them if it changes.
+inline constexpr double kPtDiscMtCut = 40.0;
+
+// ============================================================
 // ECAL barrel-endcap transition ("crack") veto for electrons (2026-09-14)
 // ============================================================
 // 1.4442 < |eta_SC| < 1.566 (CMS EGamma convention), evaluated on the
@@ -471,10 +481,11 @@ inline bool InEcalGap(double scEta)
   const double a = scEta < 0 ? -scEta : scEta;
   return a > kEcalGapLo && a < kEcalGapHi;
 }
-// The effective electron ID used by the W skim helpers: the MVA WP AND not
-// in the crack. Built once per event; passed wherever eleMVAIdWP95 used to
-// go (DY-veto legs, tight-ID gate, leading-electron pick) -- so the veto
-// lives in one place and the helpers' signatures stay unchanged.
+// The effective electron ID used by the W skim helpers: the MVA WP
+// (kEleIDBranch below) AND not in the crack. Built once per event; passed
+// wherever the bare ID used to go (DY-veto legs, tight-ID gate,
+// leading-electron pick) -- so the veto lives in one place and the helpers'
+// signatures stay unchanged.
 inline void BuildEleIDNoGap(int nEle,
                             const std::vector<int>   *eleID,
                             const std::vector<float> *eleSCEta,
@@ -484,6 +495,71 @@ inline void BuildEleIDNoGap(int nEle,
   if (!eleID || !eleSCEta) return;
   for (int i = 0; i < nEle; ++i)
     out[i] = (eleID->at(i) != 0 && !InEcalGap(eleSCEta->at(i))) ? 1 : 0;
+}
+
+// ============================================================
+// THE electron ID + isolation (2026-09-29): forest WP90 MVA ID + WP90 MVA iso
+// ============================================================
+// Switched from eleMVAIdWP95 + continuous relIso < 0.095 (user decision
+// 2026-09-29) so that the EGM `wp90iso` scale factor -- ONE SF for ID and
+// isolation together, relative to a reconstructed electron -- can be applied
+// (skim/electron_sf.h). The forest's eleMVAIdWP90 / eleMVAIsoWP90 are the
+// heavy-ion XGBoost classifiers of HIElectronInfoProducer, NOT EGM VID; the
+// ID+iso SF cross-check (correction/idiso_sf_*, 2026-09-25/26) measured
+// SF = 0.959 +- 0.025 for exactly this selection with an inclusive Z
+// tag-and-probe in our pO data, vs the EGM prediction 0.956 +- 0.009 for the
+// same probes -- the pp SF describes the forest selection at the 2.6% level.
+//   ID      : eleMVAIdWP90, crack-vetoed (BuildEleIDNoGap)
+//   iso-pass: eleMVAIsoWP90 AND Delta-beta relIso < kEleIsoRelMax (0.3)
+// The relIso < 0.3 requirement is the cross-check's definition too: it keeps
+// relIso 0.3-1.0 OUTSIDE the selection so that range can serve as the ABCD
+// anti-iso sideband (kEleAntiIsoLo/Hi) with no event in both regions; it
+// costs ~0.1% of passing prompt electrons (99.9% of WP90-iso-passing W
+// electrons have relIso < 0.3), so the EGM SF applies up to SF(relIso<0.3) ~ 1.
+// Used by EVERY electron definition: the W lepton, the DY-veto legs, both Z
+// legs and the macros that replicate them (njet_WZ, charge_flip,
+// trig_eff_mb). Muons are untouched (TightID + relIso < 0.15).
+inline constexpr const char *kEleIDBranch  = "eleMVAIdWP90";
+inline constexpr const char *kEleIsoBranch = "eleMVAIsoWP90";
+inline constexpr double      kEleIsoRelMax = 0.3;
+// ABCD anti-iso sideband of the electron channel: relIso in [0.3, 1.0) with
+// the WP90 ID (= the cross-check's `sbid`). The "gap" between the regions is
+// the set of MVA-iso-FAILING electrons with relIso < 0.3.
+inline constexpr double      kEleAntiIsoLo = 0.3;
+inline constexpr double      kEleAntiIsoHi = 1.0;
+
+// The per-electron iso decision (vector aligned with the electron
+// collection). relIso via RelIsoPF (Delta-beta), the SAME value the skim
+// histograms carry.
+inline void BuildEleIsoPass(int nEle,
+                            std::vector<int>   *eleMVAIso,
+                            std::vector<float> *elePt,
+                            std::vector<float> *ch,
+                            std::vector<float> *neu,
+                            std::vector<float> *pho,
+                            std::vector<float> *pu,
+                            std::vector<int>   &out)
+{
+  out.assign(nEle > 0 ? nEle : 0, 0);
+  if (!eleMVAIso || !elePt) return;
+  for (int i = 0; i < nEle; ++i)
+    out[i] = (eleMVAIso->at(i) != 0 && RelIsoPF(i, elePt, ch, neu, pho, pu) < kEleIsoRelMax) ? 1 : 0;
+}
+
+// The x value of an electron in the skim's ABCD planes h_iso_{met,mt,pt,
+// pt_mt40}_ele* (axis [kEleIsoAxisLo, 1.0), 0.005 bins). The iso-pass is a
+// boolean MVA decision, not a relIso window, so it cannot be recovered by
+// projecting a relIso axis; the planes therefore store ISO-PASS electrons at
+// relIso - 0.3 (i.e. in [-0.3, 0)) and every other electron at its relIso
+// ([0, 1)). Downstream (correction/qcd_abcd.C) the regions are then plain
+// projections again: iso-pass = [-0.3, 0), the gap = [0, 0.3), the anti-iso
+// sideband = [0.3, 1.0). Every edge in play (-0.3, 0, 0.3, 0.6, 1.0) is a bin
+// edge. An iso-passing electron with relIso >= 0.3 cannot exist (kEleIsoRelMax).
+inline constexpr double kEleIsoAxisLo = -kEleIsoRelMax;
+inline constexpr int    kEleIsoAxisNb = 260; // (1.0 - (-0.3)) / 0.005
+inline double EleIsoAxis(bool isoPass, double relIso)
+{
+  return isoPass ? relIso - kEleIsoRelMax : relIso;
 }
 
 // ============================================================

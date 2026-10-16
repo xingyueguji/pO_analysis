@@ -32,10 +32,10 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 
 ```bash
 # ---- pO_analysis (plain ROOT) ----
-cd correction  && ./run_trig_eff_mb.sh mu                                    # 0 muon trigger SF (the muon MC skim reads its rootfile since 2026-09-14)
-cd ../skim     && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims (muon MC weighted by ID x ISO x TRIG SFs) + nPDF Up/Down + N_gen
+cd correction  && ./run_trig_eff_mb.sh both                                  # 0 trigger SFs (the muon AND electron MC skims read these rootfiles)
+cd ../skim     && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims (MC weighted by the lepton SFs) + nPDF Up/Down + N_gen
 cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
-cd ../plotting && ./run_combine_inputs.sh                                    # 3b Combine inputs (mu+ele, logged)
+cd ../plotting && ./run_combine_inputs.sh                                    # 3b Combine inputs (mu+ele, logged) + prefit r vs y
 #   theory graphs are one-time + yield-independent: root -l -q -b 'plotRpOtheory.C+'
 
 # ---- fork (cmsenv) -- locally, or push to lxplus (see Module 4) ----
@@ -135,7 +135,28 @@ per-source twins `<h>_{muID,muIso,muTrig}Up/Down` (one source at ±1σ;
 diagnostics) and the combined `<h>_muSFUp/Down` (the three added in
 quadrature per bin), which is carried into the muon Combine inputs and cards
 as ONE nuisance, exactly like nPDF/qcdScale/alphaS (+0.35/−0.38% on the W
-templates, ±0.52% on the Z peak). Electron SFs: not yet.
+templates, ±0.52% on the Z peak).
+
+**2.6 — electron selection + efficiency SFs (2026-09-29).** The electron is
+now the forest `eleMVAIdWP90` (crack-vetoed) with the iso-pass
+`eleMVAIsoWP90 && relIso < 0.3` (single source: `skim/skim_common.h`
+`kEleIDBranch/kEleIsoBranch/kEleIsoRelMax`), for the W lepton, the DY-veto
+legs and both Z legs — the selection whose EGM `wp90iso` SF the ID+iso
+cross-check validated in pO data (Z tag-and-probe 0.959 ± 0.025 vs EGM
+0.956). The electron MC skims (`Wel`, `Zee`) multiply the event weight by
+RECO × ID+ISO × TRIG (`skim/electron_sf.h`): the EGM 2025Prompt `Reco20to75` /
+`RecoAbove75` and `wp90iso` tables (CSVs flattened by
+`python3 skim/sf/extract_electron_sf.py`, looked up in the RAW supercluster η)
+and the inclusive MB-derived trigger SF of `correction/rootfile/trig_eff_mb_ele.root`
+(run `correction/run_trig_eff_mb.sh ele` FIRST; `PO_ELE_SF=off` disables;
+`kEleRecoSource` selects the Reco factor: `kRecoEgm` = the EGM tables,
+applied on 2026-09-29 and again since 2026-10-01; `kRecoTnP` = our pO
+tag-and-probe `correction/run_reco_sf.sh`, one inclusive 0.988, applied on
+2026-09-30 and kept as the pO cross-check; `kRecoOff`). ⟨SF⟩ = 0.887 per W electron
+(Reco 0.929 × ID+iso 0.954 × trigger 1.001), 0.788 per Z→ee pair. Twins
+`<h>_{eleReco,eleIDIso,eleTrig}Up/Down` + the combined `<h>_eleSFUp/Down`
+(±1.2% on W, ±2.7% on the Z peak) = ONE nuisance `eleSF`. The ABCD planes
+store the electron on an "iso axis" (iso-pass at relIso − 0.3), see Module 3.
 
 ## Module 2b — MC normalization (`skim/run_ngen.sh` + `skim/mc_norm.h`) — DONE
 
@@ -163,11 +184,14 @@ cd correction/
 #   ./run_qcd_abcd.sh mu                    # one channel only
 
 # 3b. Data/MC MT+MET plots AND the structured Combine inputs. FROM plotting/.
+#     Through the logging wrapper (mtandmet.C + dileptonpeak.C per flavour):
 cd ../plotting/
-root -l -b -q 'mtandmet.C+(false)'          # muon  -> plots/combine_input_W.root
-root -l -b -q 'mtandmet.C+(true)'           # ele   -> plots/Elec/combine_input_W.root
-root -l -b -q 'dileptonpeak.C+(false)'      # Zmm   -> plots/combine_input_Z.root
-root -l -b -q 'dileptonpeak.C+(true)'       # Zee   -> plots/Elec/combine_input_Z.root
+./run_combine_inputs.sh                     # mu+ele -> plots[/Elec]/combine_input_{W,W_leppt_mt40,Z}.root + sidecars
+#   ./run_combine_inputs.sh ele             # one flavour; logs/{mtandmet,dileptonpeak}_<chan>.log
+#   ...then, from those inputs, the PREFIT signal strength r_pre = (data-DY-QCD)/W
+#   per rapidity bin, mu vs e (prefit_r.C) -> plots/prefit_r/leppt_mt40/
+#   prefit_r_{Wp,Wm,W}_{lab,fb} + prefit_r.csv, log logs/prefit_r_leppt_mt40.log.
+#   The same r_pre and MC/data are printed in every leppt_mt40 stack's info box.
 
 # 3c. Theory predictions for R_FB (producer; reads pQCDLightIon/ + filelist_theory.txt).
 root -l -b -q 'plotRpOtheory.C+'            # -> RpO_rootfile/RpO_FB_graphs.root
@@ -188,6 +212,17 @@ ACLiC artifacts), tees each channel to `correction/logs/qcd_abcd_<chan>.log`
 (~290 lines) and echoes the transfer factors and the κ's to the terminal.
 Takes ~2 s per channel, so regenerate freely — but never run the macro bare and
 lose the report.
+
+**Electron QCD = fake-factor weighted (2026-09-29).** The electron F(pT) =
+QCD(iso-pass)/QCD(anti-iso) at m_T < 30 rises with pT, so the electron SR
+template is `T0 × f(pT) × C40(pT)` (`buildFFTemplate`: f = e^{s(pT−40)/10}
+normalized on the anti-iso m_T < 30 spectrum, s = the profile-likelihood
+slope of the F(pT) fit, T0 = B0/D0) instead of flat T: `qcd_pt_mt40_ff_ele*`
++ its slope ±1σ twins, used by `mtandmet.C` as the electron `qcd_abcd`
+(the in-fit CRs still float the level) with the per-charge shape nuisance
+`qcdFF_ele_{Wp,Wm}`; the residual κ_e (window only) is 1.05. The muon keeps
+flat T (its F(pT) is flat). See the "FAKE-FACTOR" blocks of
+`correction/logs/qcd_abcd_ele.log`.
 
 `combine_input_W.root` is **structured**: one TDirectory per fit region
 (`Wp_lab_y0..11`, `Wm_lab_y*`, `Wp_fb_y*`, `Wm_fb_y*`, `Wp_incl`, `Wm_incl`,
@@ -445,13 +480,19 @@ Outputs, per `<disc>` = `met` | `leppt_mt40`:
 | **PRIMARY: simfit** fiducial σ: post-fit vs reco-MC vs **gen-MC** | `plotting/plots/comb/xsec/<disc>/` |
 | **PRIMARY: simfit** y-inclusive postfit stacks (μ/e × W⁺/W⁻/W) | `plotting/plots/comb/postfit_incl/<disc>/` |
 | **μ vs e** A_ch, R_FB overlays (+ `mu_vs_e_chi2.csv`) | `plotting/plots/flavfit/{charge_asym,FBratio}/<disc>/` |
-| **μ vs e** σ (W⁺/W⁻/W, with the grand fit), dσ/dη per charge, (σ_W, σ_Z) contour overlay + each fit's own contour, `xsec_flavfit[_ratio].csv` | `plotting/plots/flavfit/xsec/<disc>/` |
+| **μ vs e** σ (W⁺/W⁻/W, with the grand fit), dσ/dη per charge, (σ_W, σ_Z) contour overlay + each fit's own contour, `xsec_flavfit[_ratio].csv`; **the vertical summary** `xsec_summary_vertical.{png,csv}` (W⁺/W⁻/W/Z panels: fits as rows + the μ+e band, POWHEG×EPPS21 + extra theory rows from `plotting/theory_fid_predictions.txt`) | `plotting/plots/flavfit/xsec/<disc>/` |
 | **μ vs e** each flavour fit's y-inclusive postfit stacks | `plotting/plots/flavfit/postfit_incl/<disc>/` |
+| **the record**: the whole console output (σ with stat/syst per fit, e/μ ratios, μ-vs-e χ², postfit χ² per stack) | `analysis/logs/run_observables_<disc>.log` (2026-09-29) |
 
-For the generator-level overlay on the comb σ plots, produce the (one-time,
-discriminant-independent) gen histograms first: `cd skim && root -l -b -q
-'gen_xsec.C+'` → `skim/rootfile/gen_xsec.root` (missing file ⇒ the overlay is
-skipped with a note, everything else unaffected).
+Produce the (one-time, reco-independent) gen fiducial cross sections first:
+`cd skim && ./run_gen_xsec.sh` → `skim/rootfile/gen_xsec.root` +
+`skim/output/gen_xsec_fid{,_mt40}.txt`, log `skim/logs/gen_xsec.log`. Every
+σ = r × σ_gen needs them. **Two fiducial sets since 2026-10-13**, one per
+discriminant (`plotting/disc_variants.h::GenFid`): `met` → bare lepton
+pT > 25 GeV, |η_lab| < 2.4; `leppt_mt40` → the same AND m_T(ℓ, ν) > 40 GeV,
+the gen twin of its reco m_T cut (histograms `h_gen_sig_W{p,m}_mt40[_FB]`).
+The W lepton and neutrino come from the EventTree `mc*` block (the `hi` gen
+tree drops forward neutrinos — see the header of `skim/gen_xsec.C`).
 
 **Every observable is built from r × σ_gen, never from raw counts** (user rule,
 2026-09-22: there is no dedicated efficiency/acceptance correction, and
@@ -467,7 +508,8 @@ r × S remain the fit's record (the CSVs, `*_fitted_yields.root`) and appear
 only in the postfit stacks and the `xsec_fiducial_diag` A×ε diagnostic.
 
 **Reading the μ-vs-e plots.** Every flavour result is quoted in ONE fiducial
-volume (the pooled μ+e gen σ, bare lepton pT > 25 GeV, |η_lab| < 2.4), so
+volume (the pooled μ+e gen σ, bare lepton pT > 25 GeV, |η_lab| < 2.4, and
+m_T > 40 GeV for `leppt_mt40`), so
 σ_e/σ_μ = r_e/r_μ exactly. The A_ch and R_FB overlays use the same
 **acceptance-corrected** yields r × σ_gen (`analysis/fiducial_yields.C`); with
 the count-based r × S each flavour's own A×ε would enter R_FB, and on
@@ -502,13 +544,14 @@ reads; `S=../../HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40`):
 cd analysis/
 for T in simfit_mu simfit_ele comb; do
   D=$T; [ $T = comb ] && D=simfit
-  root -l -b -q "fiducial_yields.C+(\"$S/$D/summary/${T}_W_yields.csv\",\"$S/$D/summary/${T}_fitted_yields.root\",\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\")"
+  root -l -b -q "fiducial_yields.C+(\"$S/$D/summary/${T}_W_yields.csv\",\"$S/$D/summary/${T}_fitted_yields.root\",\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\",\"leppt_mt40\")"
   root -l -b -q "charge_asym.C+(\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\",\"../skim/rootfile/charge_asym_fid_${T}_leppt_mt40.root\")"
   root -l -b -q "FBratio.C+(\"../skim/rootfile/fidyields_${T}_leppt_mt40.root\",\"../skim/rootfile/FBratio_fid_${T}_leppt_mt40.root\")"
 done
 cd ../plotting/
 root -l -b -q -e 'gROOT->LoadMacro("observables.C+");   observables_flav("leppt_mt40");'        # A_ch, R_FB overlays
 root -l -b -q -e 'gROOT->LoadMacro("xsec_fiducial.C+");  xsec_fiducial_flav("leppt_mt40");'     # sigma + dsigma/deta overlays
+root -l -b -q -e 'gROOT->LoadMacro("xsec_summary.C+");   xsec_summary("leppt_mt40");'           # vertical summary (reads xsec_flavfit.csv)
 root -l -b -q -e 'gROOT->LoadMacro("xsec_contour.C+");   xsec_contour_WZ_flav("leppt_mt40","lab");'           # contour overlay
 root -l -b -q -e 'gROOT->LoadMacro("xsec_contour.C+");   xsec_contour_WZ_fit("leppt_mt40","lab","simfit_mu");' # one fit's own contour
 root -l -b -q -e 'gROOT->LoadMacro("postfit_incl.C+");   postfit_incl_fit("leppt_mt40","simfit_mu");'
@@ -537,6 +580,7 @@ cd correction/
 ./run_qcd_abcd.sh [mu|ele|both]                    # ABCD QCD, logged  [also Module 3a]
 ./run_trig_eff_mb.sh [mu|ele|both]                 # trigger turn-on, data vs W MC, MB-triggered denominator, logged
 ./run_charge_flip.sh [mu|ele|both]                 # lepton charge-flip rate from W MC, logged
+./run_njet_WZ.sh [Wmu|Wel|Zmm|Zee|all]             # njet in W/Z events + the selection's event-identity check, logged
 root -l -b -q 'isolation_mu_tight.C+("<data.root>")' # muon iso study (TightID, Δβ relIso) [current]
 root -l -b -q 'isolation_ele.C+("<data.root>")'   # electron iso/ID ROC study (Δβ relIso)
 root -l -b -q 'PlotsIsoROC.C+(false)'             # / PlotIsoROC_ele.C -> ROC plots
@@ -565,8 +609,9 @@ root -l -b -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil
   `AsymErr`/`RatioErr` propagate σ²). The fiducial-yield histos
   (`fidyields_*`) carry the fit error (r covariance × σ_gen) in Sumw2 plus the
   covariance matrices, so charge_asym/FBratio errors are the fit uncertainties.
-- **Corrections WIP.** Recoil, lepton SFs, momentum scale/smearing not all
-  applied — don't assume MC in `skim/rootfile/` is fully corrected.
+- **Corrections WIP.** Lepton efficiency SFs are applied (muon since
+  2026-09-14, electron since 2026-09-29); recoil and the momentum
+  scale/smearing are not — don't assume MC in `skim/rootfile/` is fully corrected.
 - **Acceptance / efficiency.** The fitted yields r × S are RECONSTRUCTED counts
   (S carries the MC A×ε), so no observable is built on them: every σ, A_ch and
   R_FB uses r × σ_gen-fid (bare lepton pT > 25 GeV, |η_lab| < 2.4), which applies
@@ -575,9 +620,9 @@ root -l -b -q 'recoil_raw.C+'                      # raw hadronic recoil (recoil
   R_FB (F and B are different detector regions). Going beyond the fiducial
   volume (total σ, boson-level theory) would additionally need the acceptance.
 - **Pre-existing inter-channel asymmetries** (intentional; see CLAUDE.md):
-  DY-veto pT 15 (μ) vs 10 (e) GeV; isolation 0.15 (μ) vs 0.095 (e) — both
-  re-confirmed optimal under the Δβ-corrected relIso (2026-07-06, MuonPOG
-  convention, all channels; needs re-skim). All electron ID gates are
-  `eleMVAIdWP95` since 2026-07-02 (`skim_Zee` included).
+  DY-veto pT 15 (μ) vs 10 (e) GeV; isolation: μ Δβ relIso < 0.15, e (since
+  2026-09-29) `eleMVAIsoWP90 && relIso < 0.3` with the ID `eleMVAIdWP90` —
+  every electron gate, `skim_Zee` included (it was `eleMVAIdWP95` + relIso <
+  0.095 from 2026-07-02 to 2026-09-29).
 - **No tests/CI.** Validate by re-running + inspecting logs/plots. Commit
   messages are often "xx" — read diffs, not `git log`.

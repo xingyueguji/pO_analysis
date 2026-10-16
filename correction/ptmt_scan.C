@@ -7,8 +7,10 @@
 //   SIGNAL     = W signal MC (Wp + Wm), absolute k_s = A*sigma*L/N_gen from
 //                skim/mc_norm.h, iso-pass, full W selection.
 //   BACKGROUND = the ANTI-ISO sideband: DATA passing the full W selection
-//                except isolation, with relIso in [0.30,1.0) mu / [0.20,1.0)
-//                e (the qcd_abcd.C windows), keeping the ACTUAL MET and m_T,
+//                except isolation, with relIso in [0.30,1.0) mu / [0.30,1.0)
+//                e (the qcd_abcd.C windows; the electron one was [0.20,1.0)
+//                until the 2026-09-29 WP90 ID+iso switch -- NB the scan
+//                results quoted below predate it), keeping the ACTUAL MET and m_T,
 //                minus the tiny EWK leakage (absolute MC, ~0.5-0.7%). The
 //                sideband provides the QCD SHAPE in (pT, m_T); its
 //                normalization is set to the total iso-pass QCD = data - EWK
@@ -152,8 +154,10 @@ void ptmt_scan(bool isElec = false)
   // tentative working point to benchmark against
   const double kPtTent = 25.0, kMtTent = 40.0;
 
+  // the electron window follows the skim (skim_common.h kEleAntiIsoLo/Hi:
+  // [0.30,1.0) since the 2026-09-29 WP90 ID+iso switch, [0.20,1.0) before)
   std::cout << "\n[NOTE] background = anti-iso sideband QCD (relIso "
-            << (isElec ? "[0.20,1.0)" : "[0.30,1.0)")
+            << (isElec ? "[0.30,1.0) with eleMVAIdWP90 (iso-pass = eleMVAIsoWP90 && relIso<0.3)" : "[0.30,1.0)")
             << ", actual MET/m_T -- no m_T sculpting). Residual caveat: mild"
             << " iso-pT shape correlation, bounded by the qcd_abcd.C"
             << " antiiso_shape_pt_* slice checks.\n";

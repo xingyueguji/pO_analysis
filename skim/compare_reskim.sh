@@ -2,10 +2,17 @@
 # skim/compare_reskim.sh -- run compare_hists.C on every *_hist.root of a backup
 # directory against the current rootfile/ (bit-identity gate after a re-skim).
 #   ./compare_reskim.sh [backup-dir]     (default rootfile_pre_lhe)
+# Log (the record): logs/compare_<tag>.log for backup dir rootfile_pre_<tag>.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 bk="${1:-rootfile_pre_lhe}"
 [ -d "$bk" ] || { echo "[ERR] no backup dir $bk"; exit 2; }
+mkdir -p logs
+log="logs/compare_$(basename "$bk" | sed 's/^rootfile_pre_//').log"
+
+main() {
+set -euo pipefail   # the caller's set +e (kept for PIPESTATUS) must not leak in here
+echo "[compare_reskim] $bk/*_hist.root vs rootfile/  ($(date '+%Y-%m-%d %H:%M'))"
 root -l -b -q -e '.L compare_hists.C+' >/dev/null 2>&1 || true   # build once
 bad=0
 for f in "$bk"/*_hist.root; do
@@ -21,4 +28,11 @@ for f in "$bk"/*_hist.root; do
   { [ "$1" -ne 0 ] || [ "$2" -ne 0 ] || echo "$out" | grep -q "\[ERR\]"; } && bad=1
 done
 [ $bad -eq 0 ] && echo "ALL OLD HISTOGRAMS IDENTICAL" || echo "SOME FILES DIFFER -- see above"
-exit $bad
+return $bad
+}
+
+set +e
+main 2>&1 | tee "$log"
+st=${PIPESTATUS[0]}
+echo "[compare_reskim] log: skim/$log"
+exit "$st"

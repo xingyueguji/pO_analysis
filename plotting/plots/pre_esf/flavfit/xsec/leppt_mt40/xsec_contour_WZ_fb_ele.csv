@@ -1,0 +1,32 @@
+# (sigma_W, sigma_Z) from the simfit_ele POIs via h_cov_poi; disc=leppt_mt40 binning=fb
+quantity,value_nb,err_total_nb,err_stat_nb,err_syst_nb
+sigma_Wp,50.04139,2.49432,1.54539,1.95791
+sigma_Wm,40.58590,1.96949,1.31552,1.46571
+sigma_W,90.62728,3.71011,2.02957,3.10576
+sigma_Z,10.32042,0.69419,0.62183,0.30860
+
+# 3x3 covariance (nb^2), order [Wp, Wm, Z] -- total then stat
+matrix,row,Wp,Wm,Z
+total,Wp,6.221647,1.832181,0.433474
+total,Wm,1.832181,3.878888,0.342268
+total,Z,0.433474,0.342268,0.481907
+stat,Wp,2.388222,0.000178,-0.004215
+stat,Wm,0.000178,1.730587,-0.016323
+stat,Z,-0.004215,-0.016323,0.386673
+
+# theory (r = 1: POWHEG + EPPS21nlo_CT18Anlo_O16 central)
+theory,sigma_W,76.68724
+theory,sigma_Z,8.76923
+theory,n_epps21_members,106
+theory,sigma_W_member_min,73.86278
+theory,sigma_W_member_max,77.88725
+theory,sigma_Z_member_min,8.49523
+theory,sigma_Z_member_max,8.88112
+
+# profiled contour (run_pO_fits.sh --contour)
+contour,status,drawn
+contour,file,/Users/zhenghuang/HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40/simfit_ele/summary/../contour/contour_fb/higgsCombine_contour_fb.MultiDimFit.mH120.root
+contour,stat_status,drawn
+contour,stat_file,/Users/zhenghuang/HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40/simfit_ele/summary/../contour/contour_fb/higgsCombine_contourstat_fb.MultiDimFit.mH120.root
+contour,scan_min_sigma_W,90.60888
+contour,scan_min_sigma_Z,10.31407

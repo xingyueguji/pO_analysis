@@ -51,6 +51,52 @@ static const int    kMkW  = 20, kMkWp = 21, kMkWm = 33;  // filled: circle / squ
 static const double kMkWSz = 1.3, kMkWpSz = 1.5, kMkWmSz = 2.0;
 static const int    kMkWOpen = 24, kMkWmOpen = 27;       // open circle / open diamond
 
+// -----------------------------------------------------------------------------
+// pp REFERENCE for the inclusive plot of xsec_fiducial_flav (2026-10-05, user
+// request: a COARSE comparison -- "we don't need to be precise here").
+//
+// CMS SMP-20-004, "Measurement of the inclusive cross sections for W and Z
+// boson production in pp collisions at sqrt(s) = 5.02 and 13 TeV",
+// JHEP 04 (2025) 162, arXiv:2408.03744, HEPData ins2816048 -- ONE paper, ONE
+// fiducial definition at both energies, which bracket our 9.62 TeV (there was
+// NO pp run at 9.62 TeV in 2025: the LPC special-run page lists pO 9.62, OO
+// 5.36 and NeNe 5.36 TeV only). Combined e+mu FIDUCIAL cross sections, PER
+// LEPTON FLAVOUR, in nb, from the paper's Tables 1 (5.02 TeV) and 2 (13 TeV):
+//   W: Born lepton pT > 25, |eta| < 2.4, mT > 40        (since 2026-10-13 our
+//      leppt_mt40 gen fiducial has the same mT cut; ours is bare, not Born --
+//      ~2% (mu) / ~4.5% (e) lower -- NOT corrected)
+//   Z: both Born leptons pT > 25, |eta| < 2.4, 60 < m < 120 (ours: 15/10 GeV legs)
+// Drawn x kA_O (= 16): sigma_pO = A x sigma_pp for NO nuclear modification AND
+// NO isospin effect -- the latter is why W+ and W- separately are NOT expected
+// to match even at the right energy (oxygen is 8p + 8n: pp W+/W- ~ 1.4, the
+// isospin-averaged POWHEG 1.17); the W+ + W- sum and the Z cancel it to a few %.
+// The energy difference is not corrected either (a log-log interpolation of the
+// two points to 9.62 TeV gives W 7.02 nb, Z 0.575 nb per flavour).
+// Errors drawn = stat (+) syst (+) lumi in quadrature.
+// -----------------------------------------------------------------------------
+struct PPRef
+{
+    const char *label;     // legend text
+    double v[4];           // W+, W-, W, Z  [nb, per flavour, pp fiducial]
+    double stat[4], syst[4], lumi[4];
+    int marker; double markerSize; int color;
+};
+static const PPRef kPPRef[2] = {
+    {"CMS pp 5.02 TeV",
+     {2.475, 1.525, 4.000, 0.3198}, {0.002, 0.002, 0.003, 0.0009},
+     {0.008, 0.005, 0.011, 0.0012}, {0.047, 0.029, 0.076, 0.0062},
+     24, 1.3, kOrange + 7},                              // open circle
+    {"CMS pp 13 TeV",
+     {5.170, 3.932, 9.110, 0.754}, {0.000, 0.004, 0.010, 0.002},
+     {0.020, 0.014, 0.030, 0.003}, {0.120, 0.089, 0.210, 0.017},
+     25, 1.5, kMagenta + 2},                             // open square (1.5 = centred, see kMk* note)
+};
+static const char *kPPRefCite = "CMS, JHEP 04 (2025) 162";
+static double ppRefErr(const PPRef &p, int k)
+{
+    return std::sqrt(p.stat[k] * p.stat[k] + p.syst[k] * p.syst[k] + p.lumi[k] * p.lumi[k]);
+}
+
 // =============================================================================
 // xsec_fiducial.C -- fiducial W cross sections (W+, W-, W inclusive, and
 // d(sigma)/d(eta_CM)) from the simultaneous fits:
@@ -185,16 +231,28 @@ struct CombIngredients
     bool   haveStat = false;
 };
 
-static bool loadCombIngredients(const char *binsCsv, const char *yieldsRoot,
-                                const char *genFile, CombIngredients &in)
+// The fiducial line drawn on the plots, from the discriminant's gen set.
+static TString fidText(const char *disc)
 {
+    TString tag, label;
+    pODisc::GenFid(disc, tag, label);
+    return "fiducial: bare lepton " + label;
+}
+
+// `disc` picks the gen fiducial set (pODisc::GenFid -- since 2026-10-13 the
+// leppt_mt40 fit is measured in the m_T > 40 fiducial volume, met in none).
+static bool loadCombIngredients(const char *binsCsv, const char *yieldsRoot,
+                                const char *genFile, const char *disc, CombIngredients &in)
+{
+    TString gtag, glabel;
+    if (!pODisc::GenFid(disc, gtag, glabel)) return false;
     TFile *fG = TFile::Open(genFile, "READ");
-    TH1D *hGp = (fG && !fG->IsZombie()) ? (TH1D *)fG->Get("h_gen_sig_Wp") : nullptr;
-    TH1D *hGm = (fG && !fG->IsZombie()) ? (TH1D *)fG->Get("h_gen_sig_Wm") : nullptr;
+    TH1D *hGp = (fG && !fG->IsZombie()) ? (TH1D *)fG->Get("h_gen_sig_Wp" + gtag) : nullptr;
+    TH1D *hGm = (fG && !fG->IsZombie()) ? (TH1D *)fG->Get("h_gen_sig_Wm" + gtag) : nullptr;
     if (!hGp || !hGm || hGp->GetNbinsX() != 12 || hGm->GetNbinsX() != 12)
     {
-        std::cerr << "[ERROR] no usable 12-bin h_gen_sig_{Wp,Wm} in " << genFile
-                  << " -- the r x sigma_gen extraction needs it (run skim/gen_xsec.C once).\n";
+        std::cerr << "[ERROR] no usable 12-bin h_gen_sig_{Wp,Wm}" << gtag << " in " << genFile
+                  << " -- the r x sigma_gen extraction needs it (run skim/run_gen_xsec.sh).\n";
         if (fG) { fG->Close(); delete fG; }
         return false;
     }
@@ -325,7 +383,7 @@ void xsec_fiducial_comb(const char *disc = "met",
                         const char *binsCsv    = nullptr, // default: simfit/summary/comb_W_yields.csv
                         const char *chargeFile = nullptr, // default: charge_asym_fid_comb_<disc>.root (eta bin positions)
                         const char *yieldsRoot = nullptr, // default: simfit/summary/comb_fitted_yields.root
-                        const char *genFile    = "../skim/rootfile/gen_xsec.root", // skim/gen_xsec.C output (disc-independent); missing -> overlay skipped
+                        const char *genFile    = "../skim/rootfile/gen_xsec.root", // skim/gen_xsec.C output; the set (m_T cut or not) follows disc
                         double Lint = pONorm::kLumi_invnb)
 {
     gStyle->SetEndErrorSize(4);
@@ -345,7 +403,7 @@ void xsec_fiducial_comb(const char *disc = "met",
 
     // ---- 0) ingredients for sigma = r x sigma_gen-fid ------------------------
     CombIngredients in;
-    if (!loadCombIngredients(sBins.Data(), sRoot.Data(), genFile, in)) return;
+    if (!loadCombIngredients(sBins.Data(), sRoot.Data(), genFile, disc, in)) return;
     const double *G = in.G, *R = in.R, *ER = in.ER;
     auto &covr = in.covr;
 
@@ -437,7 +495,7 @@ void xsec_fiducial_comb(const char *disc = "met",
 
         TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.030);
         tx.DrawLatex(0.18, 0.30,  "#mu + e combined (simfit), per lepton flavour");
-        tx.DrawLatex(0.18, 0.255, "fiducial: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
+        tx.DrawLatex(0.18, 0.255, fidText(disc));
         tx.DrawLatex(0.18, 0.21,  "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i}, summed with r-covariance");
         tx.DrawLatex(0.18, 0.165, in.haveStat ? "syst. = profiled fit nuisances (QCD, lumi 3%, theory, lepton SF)"
                                               : "one bar = stat. #oplus syst. (all fit nuisances profiled)");
@@ -718,7 +776,7 @@ void xsec_fiducial_diag(const char *disc = "met",
     gSystem->mkdir(outDir.c_str(), kTRUE);
 
     CombIngredients in;
-    if (!loadCombIngredients(sBins.Data(), sRoot.Data(), genFile, in)) return;
+    if (!loadCombIngredients(sBins.Data(), sRoot.Data(), genFile, disc, in)) return;
 
     // eta_CM bin centers/widths for the eta-binned part (same source as
     // xsec_fiducial_comb: the charge-asymmetry graph); missing -> inclusive only.
@@ -849,7 +907,7 @@ void xsec_fiducial_diag(const char *disc = "met",
 
         TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.029);
         tx.DrawLatex(0.18, 0.255, Form("simfit (r shared #mu/e), %s channel only", lepSym[fl]));
-        tx.DrawLatex(0.18, 0.215, "fiducial: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
+        tx.DrawLatex(0.18, 0.215, fidText(disc));
         tx.DrawLatex(0.18, 0.175, "stat. (fit) unc. only");
 
         CMS_lumi(c, 13, 10);
@@ -995,7 +1053,7 @@ void xsec_fiducial_diag(const char *disc = "met",
 
         TLatex txA; txA.SetNDC(); txA.SetTextFont(42); txA.SetTextSize(0.029);
         txA.DrawLatex(0.18, 0.255, "MC correction implicit in #sigma = r #times #sigma^{gen}_{fid}");
-        txA.DrawLatex(0.18, 0.215, "fiducial: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
+        txA.DrawLatex(0.18, 0.215, fidText(disc));
 
         CMS_lumi(ca, 13, 10);
         ca->RedrawAxis(); ca->Modified(); ca->Update();
@@ -1022,13 +1080,21 @@ void xsec_fiducial_diag(const char *disc = "met",
 //
 // with the SAME (mu+e pooled) gen fiducial cross sections for every fit, so all
 // results are quoted in ONE fiducial volume (bare lepton pT > 25 GeV,
-// |eta_lab| < 2.4) and sigma_e / sigma_mu = r_e / r_mu exactly -- a pure
+// |eta_lab| < 2.4, and m_T > 40 for leppt_mt40 -- pODisc::GenFid) and
+// sigma_e / sigma_mu = r_e / r_mu exactly -- a pure
 // data-vs-MC comparison; the ~1-2% bare-lepton FSR difference between the
 // flavours sits in each flavour's MC acceptance, where it belongs.
 //
-//   W_fiducial.{png,pdf}              W+, W-, W: mu only, e only [+ the grand
-//                                     fit, withComb], the r = 1 gen-fiducial
-//                                     expectation as a dashed segment
+//   W_fiducial.{png,pdf}              W+, W-, W AND Z (x10): mu only, e only
+//                                     [+ the grand fit, withComb], the r = 1
+//                                     gen-fiducial expectation as a dashed
+//                                     segment, and (2026-10-05) the CMS pp
+//                                     5.02 / 13 TeV fiducial points x A
+//                                     (kPPRef, a COARSE comparison: no sqrt(s),
+//                                     isospin or fiducial-definition correction).
+//                                     Z = r_Z x sigma_gen-fid,Z from the fit's
+//                                     summary.csv (total + stat rows). Wide
+//                                     canvas, all text in a right-hand panel.
 //   W_dsigma_deta_{Wp,Wm,W}.{png,pdf} d(sigma)/d(eta_CM) per charge, mu vs e
 //                                     [+ the grand fit, withCombDiff]
 //   xsec_flavfit.csv                  per fit: per-bin + inclusive rows (the
@@ -1059,13 +1125,28 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
 
     // ---- the fits, left to right: mu, [comb], e -- each through the SAME
     // ingredient loader and covariance propagation as the grand fit
+    // index 3 = Z (2026-10-05): sigma_Z = r_Z x sigma_gen-fid,Z, the fit's one
+    // global DY scale (summary.csv rows simfit_lab,r_Z = total error and
+    // simfit_lab_stat,r_Z = statistical), the same product xsec_contour.C uses
     struct FitX
     {
         pOFit::Spec spec;
         CombIngredients in;
-        double yv[3] = {0, 0, 0}, ev[3] = {0, 0, 0}, evS[3] = {0, 0, 0}; // W+, W-, W
+        double yv[4] = {0, 0, 0, 0}, ev[4] = {0, 0, 0, 0}, evS[4] = {0, 0, 0, 0}; // W+, W-, W, Z
+        bool haveZ = false;     // r_Z row found
+        bool haveZStat = false; // ... and its stat-only row
     };
     const int klo[3] = {0, 12, 0}, khi[3] = {12, 24, 24};
+    // the Z gen fiducial (one bin; skim/gen_xsec.C since 2026-09-15)
+    double gZ = 0.0;
+    {
+        TFile *fG = TFile::Open(genFile, "READ");
+        TH1D *hGZ = (fG && !fG->IsZombie()) ? (TH1D *)fG->Get("h_gen_sig_Z") : nullptr;
+        if (hGZ) gZ = hGZ->GetBinContent(1);
+        else std::cerr << "[WARN] xsec_fiducial_flav: no h_gen_sig_Z in " << genFile
+                       << " -> the Z column shows the pp reference only (re-run skim/gen_xsec.C)\n";
+        if (fG) { fG->Close(); delete fG; }
+    }
     std::vector<FitX> fits;
     const char *tags[3] = {"simfit_mu", "comb", "simfit_ele"};
     for (int t = 0; t < 3; ++t)
@@ -1083,13 +1164,25 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
         }
         if (!loadCombIngredients(pOFit::SummaryFile(dsuf, f.spec, "W_yields.csv").Data(),
                                  pOFit::SummaryFile(dsuf, f.spec, "fitted_yields.root").Data(),
-                                 genFile, f.in))
+                                 genFile, disc, f.in))
             continue;
         for (int k = 0; k < 3; ++k)
         {
             sumWithCov(f.in, f.in.G, klo[k], khi[k], f.yv[k], f.ev[k]);
             double dummy;
             sumWithCov(f.in, f.in.G, klo[k], khi[k], dummy, f.evS[k], true);
+        }
+        if (gZ > 0)
+        {
+            const TString sumCsv = pOFit::SummaryFile(dsuf, f.spec, "summary.csv");
+            double rz = 0, erz = 0, rzS = 0, erzS = 0;
+            if (readCombSum(sumCsv.Data(), "simfit_lab", "r_Z", rz, erz))
+            {
+                f.haveZ = true;
+                f.yv[3] = rz * gZ; f.ev[3] = erz * gZ;
+                f.haveZStat = f.in.haveStat && readCombSum(sumCsv.Data(), "simfit_lab_stat", "r_Z", rzS, erzS);
+                f.evS[3] = f.haveZStat ? erzS * gZ : f.ev[3]; // no stat row -> one (total) bar, no box
+            }
         }
         fits.push_back(f);
     }
@@ -1109,17 +1202,19 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
 
     // the gen fiducial cross sections are the same for every fit (pooled mu+e)
     const double *G = fits[0].in.G;
-    double genTot[3] = {0, 0, 0};
+    double genTot[4] = {0, 0, 0, gZ};
     for (int k = 0; k < 3; ++k)
         for (int i = klo[k]; i < khi[k]; ++i) genTot[k] += G[i];
 
     // ---- console: every fit, then the e/mu ratios ----------------------------
-    const char *cn3[3] = {"Wp", "Wm", "W"};
-    const char *xlab[3] = {"W^{+}", "W^{-}", "W"};
+    const char *cn3[4] = {"Wp", "Wm", "W", "Z"};
+    const char *xlab[4] = {"W^{+}", "W^{-}", "W", "Z"};
     for (const FitX &f : fits)
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 4; ++k)
         {
-            if (f.in.haveStat)
+            if (k == 3 && !f.haveZ) continue;
+            const bool st = (k == 3) ? f.haveZStat : f.in.haveStat;
+            if (st)
                 printf("[xsec-flav] %-10s %-3s measured = %6.2f +/- %4.2f (stat) +/- %4.2f (syst) = +/- %4.2f (total) nb   (gen fid %6.2f nb, eff. r = %.3f)\n",
                        f.spec.tag.Data(), cn3[k], f.yv[k], f.evS[k], systFrom(f.ev[k], f.evS[k], true), f.ev[k],
                        genTot[k], genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0);
@@ -1127,14 +1222,20 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
                 printf("[xsec-flav] %-10s %-3s measured = %6.2f +/- %4.2f nb (total; no stat split)   (eff. r = %.3f)\n",
                        f.spec.tag.Data(), cn3[k], f.yv[k], f.ev[k], genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0);
         }
+    for (int p = 0; p < 2; ++p)
+        printf("[xsec-flav] pp reference %-16s x %.0f: W+ %6.2f  W- %6.2f  W %6.2f  Z %6.2f nb  (%s; drawn as-is, no energy/isospin/fiducial correction)\n",
+               kPPRef[p].label, pONorm::kA_O, kPPRef[p].v[0] * pONorm::kA_O, kPPRef[p].v[1] * pONorm::kA_O,
+               kPPRef[p].v[2] * pONorm::kA_O, kPPRef[p].v[3] * pONorm::kA_O, kPPRefCite);
     // sigma_e / sigma_mu with the STAT error (independent samples; lumi and the
     // theory shapes cancel) -- the total-error version only when no stat split
     const bool haveRatio = fm && fe;
     const bool ratioStat = haveRatio && fm->in.haveStat && fe->in.haveStat;
-    double rat[3] = {0, 0, 0}, ratE[3] = {0, 0, 0};
+    const bool haveRatioZ = haveRatio && fm->haveZ && fe->haveZ;
+    double rat[4] = {0, 0, 0, 0}, ratE[4] = {0, 0, 0, 0};
     if (haveRatio)
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 4; ++k)
         {
+            if (k == 3 && !haveRatioZ) continue;
             if (fm->yv[k] <= 0 || fe->yv[k] <= 0) continue;
             rat[k] = fe->yv[k] / fm->yv[k];
             const double em = ratioStat ? fm->evS[k] : fm->ev[k], ee = ratioStat ? fe->evS[k] : fe->ev[k];
@@ -1143,38 +1244,63 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
                    cn3[k], rat[k], ratE[k], ratioStat ? "stat" : "total", ratE[k] > 0 ? (rat[k] - 1.0) / ratE[k] : 0.0);
         }
 
-    // ---- 1) inclusive W+ / W- / W ---------------------------------------------
+    // ---- 1) inclusive W+ / W- / W / Z, with the CMS pp reference --------------
+    // (2026-10-05, user request) FOUR categories. In each: the fits mu | [comb]
+    // | e on the left, the two pp reference points (kPPRef x A) on the right,
+    // the r = 1 gen segment under the fit cluster only. The Z column is drawn
+    // x kZScale so all four sit on one linear axis. WIDE canvas with every
+    // text in a panel right of the frame (the xsec_contour_WZ_flav layout), so
+    // the frame holds nothing but the points and the CMS banner.
     std::vector<const FitX *> incl;
     for (const FitX &f : fits)
         if (f.spec.flav != "" || withComb) incl.push_back(&f);
     {
         const int nF = (int)incl.size();
-        const double off2[2] = {-0.14, 0.14}, off3[3] = {-0.22, 0.0, 0.22};
+        const double kZScale = 10.0;
+        const double zsc[4] = {1.0, 1.0, 1.0, kZScale};
+        const double offF1[1] = {-0.22}, offF2[2] = {-0.32, -0.14}, offF3[3] = {-0.37, -0.22, -0.07};
+        const double offPP[2] = {+0.17, +0.33};
+        const double genLo = -0.45, genHi = +0.02;
+        auto offF = [&](int j) { return (nF == 1) ? offF1[0] : (nF == 2) ? offF2[j] : offF3[j]; };
+
         PlotStyle ps; ps.logy = false;
-        ps.systBoxHalfWidthAbs = (nF >= 3) ? 0.06 : (nF == 2) ? 0.07 : 0.13;
+        ps.w = 1300; ps.h = 850;                                   // frame ~660 x 705 px, panel ~520 px
+        ps.lm = 0.09; ps.rm = 0.40; ps.bm = 0.11; ps.tm = 0.06;
+        ps.xTitleSize = ps.yTitleSize = 0.040;
+        ps.xLabelSize = 0.050; ps.yLabelSize = 0.034;
+        ps.yTitleOffset = 1.05;
+        ps.systBoxHalfWidthAbs = 0.05;
         ps.systBoxFillAlpha = 0.30;
         TCanvas *c = new TCanvas("c_xsec_fid_flav", "", ps.w, ps.h);
         ApplyCanvasStyle(c, ps);
         c->cd();
+
         double ymax = 0.0;
         for (const FitX *f : incl)
-            for (int k = 0; k < 3; ++k) ymax = std::max(ymax, f->yv[k] + f->ev[k]);
-        for (int k = 0; k < 3; ++k) ymax = std::max(ymax, genTot[k]);
-        TH1F *fr = new TH1F("fr_xsec_flav", "", 3, 0.5, 3.5);
-        for (int k = 0; k < 3; ++k) fr->GetXaxis()->SetBinLabel(k + 1, xlab[k]);
+            for (int k = 0; k < 4; ++k)
+                if (k < 3 || f->haveZ) ymax = std::max(ymax, (f->yv[k] + f->ev[k]) * zsc[k]);
+        for (int k = 0; k < 4; ++k) ymax = std::max(ymax, genTot[k] * zsc[k]);
+        for (int p = 0; p < 2; ++p)
+            for (int k = 0; k < 4; ++k)
+                ymax = std::max(ymax, (kPPRef[p].v[k] + ppRefErr(kPPRef[p], k)) * pONorm::kA_O * zsc[k]);
+        const double yFrameMax = 1.32 * ymax; // headroom for the in-frame CMS banner only
+        TH1F *fr = new TH1F("fr_xsec_flav", "", 4, 0.5, 4.5);
+        for (int k = 0; k < 4; ++k)
+            fr->GetXaxis()->SetBinLabel(k + 1, k == 3 ? Form("Z (#times%.0f)", kZScale) : xlab[k]);
         fr->SetStats(0);
-        ApplyHistStyle(fr, ps, "", "#sigma^{fid}_{W#rightarrowl#nu} (nb)");
-        fr->GetXaxis()->SetLabelSize(0.065);
-        fr->GetXaxis()->SetNdivisions(3);
+        ApplyHistStyle(fr, ps, "", "#sigma^{fid} (nb)");
+        fr->GetXaxis()->SetNdivisions(4);
         fr->SetMinimum(0.0);
-        fr->SetMaximum(1.75 * ymax); // headroom: legend upper left, ratios under the header
+        fr->SetMaximum(yFrameMax);
         fr->Draw();
 
-        // the r = 1 expectation (same for every fit): a dashed segment per category
+        // the r = 1 expectation (same for every fit): a dashed segment under
+        // the fit cluster of each category
         TLine *lGen = nullptr;
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 4; ++k)
         {
-            lGen = new TLine(k + 1 - 0.40, genTot[k], k + 1 + 0.40, genTot[k]);
+            if (genTot[k] <= 0) continue;
+            lGen = new TLine(k + 1 + genLo, genTot[k] * zsc[k], k + 1 + genHi, genTot[k] * zsc[k]);
             lGen->SetLineStyle(2); lGen->SetLineWidth(3); lGen->SetLineColor(kGreen + 2);
             lGen->Draw();
         }
@@ -1184,57 +1310,132 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
         for (int j = 0; j < nF; ++j)
         {
             const FitX *f = incl[j];
-            const double o = (nF == 1) ? 0.0 : (nF == 2) ? off2[j] : off3[j];
-            double x[3], y[3], e[3], es[3], ex0[3] = {0, 0, 0};
-            for (int k = 0; k < 3; ++k) { x[k] = k + 1 + o; y[k] = f->yv[k]; e[k] = f->ev[k]; es[k] = f->evS[k]; }
-            TGraphErrors *gT = new TGraphErrors(3, x, y, ex0, e);   // TOTAL error
-            TGraphErrors *gS = new TGraphErrors(3, x, y, ex0, es);  // STATISTICAL error
+            const double o = offF(j);
+            std::vector<double> x, y, e, es, ex0;
+            for (int k = 0; k < 4; ++k)
+            {
+                if (k == 3 && !f->haveZ) continue;
+                x.push_back(k + 1 + o);
+                y.push_back(f->yv[k] * zsc[k]);
+                e.push_back(f->ev[k] * zsc[k]);
+                // an entry without a stat split gets es = e: a zero-height box,
+                // which MakeSystBoxes skips, and the total bar is what is drawn
+                const bool st = (k == 3) ? f->haveZStat : f->in.haveStat;
+                es.push_back((st ? f->evS[k] : f->ev[k]) * zsc[k]);
+                ex0.push_back(0.0);
+            }
+            const int n = (int)x.size();
+            TGraphErrors *gT = new TGraphErrors(n, x.data(), y.data(), ex0.data(), e.data());  // TOTAL error
+            TGraphErrors *gS = new TGraphErrors(n, x.data(), y.data(), ex0.data(), es.data()); // STATISTICAL error
             PlotStyle pb = ps;
             pb.systBoxFillColor = f->spec.color; pb.systBoxLineColor = f->spec.color;
-            if (f->in.haveStat)
-                for (TBox *b : MakeSystBoxes(gT, gS, pb)) { b->Draw(); anyBox = true; }
-            TGraphErrors *gd = f->in.haveStat ? gS : gT;
+            for (TBox *b : MakeSystBoxes(gT, gS, pb)) { b->Draw(); anyBox = true; }
+            TGraphErrors *gd = gS; // == gT wherever no split exists (see above)
             gd->SetMarkerStyle(f->spec.marker); gd->SetMarkerSize(f->spec.markerSize);
             gd->SetMarkerColor(f->spec.color); gd->SetLineColor(f->spec.color); gd->SetLineWidth(2);
             gDraw.push_back(gd);
         }
+        // the pp reference x A: open markers, one TOTAL bar (stat (+) syst (+) lumi)
+        TGraphErrors *gPP[2] = {nullptr, nullptr};
+        for (int p = 0; p < 2; ++p)
+        {
+            double x[4], y[4], e[4], ex0[4] = {0, 0, 0, 0};
+            for (int k = 0; k < 4; ++k)
+            {
+                x[k] = k + 1 + offPP[p];
+                y[k] = kPPRef[p].v[k] * pONorm::kA_O * zsc[k];
+                e[k] = ppRefErr(kPPRef[p], k) * pONorm::kA_O * zsc[k];
+            }
+            gPP[p] = new TGraphErrors(4, x, y, ex0, e);
+            gPP[p]->SetMarkerStyle(kPPRef[p].marker); gPP[p]->SetMarkerSize(kPPRef[p].markerSize);
+            gPP[p]->SetMarkerColor(kPPRef[p].color); gPP[p]->SetLineColor(kPPRef[p].color);
+            gPP[p]->SetLineWidth(2);
+            gPP[p]->Draw("P SAME");
+        }
         for (TGraphErrors *gd : gDraw) gd->Draw("P SAME");
 
-        DrawHeader(ps, "", "W #rightarrow l #nu", "fiducial cross section");
-        TLatex ltag; ltag.SetNDC(); ltag.SetTextFont(ps.font); ltag.SetTextAlign(13);
-        ltag.SetTextSize(ps.boxTextSize);
-        ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
+        // ---- the text panel right of the frame -----------------------------------
+        const double tx0 = 1.0 - ps.rm + 0.02; // left edge of the panel (NDC)
+        TLatex hd; hd.SetNDC(true); hd.SetTextFont(ps.font); hd.SetTextAlign(13);
+        hd.SetTextSize(0.034);
+        hd.DrawLatex(tx0, 0.935, "W #rightarrow l #nu,  Z #rightarrow l l");
+        hd.SetTextSize(0.029);
+        hd.DrawLatex(tx0, 0.893, "fiducial cross sections per lepton flavour");
+        hd.DrawLatex(tx0, 0.858, Form("#mu-only vs e-only simfits, %s fit", discLabel.Data()));
 
-        const int nLeg = nF + 1 + (anyBox ? 1 : 0);
-        TLegend *leg = new TLegend(0.18, 0.785 - 0.042 * nLeg, 0.56, 0.785);
-        leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.031);
+        const int nLeg = nF + 1 + (anyBox ? 1 : 0) + 2;
+        const double legTop = 0.822, rowH = 0.035;
+        TLegend *leg = new TLegend(tx0 - 0.01, legTop - rowH * nLeg, 0.995, legTop);
+        leg->SetBorderSize(0); leg->SetFillStyle(0); leg->SetTextFont(42); leg->SetTextSize(0.027);
         for (int j = 0; j < nF; ++j)
-            leg->AddEntry(gDraw[j], Form("%s (simfit)", incl[j]->spec.label.Data()), "lep");
-        leg->AddEntry(lGen, "#sigma^{gen}_{fid} (POWHEG, r = 1)", "l");
+            leg->AddEntry(gDraw[j], Form("%s (simfit, pO)", incl[j]->spec.label.Data()), "lep");
+        leg->AddEntry(lGen, "#sigma^{gen}_{fid} (POWHEG + EPPS21, r = 1)", "l");
         if (anyBox)
         {
             TBox *key = new TBox(0, 0, 1, 1); // legend glyph only
             key->SetFillColorAlpha(kGray + 1, ps.systBoxFillAlpha); key->SetLineColor(kGray + 3);
             leg->AddEntry(key, "bars: stat.,  boxes: syst.", "f");
         }
+        for (int p = 0; p < 2; ++p)
+            leg->AddEntry(gPP[p], Form("%s, #times A (A = %.0f)", kPPRef[p].label, pONorm::kA_O), "lep");
         leg->Draw();
 
-        // e/mu ratios under the legend, one short line per charge: that
-        // column is free above the W+ points and left of the W- ones (a single
-        // long line would cross the W category's r = 1 segment)
-        TLatex tx; tx.SetNDC(); tx.SetTextFont(42);
+        TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextAlign(13);
+        double yc = legTop - rowH * nLeg - 0.015;
         if (haveRatio)
         {
-            const double yr = 0.785 - 0.042 * nLeg - 0.040;
-            tx.SetTextSize(0.029);
-            tx.DrawLatex(0.19, yr, Form("#sigma_{e} / #sigma_{#mu} (%s unc.):", ratioStat ? "stat." : "total"));
-            for (int k = 0; k < 3; ++k)
-                tx.DrawLatex(0.21, yr - 0.037 * (k + 1), Form("%s:  %.3f #pm %.3f", xlab[k], rat[k], ratE[k]));
+            const double dy = 0.033;
+            tx.SetTextSize(0.027);
+            tx.DrawLatex(tx0, yc, Form("#sigma_{e} / #sigma_{#mu} (%s unc.):", ratioStat ? "stat." : "total"));
+            yc -= dy;
+            for (int k = 0; k < 4; ++k)
+            {
+                if (k == 3 && !haveRatioZ) continue;
+                tx.DrawLatex(tx0 + 0.02, yc, Form("%s:  %.3f #pm %.3f", xlab[k], rat[k], ratE[k]));
+                yc -= dy;
+            }
+            // mu vs e chi2 over W+ and W- (W is their sum, not independent):
+            // (sigma_mu - sigma_e)^2 / (delta_mu^2 + delta_e^2), stat and total
+            double c2s = 0, c2t = 0;
+            for (int k = 0; k < 2; ++k)
+            {
+                const double d2 = std::pow(fm->yv[k] - fe->yv[k], 2);
+                const double vs = fm->evS[k] * fm->evS[k] + fe->evS[k] * fe->evS[k];
+                const double vt = fm->ev[k] * fm->ev[k] + fe->ev[k] * fe->ev[k];
+                if (vs > 0) c2s += d2 / vs;
+                if (vt > 0) c2t += d2 / vt;
+            }
+            printf("[mu-vs-e] inclusive W+,W- chi2/ndf = %.2f/2 (stat only, p = %.3f)   %.2f/2 (total, p = %.3f)\n",
+                   c2s, TMath::Prob(c2s, 2), c2t, TMath::Prob(c2t, 2));
+            yc -= 0.010;
+            tx.DrawLatex(tx0, yc, "#mu vs e (W^{+}, W^{-}):");
+            yc -= dy;
+            tx.DrawLatex(tx0 + 0.02, yc, "#chi^{2} = #Sigma(#sigma_{#mu}#minus#sigma_{e})^{2}/(#delta_{#mu}^{2}+#delta_{e}^{2})");
+            yc -= dy;
+            tx.DrawLatex(tx0 + 0.02, yc, ratioStat ? Form("#chi^{2}/ndf = %.2f/2 (#delta = stat.),  %.2f/2 (total)", c2s, c2t)
+                                                 : Form("#chi^{2}/ndf = %.2f/2 (#delta = total)", c2t));
+            yc -= dy;
         }
-        tx.SetTextSize(0.028);
-        tx.DrawLatex(0.18, 0.255, "one fiducial volume: bare lepton p_{T} > 25 GeV, |#eta_{lab}| < 2.4");
-        tx.DrawLatex(0.18, 0.215, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} per fit, summed with its r-covariance");
-        tx.DrawLatex(0.18, 0.175, "syst. = profiled fit nuisances (lumi 3% common to all fits)");
+        // the pp reference, then the pO definitions
+        const double dy2 = 0.030;
+        tx.SetTextSize(0.024);
+        yc -= 0.010;
+        tx.SetTextColor(kGray + 3);
+        tx.DrawLatex(tx0, yc, Form("pp reference: %s, pp fiducial #times A", kPPRefCite)); yc -= dy2;
+        tx.DrawLatex(tx0 + 0.02, yc, "W: p_{T}^{l} > 25 GeV, |#eta| < 2.4, m_{T} > 40 GeV"); yc -= dy2;
+        tx.DrawLatex(tx0 + 0.02, yc, "Z: p_{T}^{l} > 25 GeV, |#eta| < 2.4, m_{ll} 60#minus120 GeV"); yc -= dy2;
+        tx.DrawLatex(tx0 + 0.02, yc, "no #sqrt{s}, isospin or nuclear correction (coarse)"); yc -= dy2;
+        yc -= 0.010;
+        tx.SetTextColor(kBlack);
+        {
+            TString gtag, glabel;
+            pODisc::GenFid(disc, gtag, glabel);
+            tx.DrawLatex(tx0, yc, "pO fiducial (bare leptons):"); yc -= dy2;
+            tx.DrawLatex(tx0 + 0.02, yc, "W: lepton " + glabel); yc -= dy2;
+        }
+        tx.DrawLatex(tx0 + 0.02, yc, Form("Z: p_{T}^{l} > 15/10 GeV, m_{ll} 60#minus120 GeV, drawn #times%.0f", kZScale)); yc -= dy2;
+        tx.DrawLatex(tx0, yc, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i}, summed with the r-covariance"); yc -= dy2;
+        tx.DrawLatex(tx0, yc, "syst. = profiled fit nuisances (lumi 3% common)"); yc -= dy2;
 
         CMS_lumi(c, 13, 10);
         c->RedrawAxis(); c->Modified(); c->Update();
@@ -1360,8 +1561,10 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
             ltag.DrawLatex(ps.headerX, ps.headerY - 3.0 * ps.headerDy, Form("%s fit", discLabel.Data()));
 
             TLatex tx; tx.SetNDC(); tx.SetTextFont(42); tx.SetTextSize(0.029);
-            tx.DrawLatex(0.55, kAnnoY + 0.050, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} (p_{T}^{l} > 25 GeV)");
-            tx.DrawLatex(0.55, kAnnoY + 0.005, "bars: stat.,  boxes: syst. (profiled)");
+            // right column under the header; the band just above kAnnoY holds
+            // the full-width mu-vs-e chi2 lines
+            tx.DrawLatex(0.55, kAnnoY + 0.120, "#sigma_{i} = r_{i} #times #sigma^{gen}_{fid,i} (p_{T}^{l} > 25 GeV)");
+            tx.DrawLatex(0.55, kAnnoY + 0.077, "bars: stat.,  boxes: syst. (profiled)");
 
             const int nLeg = nF + 1;
             TLegend *leg = new TLegend(0.18, 0.79 - 0.045 * nLeg, 0.50, 0.79);
@@ -1372,13 +1575,11 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
             leg->Draw();
             (void)anyBox;
 
-            CMS_lumi(c, 13, 10);
-            c->RedrawAxis(); c->Modified(); c->Update();
-            c->SaveAs(Form("%s/W_dsigma_deta_%s.png", outDir.c_str(), cn3[k]));
-            c->SaveAs(Form("%s/W_dsigma_deta_%s.pdf", outDir.c_str(), cn3[k]));
-
-            // mu vs e, bin by bin: chi2 against the stat and the total errors,
-            // and the per-bin e/mu ratio (stat error) for the CSV
+            // mu vs e, bin by bin: chi2 = sum (x_mu - x_e)^2 / (sigma_mu^2 + sigma_e^2)
+            // against the stat and the total errors (the two fits are
+            // independent samples; the total version double-counts the common
+            // lumi 3%, so it is the conservative bound), printed on the plot
+            // and the console, plus the per-bin e/mu ratio for the CSV
             if (fm && fe)
             {
                 double vm, emT, emS, ve, eeT, eeS, c2s = 0, c2t = 0;
@@ -1398,16 +1599,32 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
                                  rr * std::sqrt(std::pow(emT / vm, 2) + std::pow(eeT / ve, 2)));
                 }
                 if (n > 0)
+                {
                     printf("[mu-vs-e] d(sigma)/d(eta) %-3s chi2/ndf = %5.1f/%d (stat only, p = %.3f)   %5.1f/%d (total, p = %.3f)\n",
                            cn3[k], c2s, n, TMath::Prob(c2s, n), c2t, n, TMath::Prob(c2t, n));
+                    // under the legend, left of the right-hand annotation band
+                    TLatex tc; tc.SetNDC(); tc.SetTextFont(42); tc.SetTextSize(0.027);
+                    tc.DrawLatex(0.19, kAnnoY + 0.045, "#mu vs e: #chi^{2} = #Sigma(#sigma_{#mu}#minus#sigma_{e})^{2}/(#delta_{#mu}^{2}+#delta_{e}^{2})");
+                    tc.DrawLatex(0.19, kAnnoY + 0.005, (fm->in.haveStat && fe->in.haveStat)
+                        ? Form("#chi^{2}/ndf = %.1f/%d (stat.),  %.1f/%d (total)", c2s, n, c2t, n)
+                        : Form("#chi^{2}/ndf = %.1f/%d (total)", c2t, n));
+                }
             }
+
+            CMS_lumi(c, 13, 10);
+            c->RedrawAxis(); c->Modified(); c->Update();
+            c->SaveAs(Form("%s/W_dsigma_deta_%s.png", outDir.c_str(), cn3[k]));
+            c->SaveAs(Form("%s/W_dsigma_deta_%s.pdf", outDir.c_str(), cn3[k]));
         }
         std::cout << "[OK] Saved " << outDir << "/W_dsigma_deta_{Wp,Wm,W}.{png,pdf}\n";
     }
     if (haveRatio)
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 4; ++k)
+        {
+            if (k == 3 && !haveRatioZ) continue;
             rcsv << Form("%s,incl,,%.5f,%.5f,%.5f\n", cn3[k], rat[k], ratioStat ? ratE[k] : -1.0,
                          rat[k] * std::sqrt(std::pow(fm->ev[k] / fm->yv[k], 2) + std::pow(fe->ev[k] / fe->yv[k], 2)));
+        }
     rcsv.close();
 
     // ---- 3) the sigma table, every fit (the xsec_comb.csv columns + fit) ------
@@ -1428,12 +1645,21 @@ void xsec_fiducial_flav(const char *disc = "leppt_mt40",
                                 f.in.R[k], f.in.ER[k], G[k], f.in.R[k] * G[k], f.in.ER[k] * G[k],
                                 st, f.in.haveStat ? systFrom(f.in.ER[k] * G[k], st, true) : -1.0);
                 }
-            for (int k = 0; k < 3; ++k) // r column = effective (gen-weighted mean) r
+            for (int k = 0; k < 4; ++k) // r column = effective (gen-weighted mean) r; k = 3: Z = r_Z x sigma_gen,Z
+            {
+                if (k == 3 && !f.haveZ) continue;
+                const bool st = (k == 3) ? f.haveZStat : f.in.haveStat;
                 out << Form("%s,%s,incl,,,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f\n", f.spec.tag.Data(), cn3[k],
                             genTot[k] > 0 ? f.yv[k] / genTot[k] : 0.0, genTot[k] > 0 ? f.ev[k] / genTot[k] : 0.0,
-                            genTot[k], f.yv[k], f.ev[k], f.in.haveStat ? f.evS[k] : -1.0,
-                            f.in.haveStat ? systFrom(f.ev[k], f.evS[k], true) : -1.0);
+                            genTot[k], f.yv[k], f.ev[k], st ? f.evS[k] : -1.0,
+                            st ? systFrom(f.ev[k], f.evS[k], true) : -1.0);
+            }
         }
+        // the pp reference as drawn (x A), one row per energy and process
+        for (int p = 0; p < 2; ++p)
+            for (int k = 0; k < 4; ++k)
+                out << Form("pp_%s,%s,incl,,,,,,%.5f,%.5f,,\n", p == 0 ? "5.02TeV" : "13TeV", cn3[k],
+                            kPPRef[p].v[k] * pONorm::kA_O, ppRefErr(kPPRef[p], k) * pONorm::kA_O);
     }
     std::cout << "[OK] Wrote " << outDir << "/xsec_flavfit.csv + xsec_flavfit_ratio.csv\n";
 }

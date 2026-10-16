@@ -9,6 +9,14 @@
 #   dileptonpeak.C+(isElec)  -> plots[/Elec]/combine_input_Z.root
 # each with its `<input>_systs.txt` sidecar (the list of shape systematics
 # actually written -- the fork's card generator READS these, never assumes).
+# Then, from the lepton-pT inputs just written (2026-10-13):
+#   prefit_r.C+("leppt_mt40") -> plots/prefit_r/leppt_mt40/prefit_r_{Wp,Wm,W}_{lab,fb}
+#                                + prefit_r.csv: the PREFIT signal strength
+#                                r_pre = (data - DY - QCD)/W per rapidity bin, mu
+#                                vs e (the same numbers as the r_pre line in the
+#                                leppt_mt40 stacks' info boxes). Reads BOTH
+#                                flavours' inputs whatever the argument, so a
+#                                single-flavour run refreshes the overlay too.
 #
 # Why a wrapper and not `root -l -b -q 'mtandmet.C+(false)'` directly: these
 # macros print numbers that get quoted downstream -- the ABCD QCD totals, the
@@ -39,7 +47,7 @@ is_elec() { case "$1" in mu) echo false ;; ele) echo true ;; esac; }
 
 # Pre-build both macros once, so two flavours cannot race on the ACLiC
 # artifacts (skim/run_all.sh has been bitten by exactly that).
-for m in mtandmet dileptonpeak; do
+for m in mtandmet dileptonpeak prefit_r; do
   root -l -b -q -e ".L ${m}.C+" >/dev/null 2>&1 || {
     echo "[ERR] ${m}.C does not compile:"
     root -l -b -q -e ".L ${m}.C+" 2>&1 | tail -20
@@ -73,5 +81,16 @@ done
 if [ "$rc" -eq 0 ]; then
   echo "=== Combine inputs written (re-run correction/run_qcd_abcd.sh first if the skim changed):"
   ls -1 plots/combine_input_*.root plots/Elec/combine_input_*.root 2>/dev/null | sed 's/^/    /'
+
+  # Prefit signal strength per rapidity bin, mu vs e, from the inputs above.
+  log="logs/prefit_r_leppt_mt40.log"
+  echo "=== prefit_r(leppt_mt40)  ->  $log"
+  if root -l -b -q 'prefit_r.C+("leppt_mt40")' >"$log" 2>&1 && grep -q "^\[prefit_r\] wrote" "$log"; then
+    # the inclusive r per charge (lab tables), and any input mismatch
+    grep -E "^\[prefit_r\] (Wp|Wm|W), lab binning" -A 15 "$log" | grep -E "binning|^   bin |incl " | sed 's/^/    /' || true
+    grep -E "WARN|ERROR" "$log" | sed 's/^/    /' || true
+  else
+    echo "[ERR] prefit_r failed -- tail of $log:"; tail -20 "$log"; rc=1
+  fi
 fi
 exit $rc

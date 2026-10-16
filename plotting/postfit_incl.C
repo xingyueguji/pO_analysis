@@ -349,6 +349,14 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
                                                 : ((is == 2) ? 49 : 25)) + nLhe;
             int ndf = nUsed - ndfPars;
             if (ndf < 1) ndf = (nUsed > 0 ? nUsed : 1);
+            // the same numbers as the info box, on the console: they are quoted
+            // (CLAUDE.md, the AN), and a number that lives only in a PNG is lost
+            // to the run_observables log (2026-09-29)
+            std::cout << Form("[postfit-incl] %s %-3s %-4s data %6.0f  postfit %8.1f  (data/postfit %.3f)  "
+                              "BC chi2/ndf = %6.1f/%-3d = %.2f, p = %.2g\n",
+                              fitTag, flavs[fl], tag[is], hData->Integral(), hTot->Integral(),
+                              hTot->Integral() > 0 ? hData->Integral() / hTot->Integral() : 0.0, chi2, ndf,
+                              chi2 / ndf, TMath::Prob(chi2, ndf));
             std::vector<std::string> box = {
                 Form("Data: %.0f", hData->Integral()),
                 Form("Postfit total: %.0f", hTot->Integral()),

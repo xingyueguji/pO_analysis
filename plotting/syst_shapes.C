@@ -1,8 +1,10 @@
 // =============================================================================
 // syst_shapes.C -- diagnostics of the shape systematics carried by the
-// Combine inputs: the LHE families nPDF / qcdScale / alphaS (2026-09-07) and,
-// in the muon channel, the combined lepton-SF nuisance muSF (2026-09-14,
-// skim/muon_sf.h: ID, ISO and trigger shifts added in quadrature per bin),
+// Combine inputs: the LHE families nPDF / qcdScale / alphaS (2026-09-07) and
+// the combined lepton-SF nuisance of each flavour -- muSF in the muon channel
+// (2026-09-14, skim/muon_sf.h: ID, ISO and trigger shifts added in quadrature
+// per bin), eleSF in the electron one (2026-09-29, skim/electron_sf.h: Reco,
+// ID+iso and trigger shifts, same recipe),
 // <process>_<syst>Up/Down next to every MC template (written by mtandmet.C /
 // dileptonpeak.C from the skim twins, see CLAUDE.md "Structured inputs"). The
 // list per flavour = gSystNames below (the LHE names first, so the [INCL]
@@ -66,6 +68,7 @@
 #include "disc_variants.h"
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames, kNMembers, Block, Hessian()
 #include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames (muon channel only)
+#include "../skim/electron_sf.h" // pOSF::kEleSFSystNames (electron channel only, 2026-09-29)
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> k_s per sample
 
 #include "TBox.h"
@@ -724,6 +727,8 @@ void syst_shapes(const char *disc = "leppt_mt40")
         gSystNames.assign(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
         if (!isElec)
             gSystNames.insert(gSystNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
+        else
+            gSystNames.insert(gSystNames.end(), pOSF::kEleSFSystNames, pOSF::kEleSFSystNames + pOSF::kNEleSFSysts);
         const int nSyst = (int)gSystNames.size();
         const std::string plotsBase = isElec ? "./plots/Elec" : "./plots";
         const std::string outDir = plotsBase + "/syst_shapes/" + disc;
@@ -963,7 +968,7 @@ void syst_shapes(const char *disc = "leppt_mt40")
                               100 * (sumUp[0][p] / n0 - 1), 100 * (sumDn[0][p] / n0 - 1),
                               100 * (sumUp[1][p] / n0 - 1), 100 * (sumDn[1][p] / n0 - 1),
                               100 * (sumUp[2][p] / n0 - 1), 100 * (sumDn[2][p] / n0 - 1)) << "\n";
-            // lepton-SF families (muon channel): (b) IS their inclusive shift -- one
+            // lepton-SF families (muSF / eleSF): (b) IS their inclusive shift -- one
             // coherent variation of a normalization factor, nothing divided out
             for (int is = 3; is < nSyst; ++is)
                 std::cout << "[INCL]   " << "        (b) "

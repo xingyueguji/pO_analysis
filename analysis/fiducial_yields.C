@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "../plotting/disc_variants.h" // pODisc::GenFid: disc -> gen fiducial set
+
 // =============================================================================
 // fiducial_yields.C -- the ACCEPTANCE-CORRECTED yields of one simultaneous fit
 // (2026-09-22):
@@ -32,10 +34,12 @@
 // BACKWARD one at ~ 1.9. Measured on the grand fit's own r's (i.e. IDENTICAL
 // physics for both flavours): the count-based R_FB of the mu and e yields
 // differ by up to 60% (0.67 vs 1.11, 1.38 vs 0.84), and A_ch by up to 0.015.
-// sigma_gen is the SAME pooled mu+e gen fiducial for every fit (skim/gen_xsec.C:
-// bare lepton pT > 25 GeV, |eta_lab| < 2.4), so these yields sit in ONE
-// fiducial volume: comparable between the mu-only, e-only and grand fits, and
-// the level at which the theory curves are defined.
+// sigma_gen is the SAME pooled mu+e gen fiducial for every fit of one
+// discriminant (skim/gen_xsec.C: bare lepton pT > 25 GeV, |eta_lab| < 2.4, and
+// since 2026-10-13 m_T(l, nu) > 40 for leppt_mt40 -- pODisc::GenFid picks the
+// set), so these yields sit in ONE fiducial volume: comparable between the
+// mu-only, e-only and grand fits, and the level at which the theory curves
+// are defined.
 //
 // POLICY (user, 2026-09-22): EVERY observable -- sigma, A_ch, R_FB, for the
 // grand fit and the per-flavour ones -- is built from r x sigma_gen, NEVER
@@ -48,10 +52,10 @@
 //         covariance of extract_pO_simfit.C -- read by AXIS LABEL; older
 //         extractions without it fall back to h_cov_yield[_FB][_stat]/(S S),
 //         then to the diagonal, and say so), and skim/gen_xsec.root
-//         (h_gen_sig_W{p,m}[_FB]).
+//         (h_gen_sig_W{p,m}<set>[_FB], <set> = pODisc::GenFid(disc)).
 // Output: one ROOT file per fit, e.g. ../skim/rootfile/fidyields_simfit_mu_<disc>.root
 // Driven by analysis/run_observables.sh; by hand:
-//   root -l -b -q 'fiducial_yields.C+("<tag>_W_yields.csv","<tag>_fitted_yields.root","out.root")'
+//   root -l -b -q 'fiducial_yields.C+("<tag>_W_yields.csv","<tag>_fitted_yields.root","out.root","<disc>")'
 // =============================================================================
 
 namespace
@@ -142,8 +146,13 @@ bool ReadCovFromYield(TFile *f, const char *name, const double S[24], double C[2
 void fiducial_yields(const char *yieldsCsv,        // <tag>_W_yields.csv of the fit
                      const char *fittedYieldsRoot, // <tag>_fitted_yields.root of the fit
                      const char *outFile,
+                     const char *disc,             // met | leppt_mt40 -> the gen fiducial set (no default)
                      const char *genFile = "../skim/rootfile/gen_xsec.root")
 {
+    TString gtag, glabel;
+    if (!pODisc::GenFid(disc, gtag, glabel)) return;
+    std::cout << "[fiducial_yields] disc " << disc << ": gen fiducial set '" << gtag
+              << "' (" << glabel << ")\n";
     TFile *fG = TFile::Open(genFile, "READ");
     TFile *fY = TFile::Open(fittedYieldsRoot, "READ");
     if (!fG || fG->IsZombie() || !fY || fY->IsZombie())
@@ -162,11 +171,12 @@ void fiducial_yields(const char *yieldsCsv,        // <tag>_W_yields.csv of the 
         const bool fb = (ib == 1);
         const TString sfx = fb ? "_FB" : "";
         // gen fiducial sigma of this binning, [Wp_y0..11, Wm_y0..11]
-        TH1D *hp = (TH1D *)fG->Get(TString("h_gen_sig_Wp") + sfx);
-        TH1D *hm = (TH1D *)fG->Get(TString("h_gen_sig_Wm") + sfx);
+        TH1D *hp = (TH1D *)fG->Get(TString("h_gen_sig_Wp") + gtag + sfx);
+        TH1D *hm = (TH1D *)fG->Get(TString("h_gen_sig_Wm") + gtag + sfx);
         if (!hp || !hm || hp->GetNbinsX() != 12 || hm->GetNbinsX() != 12)
         {
-            std::cerr << "[ERROR] no 12-bin h_gen_sig_W{p,m}" << sfx << " in " << genFile << "\n";
+            std::cerr << "[ERROR] no 12-bin h_gen_sig_W{p,m}" << gtag << sfx << " in " << genFile
+                      << " (re-run skim/run_gen_xsec.sh)\n";
             continue;
         }
         double G[24], C[24][24], Cs[24][24];

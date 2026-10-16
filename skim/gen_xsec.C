@@ -19,61 +19,75 @@
 // The mu and e samples are two statistically independent estimates of the SAME
 // distribution (lepton universality), so both files are accumulated together.
 //
-// Gen lepton choice: highest-pT gen lepton of the sample's flavour and charge
-// WITH a W (|pdg|=24) ancestor; if the ntuple's mother chain never reaches a W
-// (counted + warned), fall back to the highest-pT flavour+charge match --
-// for exclusive W->l nu samples that is the decay lepton either way.
+// W GEN SOURCE (2026-10-13): the EventTree mc* block (ggHiNtuplizer), NOT
+// HiGenParticleAna/hi. The mc* block stores the W itself (status 62) and its
+// decay lepton and neutrino with direct parentage (mcMomPID = +-24) and NO
+// pT/eta filter; hi is filtered at pT > 5, |eta| < 2.5 and stores no boson
+// (every lepton has motherIdx = -999). For the pT/eta fiducial the two give the
+// same lepton (verified 2026-09-01; the base set below must reproduce the
+// pre-2026-10-13 numbers), but the m_T cut needs the NEUTRINO, which hi drops
+// whenever it is forward: 22% (W+) / 9% (W-) of the events with a fiducial
+// m_T > 40 lepton. Lepton = the status-1 (bare, post-FSR) lepton of the
+// sample's flavour and charge whose mother is the W (or, for an FSR copy the
+// ntuplizer keeps separately, ~0.1% of events, whose grandmother is);
+// neutrino = the same with |pdg| = flavour + 1 (exactly one of each per event,
+// measured). The Z below stays on hi: it needs no neutrino, and hi is complete
+// inside its filter, which contains the whole Z fiducial.
 //
-// FIDUCIAL definition (2026-08-12): the primary histograms apply the gen-level
-// twin of the reco selection cuts -- lepton pT > kFidPtMin (= the skim's
-// nominal leading-lepton cut, 25 GeV) with |eta_lab| < 2.4 implicit in the
-// binning window. That makes sigma_i a FIDUCIAL cross section, so the fitted
-// signal strength converts directly: sigma_meas,i = r_i * sigma_i^gen,fid
-// (= N_fit,i / L / (A*eps)_MC,i -- algebraically identical to the yield-based
-// extraction with MC eff/acc, but kA_O and kSigma_* cancel between r and
-// sigma_gen). The lepton is the BARE post-FSR gen lepton (ntuple gen
-// collection); no m_T cut in the fiducial even for the leppt_mt40 variant --
-// ONE fiducial definition, the m_T-cut efficiency stays inside eps.
+// FIDUCIAL definition (2026-08-12; two SETS since 2026-10-13). Both sets apply
+// the gen-level twin of the reco selection cuts -- bare lepton pT > kFidPtMin
+// (= the skim's nominal leading-lepton cut, 25 GeV) with |eta_lab| < 2.4
+// implicit in the binning window -- and differ only in the m_T cut:
+//     ""      no m_T cut                                    -> the met fit
+//     "_mt40" m_T(l, nu) > pOSkim::kPtDiscMtCut (40 GeV)    -> the leppt_mt40 fit
+// with m_T from the W's own lepton and neutrino (not a "gen MET": that would
+// add neutrinos from heavy-flavour decays and the UE, which no fixed-order
+// calculation contains). Each discriminant is measured in the fiducial volume
+// of its own reco selection (plotting/disc_variants.h::GenFid is the map), so
+// the m_T > 40 acceptance (~0.96) is no longer extrapolated with the MC for
+// leppt_mt40; what remains is the reco-gen migration across 40 GeV inside eps.
+// sigma_i is a FIDUCIAL cross section, so the fitted signal strength converts
+// directly: sigma_meas,i = r_i * sigma_i^gen,fid (= N_fit,i / L / (A*eps)_MC,i
+// -- algebraically identical to the yield-based extraction with MC eff/acc,
+// but kA_O and kSigma_* cancel between r and sigma_gen).
 //
-// Output: rootfile/gen_xsec.root
-//   h_gen_sig_{Wp,Wm}      (lab edges;  bin content = per-flavour FIDUCIAL
-//                           sigma_i in nb, gen lepton pT > 25)
-//   h_gen_sig_{Wp,Wm}_FB   (FB edges;   same content convention)
-//   h_gen_tot_{Wp,Wm}[_FB] (reference:  NO pT cut -- the pre-2026-08-12
-//                           definition; NB "tot" is NOT a true no-cut sigma:
-//                           the ntuple gen collection is itself FILTERED at
-//                           pT > 5 GeV and |eta| < 2.5 (measured 2026-08-12),
-//                           so fid/tot is a pT>25 / pT>5 ratio, not acceptance)
-//   h_gen_sig_Z            (2026-09-15; ONE bin = the Z->ll FIDUCIAL sigma in
-//                           nb, per flavour: gen twin of the skim's dilepton
-//                           selection -- lead pT > 15, sub > 10, |eta| < 2.4,
-//                           60 < m_ll < 120. The fit has ONE global DY scale
-//                           r_Z, so sigma_Z = r_Z * h_gen_sig_Z is the Z-axis
-//                           of the (sigma_W, sigma_Z) plane; nothing to bin.)
+// Output: rootfile/gen_xsec.root, <set> = "" | "_mt40"
+//   h_gen_sig_{Wp,Wm}<set>      (lab edges; bin content = per-flavour FIDUCIAL
+//                                sigma_i in nb)
+//   h_gen_sig_{Wp,Wm}<set>_FB   (FB edges;  same content convention)
+//   h_gen_sig_{Wp,Wm}<set>[_FB]_epps21  (the 107 EPPS21 members, see MemAccum)
+//   h_gen_tot_{Wp,Wm}[_FB]      (reference: NO pT and no m_T cut, the lepton in
+//                                the |eta_lab| < 2.4 window. Before 2026-10-13
+//                                this came from the FILTERED hi tree, i.e. it
+//                                was a pT > 5 sigma; now it is the true one)
+//   h_gen_sig_Z                 (2026-09-15; ONE bin = the Z->ll FIDUCIAL sigma
+//                                in nb, per flavour: gen twin of the skim's
+//                                dilepton selection -- lead pT > 15, sub > 10,
+//                                |eta| < 2.4, 60 < m_ll < 120. The fit has ONE
+//                                global DY scale r_Z, so sigma_Z = r_Z *
+//                                h_gen_sig_Z is the Z-axis of the
+//                                (sigma_W, sigma_Z) plane; nothing to bin.
+//                                The same for both W sets.)
+// plus the plain-text sidecars output/gen_xsec_fid<set>.txt (see the end).
 //
-// The gen filter is why 25-37% of events report "no gen lepton" below: those
-// leptons are below 5 GeV or beyond |eta| = 2.5 -- outside the fiducial either
-// way, so sigma_fid is unaffected (every pT > 25, |eta| < 2.4 lepton IS stored)
-// and the Sum(w) denominator still runs over ALL events.
-// Sumw2 carries the MC-stat error. Consumed by
-// plotting/xsec_fiducial.C::xsec_fiducial_comb, which draws 2 x sigma_i
-// (= mu+e summed) next to the reco-level expectation and the post-fit points.
-// Discriminant-independent: produce ONCE, serves met/leppt/leppt_mt40 alike.
+// The Sum(w) denominator runs over ALL events. Sumw2 carries the MC-stat
+// error. Consumed by analysis/fiducial_yields.C and plotting/xsec_{fiducial,
+// contour,summary}.C, each picking the set of its discriminant.
 //
-//   cd skim/ && root -l -b -q 'gen_xsec.C+'
+//   cd skim/ && ./run_gen_xsec.sh        (log: logs/gen_xsec.log)
 // =============================================================================
 #include "skim_common.h"
 #include "mc_norm.h"
 #include "lhe_index.h"   // pOLhe: the EPPS21 member weights (gen-level variations)
 
 #include "TFile.h"
-#include "TInterpreter.h"
 #include "TTree.h"
 #include "TH1D.h"
 #include "TH2D.h"
 #include "TLorentzVector.h"
 #include "TString.h"
 #include "TSystem.h"
+#include "TVector2.h"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -83,6 +97,23 @@ namespace {
 
 // Gen-level fiducial lepton-pT cut = the skim's nominal leading-lepton cut.
 constexpr double kFidPtMin = 25.0;
+
+// The W fiducial SETS (2026-10-13; see the header). The tag is appended to the
+// charge in every histogram name (h_gen_sig_Wp_mt40, h_gen_sig_Wp_mt40_FB,
+// h_gen_sig_Wp_mt40_FB_epps21) and to the sidecar name; set s applies the
+// m_T cut iff kFidMt[s]. plotting/disc_variants.h::GenFid maps a discriminant
+// to its tag -- keep the two in step.
+constexpr int kNFid = 2;
+const char *const kFidTag[kNFid] = {"", "_mt40"};
+const bool        kFidMt[kNFid]  = {false, true};
+
+// the cuts of set s, for titles and printouts (from the constants, never typed)
+TString FidCuts(int s, bool latex)
+{
+  TString t = TString::Format(latex ? "p_{T}>%.0f" : "pT > %.0f", kFidPtMin);
+  if (kFidMt[s]) t += TString::Format(latex ? ", m_{T}>%.0f" : ", mT > %.0f", pOSkim::kPtDiscMtCut);
+  return t;
+}
 
 // ---- Z -> ll gen fiducial (2026-09-15) --------------------------------------
 // The gen twin of the skim's Z dilepton selection (skim.C: skim_Zmm/skim_Zee
@@ -119,8 +150,8 @@ constexpr int kNEp = pOLhe::kNMembers[pOLhe::kEpps21];   // 107
 // many TH2D::Fill calls, so sum here and fill the histograms once at the end.
 struct MemAccum
 {
-  double lab[pOSkim::kNY][kNEp];
-  double fb [pOSkim::kNY][kNEp];
+  double lab[kNFid][pOSkim::kNY][kNEp]; // W, per fiducial set
+  double fb [kNFid][pOSkim::kNY][kNEp];
   double fid[kNEp];                 // the Z's single fiducial bin
   double all[kNEp];                 // over ALL events (the member total sigma)
   double allNom = 0;                // Sumw over all events, member 0 == nominal
@@ -129,40 +160,75 @@ struct MemAccum
   bool warned = false;
   MemAccum()
   {
-    for (int i = 0; i < pOSkim::kNY; ++i)
-      for (int m = 0; m < kNEp; ++m) { lab[i][m] = 0; fb[i][m] = 0; }
+    for (int s = 0; s < kNFid; ++s)
+      for (int i = 0; i < pOSkim::kNY; ++i)
+        for (int m = 0; m < kNEp; ++m) { lab[s][i][m] = 0; fb[s][i][m] = 0; }
     for (int m = 0; m < kNEp; ++m) { fid[m] = 0; all[m] = 0; }
   }
 };
 
+// The W daughter of |pdg| == absPdg in the EventTree mc* block (2026-10-13):
+// status 1 (for a charged lepton = the BARE, post-FSR one), mother the W, or a
+// same-flavour copy whose mother is the W (the ntuplizer keeps the pre-FSR
+// lepton as a separate entry in ~0.1% of events; the status-1 copy then has
+// mcMomPID = the lepton and mcGMomPID = the W). signedPdg != 0 also fixes the
+// charge (a charged lepton with pdg > 0 is NEGATIVE). Highest pT if several;
+// -1 if none.
+int FindWDaughter(const std::vector<int> &pid, const std::vector<int> &st,
+                  const std::vector<int> &mom, const std::vector<int> &gmom,
+                  const std::vector<float> &pt, int absPdg, int signedPdg)
+{
+  const size_t n = std::min({pid.size(), st.size(), mom.size(), gmom.size(), pt.size()});
+  int best = -1;
+  for (size_t i = 0; i < n; ++i)
+  {
+    if (std::abs(pid[i]) != absPdg) continue;
+    if (signedPdg != 0 && pid[i] != signedPdg) continue;
+    if (st[i] != 1) continue;
+    const int m = std::abs(mom[i]);
+    if (m != 24 && !(m == absPdg && std::abs(gmom[i]) == 24)) continue;
+    if (best < 0 || pt[i] > pt[best]) best = (int)i;
+  }
+  return best;
+}
+
 // Accumulate one W MC file into the (shared) weighted gen-eta histograms:
-// hLab/hFB get the FIDUCIAL fill (pT > kFidPtMin), hLabTot/hFBTot every lepton.
+// hLab[s]/hFB[s] get the FIDUCIAL fill of set s, hLabTot/hFBTot every lepton
+// (no pT, no m_T cut). Reads the EventTree mc* block -- see the header.
 bool AccumulateGen(const char *fname, int flavPdg, int wantChg,
-                   TH1D *hLab, TH1D *hFB, TH1D *hLabTot, TH1D *hFBTot,
+                   TH1D *const *hLab, TH1D *const *hFB, TH1D *hLabTot, TH1D *hFBTot,
                    double &sumw, long long &nraw,
-                   long long &nNoLep, long long &nNoWAnc,
+                   long long &nNoLep, long long &nNoNu,
                    MemAccum *ma)
 {
   TFile *f = TFile::Open(fname, "READ");
   if (!f || f->IsZombie()) { std::cerr << "[ERROR] cannot open " << fname << "\n"; return false; }
-  TTree *tGen = (TTree *)f->Get("HiGenParticleAna/hi");
+  TTree *tGen = (TTree *)f->Get("ggHiNtuplizer/EventTree");
   TTree *tHi  = (TTree *)f->Get("hiEvtAnalyzer/HiTree");
   if (!tGen || !tHi)
-  { std::cerr << "[ERROR] missing HiGenParticleAna/hi or hiEvtAnalyzer/HiTree in " << fname << "\n"; f->Close(); return false; }
+  { std::cerr << "[ERROR] missing ggHiNtuplizer/EventTree or hiEvtAnalyzer/HiTree in " << fname << "\n"; f->Close(); return false; }
   const Long64_t n = tGen->GetEntries();
   if (tHi->GetEntries() != n)
-  { std::cerr << "[ERROR] gen/HiTree entry mismatch in " << fname << "\n"; f->Close(); return false; }
+  { std::cerr << "[ERROR] EventTree/HiTree entry mismatch in " << fname << "\n"; f->Close(); return false; }
 
-  // fast-skim discipline: disable everything, enable only what is read
-  std::vector<float> *pt = nullptr, *eta = nullptr;
-  std::vector<int> *chg = nullptr, *pdg = nullptr;
-  std::vector<std::vector<int>> *motherIdx = nullptr;
+  // fast-skim discipline: disable everything, enable only what is read (a
+  // missing mc* branch is FATAL -- never a silently empty gen collection)
+  std::vector<int> *mcPID = nullptr, *mcStatus = nullptr, *mcMomPID = nullptr, *mcGMomPID = nullptr;
+  std::vector<float> *mcPt = nullptr, *mcEta = nullptr, *mcPhi = nullptr;
   tGen->SetBranchStatus("*", 0);
-  tGen->SetBranchStatus("pt", 1);        tGen->SetBranchAddress("pt", &pt);
-  tGen->SetBranchStatus("eta", 1);       tGen->SetBranchAddress("eta", &eta);
-  tGen->SetBranchStatus("chg", 1);       tGen->SetBranchAddress("chg", &chg);
-  tGen->SetBranchStatus("pdg", 1);       tGen->SetBranchAddress("pdg", &pdg);
-  tGen->SetBranchStatus("motherIdx", 1); tGen->SetBranchAddress("motherIdx", &motherIdx);
+  const char *bInt[4] = {"mcPID", "mcStatus", "mcMomPID", "mcGMomPID"};
+  std::vector<int> **pInt[4] = {&mcPID, &mcStatus, &mcMomPID, &mcGMomPID};
+  const char *bFlt[3] = {"mcPt", "mcEta", "mcPhi"};
+  std::vector<float> **pFlt[3] = {&mcPt, &mcEta, &mcPhi};
+  for (int b = 0; b < 7; ++b)
+  {
+    const char *bn = (b < 4) ? bInt[b] : bFlt[b - 4];
+    if (!pOSkim::HasBranch(tGen, bn))
+    { std::cerr << "[FATAL] gen_xsec: no branch " << bn << " in the EventTree of " << fname << "\n"; f->Close(); return false; }
+    tGen->SetBranchStatus(bn, 1);
+    if (b < 4) tGen->SetBranchAddress(bn, pInt[b]);
+    else       tGen->SetBranchAddress(bn, pFlt[b - 4]);
+  }
   Float_t weight = 1.f;
   std::vector<float> *ttbar_w = nullptr;
   tHi->SetBranchStatus("*", 0);
@@ -190,45 +256,44 @@ bool AccumulateGen(const char *fname, int flavPdg, int wantChg,
       if (!okMem) ++ma->nNoLhe;
       else { ma->allNom += w; for (int m = 0; m < kNEp; ++m) ma->all[m] += mw.w[pOLhe::kEpps21][m]; }
     }
-    if (!pt || !eta || !chg || !pdg || !motherIdx) continue;
-    const size_t ng = std::min({pt->size(), eta->size(), chg->size(),
-                                pdg->size(), motherIdx->size()});
-    int best = -1, bestAnc = -1;
-    for (size_t i = 0; i < ng; ++i)
-    {
-      if (std::abs(pdg->at(i)) != flavPdg) continue;
-      if (chg->at(i) != wantChg) continue;
-      if (best < 0 || pt->at(i) > pt->at(best)) best = (int)i;
-      if (pOSkim::HasAncestor((int)i, 24, pdg, motherIdx))
-        if (bestAnc < 0 || pt->at(i) > pt->at(bestAnc)) bestAnc = (int)i;
-    }
-    const int use = (bestAnc >= 0) ? bestAnc : best;
-    if (bestAnc < 0 && best >= 0) ++nNoWAnc; // fallback (mother chain w/o W)
-    if (use < 0) { ++nNoLep; continue; }     // no gen lepton of this flavour+charge
+    if (!mcPID || !mcStatus || !mcMomPID || !mcGMomPID || !mcPt || !mcEta || !mcPhi) { ++nNoLep; continue; }
+    // the W's charged lepton (pdg < 0 is the POSITIVE one) and its neutrino
+    const int iL = FindWDaughter(*mcPID, *mcStatus, *mcMomPID, *mcGMomPID, *mcPt,
+                                 flavPdg, -wantChg * flavPdg);
+    if (iL < 0) { ++nNoLep; continue; } // no W lepton of this flavour+charge (expected: never)
+    const int iN = FindWDaughter(*mcPID, *mcStatus, *mcMomPID, *mcGMomPID, *mcPt,
+                                 flavPdg + 1, 0);
+    if (iN < 0) ++nNoNu;                // then it fails the m_T sets only (expected: never)
+    const double lepPt = mcPt->at(iL);
     // [NOTICE] Sign flip: p-going (-Z) defined as forward -- MUST match the
     // reco convention in skim.C (`const double y = -{mu,ele}Eta->at(iLead)`),
     // or gen bin i pairs with the MIRRORED reco region y_i. Caught 2026-08-12
     // by the per-bin (A x eps) diagnostic: mirrored pairing made A x eps
     // charge-dependent (mu W- ran 1.27 -> 0.73 across eta) instead of the
     // charge-symmetric detector response it must be.
-    const double y = -eta->at(use);
+    const double y = -mcEta->at(iL);
     hLabTot->Fill(y, w);
     hFBTot->Fill(y, w);
-    if (pt->at(use) > kFidPtMin)
+    if (lepPt <= kFidPtMin) continue;
+    // m_T of the W's own lepton and neutrino (the same formula as the reco
+    // m_T in skim.C, with the neutrino in place of the PF MET)
+    TVector2 nu;
+    if (iN >= 0) nu.SetMagPhi(mcPt->at(iN), mcPhi->at(iN));
+    const double mt = (iN >= 0) ? pOSkim::TransverseMass(lepPt, mcPhi->at(iL), nu) : -1.0;
+    // bin index from the histogram itself -- never a second copy of the edges
+    const int bl = hLab[0]->GetXaxis()->FindFixBin(y), bf = hFB[0]->GetXaxis()->FindFixBin(y);
+    for (int s = 0; s < kNFid; ++s)
     {
-      hLab->Fill(y, w);
-      hFB->Fill(y, w);
+      if (kFidMt[s] && !(mt > pOSkim::kPtDiscMtCut)) continue;
+      hLab[s]->Fill(y, w);
+      hFB[s]->Fill(y, w);
       if (okMem)
-      {
-        // bin index from the histogram itself -- never a second copy of the edges
-        const int bl = hLab->GetXaxis()->FindFixBin(y), bf = hFB->GetXaxis()->FindFixBin(y);
         for (int m = 0; m < kNEp; ++m)
         {
           const double wm = mw.w[pOLhe::kEpps21][m];
-          if (bl >= 1 && bl <= pOSkim::kNY) ma->lab[bl - 1][m] += wm;
-          if (bf >= 1 && bf <= pOSkim::kNY) ma->fb [bf - 1][m] += wm;
+          if (bl >= 1 && bl <= pOSkim::kNY) ma->lab[s][bl - 1][m] += wm;
+          if (bf >= 1 && bf <= pOSkim::kNY) ma->fb [s][bf - 1][m] += wm;
         }
-      }
     }
   }
   f->Close();
@@ -328,8 +393,8 @@ void gen_xsec()
   using namespace pOSkim;
   TH1::SetDefaultSumw2(kTRUE);
   gSystem->mkdir("rootfile", kTRUE);
-  // motherIdx is a vector<vector<int>> branch -- same dictionary the skim needs
-  gInterpreter->GenerateDictionary("vector<vector<int> >", "vector");
+  // (no vector<vector<int>> dictionary any more: the W reads the flat mc*
+  //  block since 2026-10-13, and the Z never read hi's motherIdx)
 
   const char *cname[2]     = {"Wp", "Wm"};
   const SampleType samp[2] = {kWp, kWm};
@@ -341,26 +406,31 @@ void gen_xsec()
          " sigma_i = A * sigma * Sumw_i/Sumw_all\n",
          pONorm::kA_O, sigNN[0], sigNN[1]);
 
-  // kept for the plain-text sidecar written at the end (see below)
-  TH1D *keepLab[2] = {nullptr, nullptr}, *keepFB[2] = {nullptr, nullptr};
+  // kept for the plain-text sidecars written at the end (see below)
+  TH1D *keepLab[2][kNFid] = {}, *keepFB[2][kNFid] = {};
 
   for (int ic = 0; ic < 2; ++ic)
   {
     fout->cd();
-    TH1D *hLab = new TH1D(Form("h_gen_sig_%s", cname[ic]),
-                          Form("gen fiducial d#sigma bins (p_{T}>%.0f), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", kFidPtMin, cname[ic]),
-                          kNY, kYEdges);
-    TH1D *hFB = new TH1D(Form("h_gen_sig_%s_FB", cname[ic]),
-                         Form("gen fiducial d#sigma bins (FB edges, p_{T}>%.0f), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", kFidPtMin, cname[ic]),
-                         kNY, kYEdgesFB);
+    TH1D *hLab[kNFid], *hFB[kNFid];
+    for (int s = 0; s < kNFid; ++s)
+    {
+      const TString cuts = FidCuts(s, true);
+      hLab[s] = new TH1D(Form("h_gen_sig_%s%s", cname[ic], kFidTag[s]),
+                         Form("gen fiducial d#sigma bins (%s), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cuts.Data(), cname[ic]),
+                         kNY, kYEdges);
+      hFB[s] = new TH1D(Form("h_gen_sig_%s%s_FB", cname[ic], kFidTag[s]),
+                        Form("gen fiducial d#sigma bins (FB edges, %s), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cuts.Data(), cname[ic]),
+                        kNY, kYEdgesFB);
+    }
     TH1D *hLabTot = new TH1D(Form("h_gen_tot_%s", cname[ic]),
-                             Form("gen d#sigma bins (no p_{T} cut), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cname[ic]),
+                             Form("gen d#sigma bins (no p_{T}, no m_{T} cut), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cname[ic]),
                              kNY, kYEdges);
     TH1D *hFBTot = new TH1D(Form("h_gen_tot_%s_FB", cname[ic]),
-                            Form("gen d#sigma bins (FB edges, no p_{T} cut), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cname[ic]),
+                            Form("gen d#sigma bins (FB edges, no p_{T}, no m_{T} cut), %s (per flavour);#eta^{l}_{lab};#sigma_{i} (nb)", cname[ic]),
                             kNY, kYEdgesFB);
 
-    double sumw = 0; long long nraw = 0, nNoLep = 0, nNoWAnc = 0;
+    double sumw = 0; long long nraw = 0, nNoLep = 0, nNoNu = 0;
     MemAccum ma;
     const char *flavs[2] = {"mu", "ele"};
     for (int fl = 0; fl < 2; ++fl)
@@ -368,71 +438,77 @@ void gen_xsec()
       const int flavPdg = (fl == 0) ? 13 : 11;
       SampleFileInfo info = ResolveMCSample(samp[ic], flavs[fl]);
       printf("[gen_xsec] %s %-3s <- %s\n", cname[ic], flavs[fl], info.fname.c_str());
-      AccumulateGen(info.fname.c_str(), flavPdg, wantChg[ic], hLab, hFB,
-                    hLabTot, hFBTot, sumw, nraw, nNoLep, nNoWAnc, &ma);
+      if (!AccumulateGen(info.fname.c_str(), flavPdg, wantChg[ic], hLab, hFB,
+                         hLabTot, hFBTot, sumw, nraw, nNoLep, nNoNu, &ma))
+      { std::cerr << "[ERROR] " << cname[ic] << " " << flavs[fl] << " not accumulated -- " << cname[ic] << " NOT written\n"; nraw = 0; break; }
     }
     if (nraw <= 0 || sumw <= 0) { std::cerr << "[ERROR] no events accumulated for " << cname[ic] << "\n"; continue; }
 
     const double sigAll = pONorm::kA_O * sigNN[ic]; // all eta, per flavour, pO-scaled
     const double scale  = sigAll / sumw;            // weighted-fraction normalization
-    hLab->Scale(scale);
-    hFB->Scale(scale);
+    for (int s = 0; s < kNFid; ++s) { hLab[s]->Scale(scale); hFB[s]->Scale(scale); }
     hLabTot->Scale(scale);
     hFBTot->Scale(scale);
 
     printf("[gen_xsec] %s: Nraw = %lld, sigma(all eta) = %.2f nb,"
-           " sigma(|eta_lab|<2.4) = %.2f nb, sigma_fid(pT>%.0f, |eta_lab|<2.4) = %.2f nb"
-           " (per flavour, pO-scaled; pT-acceptance = %.3f)\n",
-           cname[ic], nraw, sigAll, hLabTot->Integral(), kFidPtMin, hLab->Integral(),
-           hLabTot->Integral() > 0 ? hLab->Integral() / hLabTot->Integral() : 0.0);
+           " sigma(|eta_lab|<2.4) = %.2f nb (per flavour, pO-scaled)\n",
+           cname[ic], nraw, sigAll, hLabTot->Integral());
+    for (int s = 0; s < kNFid; ++s)
+      printf("[gen_xsec] %s: set '%s' sigma_fid(%s, |eta_lab|<2.4) = %.2f nb"
+             " (lab), %.2f nb (FB window); /sigma(|eta_lab|<2.4) = %.4f%s\n",
+             cname[ic], kFidTag[s], FidCuts(s, false).Data(), hLab[s]->Integral(), hFB[s]->Integral(),
+             hLabTot->Integral() > 0 ? hLab[s]->Integral() / hLabTot->Integral() : 0.0,
+             s > 0 ? Form(", /set '%s' = %.4f", kFidTag[0], hLab[s]->Integral() / hLab[0]->Integral()) : "");
     if (nNoLep > 0)
-      printf("[gen_xsec][WARN] %s: %lld events without a gen %s of charge %+d (skipped)\n",
-             cname[ic], nNoLep, "lepton", wantChg[ic]);
-    if (nNoWAnc > 0)
-      printf("[gen_xsec][WARN] %s: %lld events used the highest-pT fallback (no W ancestor in the mother chain)\n",
-             cname[ic], nNoWAnc);
+      printf("[gen_xsec][WARN] %s: %lld events without a W lepton of charge %+d in the mc* block (skipped)\n",
+             cname[ic], nNoLep, wantChg[ic]);
+    if (nNoNu > 0)
+      printf("[gen_xsec][WARN] %s: %lld events without the W neutrino in the mc* block (fail every m_T set)\n",
+             cname[ic], nNoNu);
 
     fout->cd();
-    hLab->Write("", TObject::kOverwrite);
-    hFB->Write("", TObject::kOverwrite);
+    for (int s = 0; s < kNFid; ++s)
+    {
+      hLab[s]->Write("", TObject::kOverwrite);
+      hFB[s]->Write("", TObject::kOverwrite);
+      keepLab[ic][s] = hLab[s]; keepFB[ic][s] = hFB[s];
+    }
     hLabTot->Write("", TObject::kOverwrite);
     hFBTot->Write("", TObject::kOverwrite);
-    keepLab[ic] = hLab; keepFB[ic] = hFB;
 
     // ---- EPPS21 member twins of the gen fiducial sigma (2026-09-15c) -------
     // x = the rapidity bin (axis copied from the nominal), y = member index.
     // Normalized to the NOMINAL total (see the header of MemAccum) so a
     // member's own total-sigma change survives -- that spread IS the coverage
-    // plotting/xsec_contour.C scatters.
+    // plotting/xsec_contour.C scatters. One pair per fiducial set.
     if (ma.allNom > 0)
     {
       const double sc = sigAll / ma.allNom;
-      TH2D *tw[2];
-      TH1D *src[2] = {hLab, hFB};
       const char *tag[2] = {"", "_FB"};
-      for (int v = 0; v < 2; ++v)
-      {
-        tw[v] = new TH2D(Form("h_gen_sig_%s%s_epps21", cname[ic], tag[v]),
-                         Form("gen fiducial #sigma_{i} per EPPS21 member, %s%s"
-                              " (%s);#eta^{l}_{lab};member;#sigma_{i} (nb)",
-                              cname[ic], tag[v], pOLhe::kEpps21SetName),
-                         kNY, src[v]->GetXaxis()->GetXbins()->GetArray(),
-                         kNEp, -0.5, kNEp - 0.5);
-        for (int i = 0; i < kNY; ++i)
-          for (int m = 0; m < kNEp; ++m)
-            tw[v]->SetBinContent(i + 1, m + 1,
-                                 sc * (v == 0 ? ma.lab[i][m] : ma.fb[i][m]));
-        fout->cd();
-        tw[v]->Write("", TObject::kOverwrite);
-      }
-      // member 0 must reproduce the nominal histogram exactly
-      double dmax = 0;
-      for (int i = 0; i < kNY; ++i)
-        dmax = std::max(dmax, std::fabs(tw[0]->GetBinContent(i + 1, 1) - hLab->GetBinContent(i + 1)));
+      double dmax = 0; // member 0 must reproduce the nominal histograms exactly
+      for (int s = 0; s < kNFid; ++s)
+        for (int v = 0; v < 2; ++v)
+        {
+          TH1D *src = (v == 0) ? hLab[s] : hFB[s];
+          TH2D *tw = new TH2D(Form("h_gen_sig_%s%s%s_epps21", cname[ic], kFidTag[s], tag[v]),
+                              Form("gen fiducial #sigma_{i} per EPPS21 member, %s%s (%s)"
+                                   " (%s);#eta^{l}_{lab};member;#sigma_{i} (nb)",
+                                   cname[ic], tag[v], FidCuts(s, true).Data(), pOLhe::kEpps21SetName),
+                              kNY, src->GetXaxis()->GetXbins()->GetArray(),
+                              kNEp, -0.5, kNEp - 0.5);
+          for (int i = 0; i < kNY; ++i)
+            for (int m = 0; m < kNEp; ++m)
+              tw->SetBinContent(i + 1, m + 1,
+                                sc * (v == 0 ? ma.lab[s][i][m] : ma.fb[s][i][m]));
+          for (int i = 0; i < kNY; ++i)
+            dmax = std::max(dmax, std::fabs(tw->GetBinContent(i + 1, 1) - src->GetBinContent(i + 1)));
+          fout->cd();
+          tw->Write("", TObject::kOverwrite);
+        }
       double lo = 1e30, hi = -1e30;
       for (int m = 0; m < kNEp; ++m) { lo = std::min(lo, ma.all[m]); hi = std::max(hi, ma.all[m]); }
       printf("[gen_xsec] %s: EPPS21 members -> sigma_total spread %.2f..%.2f nb"
-             " (nominal %.2f); max|member0 - nominal| per bin = %.3e\n",
+             " (nominal %.2f); max|member0 - nominal| per bin (all sets, lab+FB) = %.3e\n",
              cname[ic], sigAll * lo / ma.allNom, sigAll * hi / ma.allNom, sigAll, dmax);
       if (ma.nNoLhe > 0)
         printf("[gen_xsec][WARN] %s: %lld events without a usable ttbar_w (member sums miss them)\n",
@@ -532,7 +608,7 @@ void gen_xsec()
       std::cerr << "[ERROR] no DY events accumulated -- h_gen_sig_Z not written\n";
   }
 
-  // ---- plain-text sidecar output/gen_xsec_fid.txt (2026-09-15) -------------
+  // ---- plain-text sidecars output/gen_xsec_fid<set>.txt (2026-09-15) -------
   // Same numbers as the histograms, in a form the FORK's card generator can
   // read with awk: the reparametrized workspace (sigma_W promoted to a POI for
   // the profiled (sigma_W, sigma_Z) contour) has to bake the per-bin gen
@@ -541,28 +617,37 @@ void gen_xsec()
   // the Combine inputs by the fork's sync_lxplus.sh, like the _systs.txt
   // sidecars. NB the weights are the NOMINAL-PDF gen cross sections -- the same
   // approximation xsec_fiducial_comb already makes.
+  // ONE FILE PER FIDUCIAL SET since 2026-10-13 (gen_xsec_fid.txt = no m_T cut,
+  // gen_xsec_fid_mt40.txt = m_T > 40), identical layout; the fork's
+  // run_pO_fits.sh picks the file of the fitted discriminant. The Z row is the
+  // same in both.
+  gSystem->mkdir("output", kTRUE);
+  for (int s = 0; s < kNFid; ++s)
   {
-    gSystem->mkdir("output", kTRUE);
-    std::ofstream sc("output/gen_xsec_fid.txt");
+    const TString path = TString::Format("output/gen_xsec_fid%s.txt", kFidTag[s]);
+    std::ofstream sc(path.Data());
     sc << "# gen FIDUCIAL cross sections, nb, PER LEPTON FLAVOUR -- skim/gen_xsec.C\n"
-       << "# W: bare post-FSR lepton pT > " << kFidPtMin << ", |eta_lab| < 2.4 (bin edges = pOSkim::kYEdges[_FB])\n"
+       << "# fiducial set '" << kFidTag[s] << "'\n"
+       << "# W: bare post-FSR lepton (EventTree mc* block) " << FidCuts(s, false).Data()
+       << ", |eta_lab| < 2.4 (bin edges = pOSkim::kYEdges[_FB])"
+       << (kFidMt[s] ? "; m_T from the W's lepton and neutrino" : "") << "\n"
        << "# Z: lead pT > " << kZPtLead << ", sub > " << kZPtSub << ", |eta| < " << kZEtaMax
        << ", " << kZMassLo << " < m_ll < " << kZMassHi << "\n"
        << "# columns: binning charge ybin sigma_nb   (binning: lab | fb | incl)\n";
     for (int ic = 0; ic < 2; ++ic)
     {
-      if (keepLab[ic])
+      if (keepLab[ic][s])
         for (int i = 0; i < kNY; ++i)
           sc << "lab " << cname[ic] << " " << i << " "
-             << Form("%.6f", keepLab[ic]->GetBinContent(i + 1)) << "\n";
-      if (keepFB[ic])
+             << Form("%.6f", keepLab[ic][s]->GetBinContent(i + 1)) << "\n";
+      if (keepFB[ic][s])
         for (int i = 0; i < kNY; ++i)
           sc << "fb " << cname[ic] << " " << i << " "
-             << Form("%.6f", keepFB[ic]->GetBinContent(i + 1)) << "\n";
+             << Form("%.6f", keepFB[ic][s]->GetBinContent(i + 1)) << "\n";
     }
     if (sigZfid > 0) sc << "incl Z 0 " << Form("%.6f", sigZfid) << "\n";
     sc.close();
-    std::cout << "[gen_xsec] wrote output/gen_xsec_fid.txt (the fork's card generator reads this)\n";
+    std::cout << "[gen_xsec] wrote " << path << " (the fork's card generator reads this)\n";
   }
 
   fout->Close();

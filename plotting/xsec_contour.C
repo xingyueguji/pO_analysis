@@ -175,14 +175,17 @@ bool readPoiCov(TFile *f, const char *name, double C[25][25])
 // Scattering them shows the nPDF coverage of the prediction directly -- no
 // Hessian combination, just where the members actually land.
 // Returns the number of variation points, 0 when the twins are absent.
-int epps21Scatter(const char *genFile, bool isFB, TGraph *&g,
+int epps21Scatter(const char *genFile, const char *disc, bool isFB, TGraph *&g,
                   double &wLo, double &wHi, double &zLo, double &zHi)
 {
     g = nullptr;
+    TString gtag, glabel;                       // the discriminant's gen fiducial set
+    if (!pODisc::GenFid(disc, gtag, glabel)) return 0;
     TFile *f = TFile::Open(genFile, "READ");
     if (!f || f->IsZombie()) { if (f) { f->Close(); delete f; } return 0; }
-    TH2D *hp = (TH2D *)f->Get(isFB ? "h_gen_sig_Wp_FB_epps21" : "h_gen_sig_Wp_epps21");
-    TH2D *hm = (TH2D *)f->Get(isFB ? "h_gen_sig_Wm_FB_epps21" : "h_gen_sig_Wm_epps21");
+    const TString sfx = gtag + (isFB ? "_FB" : "") + "_epps21";
+    TH2D *hp = (TH2D *)f->Get("h_gen_sig_Wp" + sfx);
+    TH2D *hm = (TH2D *)f->Get("h_gen_sig_Wm" + sfx);
     TH1D *hz = (TH1D *)f->Get("h_gen_sig_Z_epps21");
     if (!hp || !hm || !hz)
     {
@@ -335,6 +338,15 @@ bool profiledContours(const char *scanFile, double gZ,
     if (n < 10) { std::cerr << "[WARN] only " << n << " usable scan points in " << scanFile << "\n"; return false; }
 
     g2->SetNpx(250); g2->SetNpy(250);
+    // Bins outside the convex hull of the scan points get THIS value; TGraph2D's
+    // default is 0, i.e. "at the minimum". A complete grid's hull is the whole
+    // window, but combine writes no row for a grid point whose profile fit
+    // failed, and when that point is a CORNER of the window the hull is cut and
+    // the zero-filled sliver becomes a fake 68%/95% island (2026-10-01: the
+    // e-only lab scan lost 22 nodes on a line beyond 3 sigma, one of them the
+    // (high sigma_W, low sigma_Z) corner -> a 2nd contour piece at Gaussian
+    // d^2 = 70.8 and a "+455%" Gaussianity line). Far outside any contour level.
+    g2->SetMarginBinsContent(1.0e3);
     TH2D *h2 = (TH2D *)g2->GetHistogram();
     if (!h2) { std::cerr << "[WARN] could not interpolate the scan grid\n"; return false; }
     double levels[2] = {2.296, 5.991};                        // 68%, 95% for 2 dof
@@ -410,14 +422,21 @@ static bool LoadContourFit(const char *disc, const TString &dsuf, const TString 
     const TString sRoot = yieldsRoot ? TString(yieldsRoot) : pOFit::SummaryFile(dsuf, cf.spec, "fitted_yields.root");
 
     // ---- 1) gen fiducial cross sections --------------------------------------
+    // the set of the discriminant (pODisc::GenFid: m_T > 40 for leppt_mt40).
+    // NB the --contour scan bakes the SAME numbers in (skim/output/
+    // gen_xsec_fid<tag>.txt); a scan made with the other set fails the
+    // staleness gate below, as it must.
+    TString gtag, glabel;
+    if (!pODisc::GenFid(disc, gtag, glabel)) return false;
     TFile *fG = TFile::Open(genFile, "READ");
     if (!fG || fG->IsZombie())
-    { std::cerr << "[ERROR] cannot open " << genFile << " (run skim/gen_xsec.C)\n"; return false; }
-    TH1D *hGp = (TH1D *)fG->Get(isFB ? "h_gen_sig_Wp_FB" : "h_gen_sig_Wp");
-    TH1D *hGm = (TH1D *)fG->Get(isFB ? "h_gen_sig_Wm_FB" : "h_gen_sig_Wm");
+    { std::cerr << "[ERROR] cannot open " << genFile << " (run skim/run_gen_xsec.sh)\n"; return false; }
+    const TString sfx = gtag + (isFB ? "_FB" : "");
+    TH1D *hGp = (TH1D *)fG->Get("h_gen_sig_Wp" + sfx);
+    TH1D *hGm = (TH1D *)fG->Get("h_gen_sig_Wm" + sfx);
     TH1D *hGZ = (TH1D *)fG->Get("h_gen_sig_Z");
     if (!hGp || !hGm || hGp->GetNbinsX() != 12 || hGm->GetNbinsX() != 12)
-    { std::cerr << "[ERROR] no usable 12-bin h_gen_sig_{Wp,Wm}" << (isFB ? "_FB" : "") << " in " << genFile << "\n"; return false; }
+    { std::cerr << "[ERROR] no usable 12-bin h_gen_sig_{Wp,Wm}" << sfx << " in " << genFile << "\n"; return false; }
     if (!hGZ)
     {
         std::cerr << "[ERROR] no h_gen_sig_Z in " << genFile
@@ -640,7 +659,7 @@ static void DrawContourSingle(const ContourFit &cf, const char *disc, const TStr
     // the 106 EPPS21 member variations of that same prediction
     TGraph *gMem = nullptr;
     double mWlo = 0, mWhi = 0, mZlo = 0, mZhi = 0;
-    const int nMem = epps21Scatter(genFile, isFB, gMem, mWlo, mWhi, mZlo, mZhi);
+    const int nMem = epps21Scatter(genFile, disc, isFB, gMem, mWlo, mWhi, mZlo, mZhi);
     if (nMem > 0)
         std::cout << Form("  [EPPS21] %d member variations: sigma_W %.2f..%.2f nb (%+.1f/%+.1f%%),"
                           " sigma_Z %.3f..%.3f nb (%+.1f/%+.1f%%) around the central point\n",
@@ -967,7 +986,7 @@ void xsec_contour_WZ_flav(const char *disc = "leppt_mt40", const char *binning =
     const double tW = fits[0].tW, tZ = fits[0].tZ;
     TGraph *gMem = nullptr;
     double mWlo = 0, mWhi = 0, mZlo = 0, mZhi = 0;
-    const int nMem = epps21Scatter(genFile, isFB, gMem, mWlo, mWhi, mZlo, mZhi);
+    const int nMem = epps21Scatter(genFile, disc, isFB, gMem, mWlo, mWhi, mZlo, mZhi);
 
     // WIDE canvas: the frame on the left, every text in a panel to its right.
     // The mu and e regions sit at DIFFERENT places, so together they can cover

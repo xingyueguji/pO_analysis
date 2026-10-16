@@ -5,14 +5,26 @@ EGM electron ID-SF correctionlib file into small provenance-stamped CSV tables.
     python3 extract_electron_sf.py [electron.json.gz] [WP ...]
 
 Defaults: skim/sf/EGM/electron.json.gz (the 2025Prompt file the user added on
-2026-09-22), working points wp90iso and wp90noiso. One CSV per working point is
-written next to this script:
+2026-09-22), working points wp90iso, wp90noiso, Reco20to75 and RecoAbove75.
+One CSV per working point is written next to this script:
 
     electron_sf_2025Prompt_<WP>.csv
 
-Consumer: correction/idiso_sf_plots.C (the ID+iso SF cross-check), which
-overlays the EGM fine-binned SF on the SF we measure on W events and averages
-it over our coarse bins. Nothing in the nominal skim reads these files.
+Consumers:
+  * skim/electron_sf.h (the NOMINAL skim, since 2026-09-29): the electron MC
+    event weight carries the wp90iso ID+iso SF -- the analysis selects the
+    forest's eleMVAIdWP90 && eleMVAIsoWP90, the selection the ID+iso
+    cross-check validated against this very table (SF 0.959 +- 0.025 in pO data
+    vs 0.956). The EGM Reco SF (Reco20to75 below 75 GeV, RecoAbove75 above)
+    was applied on 2026-09-29 only; since 2026-09-30 the applied Reco factor is
+    our own pO tag-and-probe (correction/reco_sf_ele.C, one inclusive number),
+    and the Reco tables serve as that study's pp prediction and as the record
+    printed in every electron skim log (electron_sf.h kEleRecoSource).
+  * correction/idiso_sf_common.h / idiso_sf_plots.C (that cross-check), which
+    overlays the EGM fine-binned SF on the SF measured in our data.
+The Reco tables have no RecoBelow20 in 2025Prompt: when they are applied
+(kRecoEgm), skim/electron_sf.h clamps a 10-20 GeV Z leg to the 20-45 GeV bin
+and counts it.
 
 Layout of the source (correction "Electron-ID-SF", schema v2):
     category year (2025Prompt) -> category ValType -> category WorkingPoint
@@ -39,7 +51,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SRC = os.path.join(HERE, "EGM", "electron.json.gz")
-DEFAULT_WPS = ["wp90iso", "wp90noiso"]
+DEFAULT_WPS = ["wp90iso", "wp90noiso", "Reco20to75", "RecoAbove75"]
 CORRECTION = "Electron-ID-SF"
 YEAR = "2025Prompt"
 VALTYPES = ["sf", "sfup", "sfdown", "effData", "effMC", "err_stat", "err_syst"]

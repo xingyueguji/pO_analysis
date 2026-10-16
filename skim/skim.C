@@ -22,6 +22,7 @@
 #include "skim_common.h"
 #include "lhe_index.h" // ttbar_w member twins of the fit templates (pOLhe::BookTwins/FillTwins)
 #include "muon_sf.h"   // muon efficiency SFs folded into the MC weight + their Up/Down twins (pOSF)
+#include "electron_sf.h" // electron Reco x ID+iso x trigger SFs, same machinery (pOSF, 2026-09-29)
 
 #include "TFile.h"
 #include "TTree.h"
@@ -195,12 +196,13 @@ static int FindLeadingElectron_TightPF(int nEle,
 }
 
 // Step 4 (electron W): OS dielectron DY veto. Veto if exists OS pair where
-// both electrons are ID'd (eleMVAIdWP95) with continuous PF relIso < isoMax,
-// pT > dyElePtMin, AND mll in (dyMassMin, dyMassMax) — same surface as the
-// muon veto. (Iso gate switched from the integer eleMVAIsoWP95 WP to the
-// continuous RelIsoPF on 2026-07-02: the isolation study characterized the
-// continuous cut, and the MVA-Iso WP was shown NOT to track it.)
-static bool PassDYVeto_Wel(double dyElePtMin, double isoMax,
+// both electrons pass THE electron ID and isolation, pT > dyElePtMin, AND mll
+// in (dyMassMin, dyMassMax) — same surface as the muon veto. Since
+// 2026-09-29 the legs use the per-event vectors of skim_common.h: ID =
+// eleMVAIdWP90 outside the crack (BuildEleIDNoGap), iso = eleMVAIsoWP90 &&
+// relIso < 0.3 (BuildEleIsoPass) -- the W lepton's own definition, as before
+// (it was eleMVAIdWP95 + continuous relIso < 0.095 until then).
+static bool PassDYVeto_Wel(double dyElePtMin,
                            double dyMassMin, double dyMassMax,
                            int nEle,
                            std::vector<float> *elePt,
@@ -208,10 +210,7 @@ static bool PassDYVeto_Wel(double dyElePtMin, double isoMax,
                            std::vector<float> *elePhi,
                            std::vector<int>   *eleCharge,
                            std::vector<int>   *eleIDTight,
-                           std::vector<float> *elePFChIso,
-                           std::vector<float> *elePFNeuIso,
-                           std::vector<float> *elePFPhoIso,
-                           std::vector<float> *elePFPUIso)
+                           const std::vector<int> &eleIsoPass)
 {
   if (!elePt || !eleEta || !elePhi || !eleCharge) return true;
 
@@ -222,7 +221,7 @@ static bool PassDYVeto_Wel(double dyElePtMin, double isoMax,
   {
     if (elePt->at(i) <= dyElePtMin) continue;
     if (eleIDTight->at(i) == 0)      continue;
-    if (RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso) >= isoMax) continue;
+    if (eleIsoPass.at(i) == 0)       continue;
     cand.push_back(i);
   }
 
@@ -268,7 +267,8 @@ int skim_Wmu(const char *fname, SampleType sample)
   // readers: correction/qcd_abcd.C runPtCharge tag, plotting/mtandmet.C
   // varStem[kVarMt40], correction/dataMC_kinematics.C's _mt40 channels) --
   // otherwise the stored names silently claim a cut that was not applied.
-  const double mtCutForPtDisc     = 40.0;
+  // Value single-sourced in skim_common.h (gen_xsec.C's `_mt40` fiducial uses it too).
+  const double mtCutForPtDisc     = kPtDiscMtCut;
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double muEtaMax    = 2.4;
@@ -1094,7 +1094,10 @@ int skim_Wel(const char *fname, SampleType sample)
   // -------- Config (kept identical to legacy WConfig for the electron channel) --------
   const double elePt25     = 25.0;
   const double dyElePtMin  = 10.0;
-  const double isoMax      = 0.095;
+  // Electron ID + isolation (2026-09-29): skim_common.h kEleIDBranch (eleMVAIdWP90)
+  // + kEleIsoBranch (eleMVAIsoWP90) && relIso < kEleIsoRelMax (0.3), for the
+  // leading electron AND the DY-veto legs -- the selection whose EGM wp90iso
+  // SF the ID+iso cross-check validated (was eleMVAIdWP95 + relIso < 0.095).
   // m_T cut of the lepton-pT-DISCRIMINANT selection (pT > 25 && m_T > 40);
   // applies ONLY to the `_mt40` histogram set (see skim_Wmu for the rationale).
   // NAMING CONTRACT: the literal "40" in the persisted `_mt40` histogram names
@@ -1102,7 +1105,8 @@ int skim_Wel(const char *fname, SampleType sample)
   // readers: correction/qcd_abcd.C runPtCharge tag, plotting/mtandmet.C
   // varStem[kVarMt40], correction/dataMC_kinematics.C's _mt40 channels) --
   // otherwise the stored names silently claim a cut that was not applied.
-  const double mtCutForPtDisc     = 40.0;
+  // Value single-sourced in skim_common.h (gen_xsec.C's `_mt40` fiducial uses it too).
+  const double mtCutForPtDisc     = kPtDiscMtCut;
   const double dyMassMin   = 80.0;
   const double dyMassMax   = 110.0;
   const double eleEtaMax   = 2.4;
@@ -1175,29 +1179,32 @@ int skim_Wel(const char *fname, SampleType sample)
   tEle->SetBranchAddress("elePhi",    &elePhi);
   tEle->SetBranchAddress("eleCharge", &eleCharge);
 
-  // -------- Electron IDs (cut-based + MVA) --------
-  std::vector<int> *eleMVAIdWP80 = nullptr, *eleMVAIdWP85 = nullptr;
-  std::vector<int> *eleMVAIdWP90 = nullptr, *eleMVAIdWP95 = nullptr;
-  std::vector<int> *eleCutIdWP70 = nullptr, *eleCutIdWP80 = nullptr;
-  std::vector<int> *eleCutIdWP90 = nullptr, *eleCutIdWP95 = nullptr;
-
-  tEle->SetBranchStatus("eleMVAIdWP80", 1); tEle->SetBranchStatus("eleMVAIdWP85", 1);
-  tEle->SetBranchStatus("eleMVAIdWP90", 1); tEle->SetBranchStatus("eleMVAIdWP95", 1);
-  tEle->SetBranchStatus("eleCutIdWP70", 1); tEle->SetBranchStatus("eleCutIdWP80", 1);
-  tEle->SetBranchStatus("eleCutIdWP90", 1); tEle->SetBranchStatus("eleCutIdWP95", 1);
-  tEle->SetBranchAddress("eleMVAIdWP80", &eleMVAIdWP80);
-  tEle->SetBranchAddress("eleMVAIdWP85", &eleMVAIdWP85);
-  tEle->SetBranchAddress("eleMVAIdWP90", &eleMVAIdWP90);
-  tEle->SetBranchAddress("eleMVAIdWP95", &eleMVAIdWP95);
-  tEle->SetBranchAddress("eleCutIdWP70", &eleCutIdWP70);
-  tEle->SetBranchAddress("eleCutIdWP80", &eleCutIdWP80);
-  tEle->SetBranchAddress("eleCutIdWP90", &eleCutIdWP90);
-  tEle->SetBranchAddress("eleCutIdWP95", &eleCutIdWP95);
+  // -------- Electron ID + MVA isolation (THE selection, skim_common.h) --------
+  // Bound by name from kEleIDBranch / kEleIsoBranch (eleMVAIdWP90 /
+  // eleMVAIsoWP90 since 2026-09-29), so the WP lives in one place. Mandatory:
+  // a file without them would silently get a different selection. (The other
+  // cut-based / MVA WPs this function used to read "for later" are no longer
+  // bound -- nothing used them.)
+  std::vector<int> *eleIDSel = nullptr, *eleIsoSel = nullptr;
+  for (const char *bn : {kEleIDBranch, kEleIsoBranch})
+    if (!HasBranch(tEle, bn))
+    {
+      std::cerr << "[FATAL] skim_Wel: no " << bn << " branch in " << fname
+                << " -- the electron ID/isolation (skim_common.h) cannot be applied\n";
+      f->Close();
+      return 2;
+    }
+  tEle->SetBranchStatus(kEleIDBranch, 1);  tEle->SetBranchAddress(kEleIDBranch,  &eleIDSel);
+  tEle->SetBranchStatus(kEleIsoBranch, 1); tEle->SetBranchAddress(kEleIsoBranch, &eleIsoSel);
+  std::cout << "[CONFIG] electron ID = " << kEleIDBranch << " (crack-vetoed on eleSCEta); iso-pass = "
+            << kEleIsoBranch << " && relIso < " << kEleIsoRelMax << "; ABCD anti-iso sideband relIso ["
+            << kEleAntiIsoLo << ", " << kEleAntiIsoHi << ")\n";
 
   // -------- ECAL-gap veto input (2026-09-14): supercluster eta --------
-  // Every ID'd-electron definition below uses eleIDNoGap = eleMVAIdWP95 AND
+  // Every ID'd-electron definition below uses eleIDNoGap = kEleIDBranch AND
   // !InEcalGap(eleSCEta) (skim_common.h). Mandatory: a file without the
-  // branch would silently get a different selection.
+  // branch would silently get a different selection. eleSCEta is ALSO the
+  // lookup variable of the EGM scale factors (electron_sf.h).
   std::vector<float> *eleSCEta = nullptr;
   if (!HasBranch(tEle, "eleSCEta"))
   {
@@ -1209,8 +1216,9 @@ int skim_Wel(const char *fname, SampleType sample)
   tEle->SetBranchStatus("eleSCEta", 1);
   tEle->SetBranchAddress("eleSCEta", &eleSCEta);
   std::vector<int> eleIDNoGap; // rebuilt per event
+  std::vector<int> eleIsoPass; // rebuilt per event (BuildEleIsoPass)
 
-  // -------- Electron iso (PF + WP) --------
+  // -------- Electron iso (PF components: relIso for the iso-pass cap + the ABCD planes) --------
   if (HasBranch(tEle, "elePFChIso"))  tEle->SetBranchStatus("elePFChIso", 1);
   if (HasBranch(tEle, "elePFNeuIso")) tEle->SetBranchStatus("elePFNeuIso", 1);
   if (HasBranch(tEle, "elePFPhoIso")) tEle->SetBranchStatus("elePFPhoIso", 1);
@@ -1226,15 +1234,6 @@ int skim_Wel(const char *fname, SampleType sample)
   if (has_elePFPUIso)  tEle->SetBranchAddress("elePFPUIso",  &elePFPUIso);
   if (!has_elePFPUIso)
     std::cout << "[WARN] skim_Wel: no elePFPUIso branch; relIso falls back to uncorrected (no Delta-beta).\n";
-
-  std::vector<int> *eleMVAIsoWP80 = nullptr, *eleMVAIsoWP85 = nullptr;
-  std::vector<int> *eleMVAIsoWP90 = nullptr, *eleMVAIsoWP95 = nullptr;
-  tEle->SetBranchStatus("eleMVAIsoWP80", 1); tEle->SetBranchStatus("eleMVAIsoWP85", 1);
-  tEle->SetBranchStatus("eleMVAIsoWP90", 1); tEle->SetBranchStatus("eleMVAIsoWP95", 1);
-  tEle->SetBranchAddress("eleMVAIsoWP80", &eleMVAIsoWP80);
-  tEle->SetBranchAddress("eleMVAIsoWP85", &eleMVAIsoWP85);
-  tEle->SetBranchAddress("eleMVAIsoWP90", &eleMVAIsoWP90);
-  tEle->SetBranchAddress("eleMVAIsoWP95", &eleMVAIsoWP95);
 
   // -------- HLT bit (step 3) --------
   const std::string hltName = FindBranchContaining(tHLT, "HLT_OxyL1SingleEG10_v1");
@@ -1322,6 +1321,33 @@ int skim_Wel(const char *fname, SampleType sample)
   unsigned long long nLheSkipped   = 0;
   unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
+  // -------- Electron efficiency scale factors (MC only; electron_sf.h) --------
+  // RECO (pOSF::kEleRecoSource: the EGM Reco20to75/RecoAbove75 tables since
+  // 2026-10-01, as on 2026-09-29; on 2026-09-30 one inclusive number from the
+  // pO tag-and-probe, correction/reco_sf_ele.C) x ID+ISO (EGM wp90iso, iso-passing electrons
+  // only) x the inclusive trigger SF of correction/trig_eff_mb.C, on the
+  // leading electron. Folded into `w` after step 8, before any fill;
+  // every fit-template histogram additionally gets <h>_eleReco/eleIDIso/
+  // eleTrigUp|Down twins + the combined <h>_eleSFUp|Down. Missing inputs are
+  // FATAL -- never a silent SF = 1; PO_ELE_SF=off disables on purpose.
+  pOSF::ElectronSF eleSF;
+  const bool       applySF = isMC && pOSF::ElectronSFEnabled();
+  if (applySF && !eleSF.Load(std::cout))
+  {
+    std::cerr << "[FATAL] skim_Wel: electron SF inputs missing/unreadable (see the [SF] ERR line above)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applySF) std::cout << "[WARN] skim_Wel: PO_ELE_SF=off -> MC filled WITHOUT electron scale factors\n";
+  std::vector<pOSF::SFTwins> sfTwinSets; // every SF twin set booked below (finalized + written at the end)
+  pOSF::SFTwins s_met_Wp[kNY], s_met_Wm[kNY], s_met_Wp_FB[kNY], s_met_Wm_FB[kNY];
+  pOSF::SFTwins s_leppt_mt40_Wp[kNY], s_leppt_mt40_Wm[kNY], s_leppt_mt40_Wp_FB[kNY], s_leppt_mt40_Wm_FB[kNY];
+  pOSF::SFStats sfStats;
+  auto bookSF = [&](const TH1 *h) {
+    return pOSF::BookSFTwins(h, sfTwinSets, pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName,
+                             pOSF::kEleSFCombinedNote);
+  };
+
   // -------- PF tree (MET) --------
   Int_t nPF = 0;
   std::vector<int>   *pfId  = nullptr;
@@ -1404,6 +1430,13 @@ int skim_Wel(const char *fname, SampleType sample)
       t_met_Wp_FB[b] = pOLhe::BookTwins(h_met_Wp_FB[b], lheTwins);
       t_met_Wm_FB[b] = pOLhe::BookTwins(h_met_Wm_FB[b], lheTwins);
     }
+    if (applySF) // electron-SF twins of the MET fit templates
+    {
+      s_met_Wp[b]    = bookSF(h_met_Wp[b]);
+      s_met_Wm[b]    = bookSF(h_met_Wm[b]);
+      s_met_Wp_FB[b] = bookSF(h_met_Wp_FB[b]);
+      s_met_Wm_FB[b] = bookSF(h_met_Wm_FB[b]);
+    }
   }
 
   static const int NISO = 3;
@@ -1429,47 +1462,49 @@ int skim_Wel(const char *fname, SampleType sample)
     return -1;
   };
 
-  // -------- ABCD inputs: 2D (relIso, MET) and (relIso, MT) per charge --------
+  // -------- ABCD inputs: 2D (iso, MET) and (iso, MT) per charge --------
   // Electron twin of the skim_Wmu ABCD histos (consumed by correction/qcd_abcd.C
   // with isElec=true). Filled for every event passing the full W selection
-  // EXCEPT the isolation cut, so the relIso axis spans iso-pass (signal) and the
+  // EXCEPT the isolation cut, so the x axis spans iso-pass (signal) and the
   // anti-iso sideband. Regions are chosen downstream by projecting (no re-skim).
-  //   x = relIso : see the kNIsoAB note below (0.005-wide bins so the electron
-  //               signal cut 0.095 is exactly a bin edge)
+  //   x = the ELECTRON ISO AXIS (since 2026-09-29, skim_common.h EleIsoAxis):
+  //       the iso-pass is a boolean MVA decision (eleMVAIsoWP90 && relIso <
+  //       0.3), which no relIso window can recover, so iso-PASSING electrons
+  //       are stored at relIso - 0.3, i.e. in [-0.3, 0), and every other one
+  //       at its relIso in [0, 1). Projections: iso-pass = [-0.3, 0), the gap
+  //       (MVA-iso-failing, relIso < 0.3) = [0, 0.3), the anti-iso sideband =
+  //       [0.3, 1.0) (skim_common.h kEleAntiIsoLo/Hi). 260 bins of 0.005 over
+  //       [-0.3, 1.0): every edge in play (-0.3, 0, 0.3, 0.6, 1.0) is a bin
+  //       EDGE (projection cuts must be bin edges -- the 2026-07-30 relIso
+  //       0.095 bug). Until 2026-09-29 the axis was plain relIso [0, 1) with
+  //       the iso-pass relIso < 0.095.
   //   y = MET    : 0..120 GeV / 2.0  (matches h_met_* binning)
   //   y = m_T    : 0..200 GeV / 2.5  (matches h_mt_*  binning)
-  // 200 bins over [0,1] => 0.005 wide, so EVERY relIso boundary used
-  // downstream lands on a bin EDGE: the electron cut 0.095 (= 19*0.005),
-  // the muon 0.15, and the anti-iso window edges 0.20/0.30/0.60/0.65.
-  // With the old 0.01 bins, 0.095 fell mid-bin and qcd_abcd.C's
-  // FindBin(isoCut-eps) projection silently integrated relIso < 0.10 --
-  // 170 electron events that FAIL the analysis cut leaked into the
-  // ABCD iso-pass region, inflating T and every electron QCD template by
-  // ~4% (found 2026-07-30; the muon was exact all along).
-  const int    kNIsoAB  = 200;
-  const double kIsoLoAB = 0.0, kIsoHiAB = 1.0;
+  const int    kNIsoAB  = kEleIsoAxisNb;
+  const double kIsoLoAB = kEleIsoAxisLo, kIsoHiAB = 1.0;
+  const char  *kIsoAxT  = "iso axis (iso-pass: relIso-0.3 < 0; else relIso)";
   TH2D *h_iso_met_elePlus  = new TH2D("h_iso_met_elePlus",
-      "e^{+} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+      Form("e^{+} ABCD;%s;PF MET [GeV]", kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
   TH2D *h_iso_met_eleMinus = new TH2D("h_iso_met_eleMinus",
-      "e^{-} ABCD;relIso;PF MET [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+      Form("e^{-} ABCD;%s;PF MET [GeV]", kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
   TH2D *h_iso_mt_elePlus   = new TH2D("h_iso_mt_elePlus",
-      "e^{+} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+      Form("e^{+} ABCD;%s;m_{T} [GeV]", kIsoAxT),  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
   TH2D *h_iso_mt_eleMinus  = new TH2D("h_iso_mt_eleMinus",
-      "e^{-} ABCD;relIso;m_{T} [GeV]",  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+      Form("e^{-} ABCD;%s;m_{T} [GeV]", kIsoAxT),  kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
   //   y = lepton pT : 0..100 GeV / 2.0 (matches h_lepPt / h_leppt_* binning).
   // Third ABCD plane (2026-07-29): anti-iso lepton-pT SHAPE for the QCD
-  // template in the lepton-pT stacks (normalization from the relIso x MET
-  // counting -- this plane is NOT used for the 2x2 factorization).
+  // template in the lepton-pT stacks (normalization from the counting planes
+  // -- this plane is NOT used for the 2x2 factorization).
   TH2D *h_iso_pt_elePlus   = new TH2D("h_iso_pt_elePlus",
-      "e^{+} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+      Form("e^{+} ABCD;%s;p_{T}^{e} [GeV]", kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   TH2D *h_iso_pt_eleMinus  = new TH2D("h_iso_pt_eleMinus",
-      "e^{-} ABCD;relIso;p_{T}^{e} [GeV]", kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+      Form("e^{-} ABCD;%s;p_{T}^{e} [GeV]", kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   // Same plane WITH the discriminant selection's m_T cut: supplies the
   // anti-iso lepton-pT shape for the QCD template of the pT+m_T>40 stacks.
   TH2D *h_iso_pt_mt40_elePlus  = new TH2D("h_iso_pt_mt40_elePlus",
-      Form("e^{+} ABCD, m_{T}>%.0f;relIso;p_{T}^{e} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+      Form("e^{+} ABCD, m_{T}>%.0f;%s;p_{T}^{e} [GeV]", mtCutForPtDisc, kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   TH2D *h_iso_pt_mt40_eleMinus = new TH2D("h_iso_pt_mt40_eleMinus",
-      Form("e^{-} ABCD, m_{T}>%.0f;relIso;p_{T}^{e} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
+      Form("e^{-} ABCD, m_{T}>%.0f;%s;p_{T}^{e} [GeV]", mtCutForPtDisc, kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   h_iso_pt_mt40_elePlus->Sumw2(); h_iso_pt_mt40_eleMinus->Sumw2();
   h_iso_met_elePlus->Sumw2();  h_iso_met_eleMinus->Sumw2();
   h_iso_mt_elePlus->Sumw2();   h_iso_mt_eleMinus->Sumw2();
@@ -1477,18 +1512,20 @@ int skim_Wel(const char *fname, SampleType sample)
 
   // -------- (lepton pT, m_T) joint 2Ds for the pT x mT cut scan --------
   // Electron twins of the skim_Wmu pT x mT scan inputs (see the comment there;
-  // consumed by correction/ptmt_scan.C+(true)). Iso stays at the nominal cut;
-  // the QCD model is the ANTI-ISO sideband (relIso in [0.20, 1.0), the
-  // qcd_abcd.C electron window) with its actual MET/mT -- no MET conditioning.
-  const double antiIsoLo = 0.20, antiIsoHi = 1.00; // = qcd_abcd.C isoFail window (ele)
+  // consumed by correction/ptmt_scan.C+(true) and qcd_abcd.C's fake-factor
+  // fit). Iso stays at the nominal cut; the QCD model is the ANTI-ISO
+  // sideband (relIso in [0.3, 1.0) since 2026-09-29 = skim_common.h
+  // kEleAntiIsoLo/Hi = the qcd_abcd.C electron window; [0.20, 1.0) before)
+  // with its actual MET/mT -- no MET conditioning.
+  const double antiIsoLo = kEleAntiIsoLo, antiIsoHi = kEleAntiIsoHi; // = qcd_abcd.C isoFail window (ele)
   TH2D *h_pt_mt_elePlus  = new TH2D("h_pt_mt_elePlus",
       "e^{+}, iso-pass;p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
   TH2D *h_pt_mt_eleMinus = new TH2D("h_pt_mt_eleMinus",
       "e^{-}, iso-pass;p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
   TH2D *h_pt_mt_antiiso_elePlus  = new TH2D("h_pt_mt_antiiso_elePlus",
-      "e^{+}, anti-iso [0.20,1.0);p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+      Form("e^{+}, anti-iso [%.2f,%.1f);p_{T}^{e} [GeV];m_{T} [GeV]", antiIsoLo, antiIsoHi), 100, 0, 100, 80, 0, 200);
   TH2D *h_pt_mt_antiiso_eleMinus = new TH2D("h_pt_mt_antiiso_eleMinus",
-      "e^{-}, anti-iso [0.20,1.0);p_{T}^{e} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
+      Form("e^{-}, anti-iso [%.2f,%.1f);p_{T}^{e} [GeV];m_{T} [GeV]", antiIsoLo, antiIsoHi), 100, 0, 100, 80, 0, 200);
   h_pt_mt_elePlus->Sumw2();         h_pt_mt_eleMinus->Sumw2();
   h_pt_mt_antiiso_elePlus->Sumw2(); h_pt_mt_antiiso_eleMinus->Sumw2();
 
@@ -1535,6 +1572,13 @@ int skim_Wel(const char *fname, SampleType sample)
       t_leppt_mt40_Wp_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wp_FB[b], lheTwins);
       t_leppt_mt40_Wm_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wm_FB[b], lheTwins);
     }
+    if (applySF) // electron-SF twins of the lepton-pT (m_T>40) fit templates
+    {
+      s_leppt_mt40_Wp[b]    = bookSF(h_leppt_mt40_Wp[b]);
+      s_leppt_mt40_Wm[b]    = bookSF(h_leppt_mt40_Wm[b]);
+      s_leppt_mt40_Wp_FB[b] = bookSF(h_leppt_mt40_Wp_FB[b]);
+      s_leppt_mt40_Wm_FB[b] = bookSF(h_leppt_mt40_Wm_FB[b]);
+    }
   }
 
   // -------- Leading-lepton kinematics (full W selection) --------
@@ -1570,22 +1614,25 @@ int skim_Wel(const char *fname, SampleType sample)
     tEvent->GetEntry(ie);
     if (isMC) tGen->GetEntry(ie);
 
-    const double w = has_genWeight ? (double)genWeight : 1.0;
+    const double wGen = has_genWeight ? (double)genWeight : 1.0;
 
-    // LHE member weights of this event (all families): w x ttbar_w[i]/ttbar_w[0]
+    // LHE member weights of this event (all families): wGen x ttbar_w[i]/ttbar_w[0]
+    // (rescaled by the SF below, so member 0 stays == the nominal fill weight)
     pOLhe::MemberWeights mw;
-    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(w, lheW, mw, warnedLheOnce, "skim_Wel", &nLheCapped);
+    const bool lheOk = hasLhe && pOLhe::ComputeMemberWeights(wGen, lheW, mw, warnedLheOnce, "skim_Wel", &nLheCapped);
     if (hasLhe && !lheOk) ++nLheSkipped;
 
     N[0]++;
 
-    if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta || !eleMVAIdWP95) continue;
+    if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta || !eleIDSel || !eleIsoSel) continue;
 
-    // Effective electron ID for this event: eleMVAIdWP95 AND not in the ECAL
-    // crack (2026-09-14). Used by the DY veto, the tight-ID gate and the
-    // leading-electron pick below, so a crack electron is never a W candidate
-    // nor a veto leg.
-    BuildEleIDNoGap(nEle, eleMVAIdWP95, eleSCEta, eleIDNoGap);
+    // Effective electron ID and isolation for this event (skim_common.h):
+    // ID = eleMVAIdWP90 AND not in the ECAL crack (2026-09-14); iso-pass =
+    // eleMVAIsoWP90 AND relIso < 0.3 (2026-09-29). Used by the DY veto, the
+    // tight-ID gate, the leading-electron pick and the iso step below, so a
+    // crack electron is never a W candidate nor a veto leg.
+    BuildEleIDNoGap(nEle, eleIDSel, eleSCEta, eleIDNoGap);
+    BuildEleIsoPass(nEle, eleIsoSel, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso, eleIsoPass);
 
     // Precut relaxed to the (pT, mT)-scan floor (pT > 20) so the scan planes
     // h_pt_mt[_antiiso]_* reach below the nominal cut. The cutflow keeps its
@@ -1604,18 +1651,16 @@ int skim_Wel(const char *fname, SampleType sample)
     if (has_hlt && !TriggerFired(HLT_OxyL1SingleEG10_v1)) continue;
     if (hasPF25) N[3]++;
 
-    // Electron ID: eleMVAIdWP95 (switched from eleCutIdWP95 on 2026-06-24 after the
-    // isolation/ID study in correction/isolation_ele.C — the MVA WP is the best QCD
-    // rejector while CutWP95 was the worst; continuous AUC_MET 0.911 vs 0.870). Used
-    // consistently for the DY veto, the tight-ID gate, and the leading-electron pick.
-    // ALL isolation gates are the continuous PF relIso < isoMax (0.095, ~optimal):
-    // the leading electron AND (since 2026-07-02) the DY-veto legs, which
-    // previously used the integer eleMVAIsoWP95 WP.
-    // Since 2026-09-14 the ID passed here is eleIDNoGap (MVA WP95 AND
-    // 1.4442 < |eta_SC| < 1.566 excluded), see BuildEleIDNoGap above.
-    if (!PassDYVeto_Wel(dyElePtMin, isoMax, dyMassMin, dyMassMax,
+    // Electron ID + isolation: since 2026-09-29 the forest WP90 MVA ID + WP90 MVA
+    // iso (+ relIso < 0.3) of skim_common.h -- the selection whose EGM wp90iso SF
+    // the ID+iso cross-check validated in pO data. History: eleCutIdWP95 until
+    // 2026-06-24, then eleMVAIdWP95 with continuous relIso < 0.095 (the
+    // correction/isolation_ele.C optimum), crack-vetoed since 2026-09-14. Used
+    // consistently for the DY veto, the tight-ID gate, the leading-electron pick
+    // and the iso step.
+    if (!PassDYVeto_Wel(dyElePtMin, dyMassMin, dyMassMax,
                         nEle, elePt, eleEta, elePhi, eleCharge,
-                        &eleIDNoGap, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso))
+                        &eleIDNoGap, eleIsoPass))
       continue;
     if (hasPF25) N[4]++;
 
@@ -1645,16 +1690,13 @@ int skim_Wel(const char *fname, SampleType sample)
     const bool passPtNominal = (elePt->at(iLead) > elePt25);
     if (passPtNominal) N[6]++;
 
-    // (7) Leading electron Iso (continuous PF rel-iso; legacy WP path kept commented):
-    // if (eleMVAIsoWP95->at(iLead) != 1) continue;
+    // (7) Leading electron isolation: eleMVAIsoWP90 && relIso < 0.3 (BuildEleIsoPass;
+    // 2026-09-29, was the continuous relIso < 0.095). relIso (Delta-beta, the SAME
+    // value the cap uses) still labels the ABCD planes and the anti-iso sideband.
     const double isoLead = RelIsoPF(iLead, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
+    const bool   passIsoNominal  = (eleIsoPass.at(iLead) != 0);
     const int    isoBin  = FindIsoBin(isoLead);
-    const bool   isQCDSideband   = (isoBin >= 0);
-    const bool   passIsoNominal  = (isoLead < isoMax);
-    // Isolation study DONE (2026-06-24, correction/isolation_ele.C continuous scan):
-    // continuous relIso < 0.095 is the Youden-J(QCD) optimum for the MVA IDs, so the
-    // cut value stands. (2026-07-06: relIso now carries the Delta-beta PU correction,
-    // consistent with the MuonPOG definition used in the muon channel.)
+    const bool   isQCDSideband   = (isoBin >= 0) && !passIsoNominal; // relIso bins of iso-FAILING electrons
 
     if (passIsoNominal && passPtNominal) N[7]++;
 
@@ -1665,6 +1707,19 @@ int skim_Wel(const char *fname, SampleType sample)
         warnedNoTrigMatchInfo, "electron");
     if (!passMatch) continue;
     if (passIsoNominal && passPtNominal) N[8]++;
+
+    // -------- Electron efficiency SFs (MC; data: 1) --------
+    // One factor per event for the leading electron: RECO x [passIso ? IDISO : 1]
+    // x TRIG (inclusive). It multiplies the weight of EVERY fill below -- the
+    // leading electron is ID'd and trigger-matched in all of them; the ID+iso
+    // factor applies only where it passes the iso (the anti-iso sideband and
+    // the gap get RECO x TRIG). The LHE member weights are rescaled too, so the
+    // theory variations are computed on the SF-weighted nominal.
+    // *** eleSCEta (raw supercluster eta), never y = -eta: electron_sf.h. ***
+    const pOSF::EventSF esf = applySF ? eleSF.W(elePt->at(iLead), eleSCEta->at(iLead), passIsoNominal)
+                                      : pOSF::EventSF::Unit();
+    const double w = wGen * esf.nom;
+    if (lheOk) pOLhe::ScaleMemberWeights(mw, esf.nom);
 
     // -------- Fill final distributions (after step 8) --------
     TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
@@ -1677,33 +1732,38 @@ int skim_Wel(const char *fname, SampleType sample)
       else if (eleCharge->at(iLead) < 0) h_met_iso_eleMinus[isoBin]->Fill(met, w);
     }
 
-    // ABCD: fill the full-iso-range (relIso, MET) and (relIso, MT) planes.
-    // Unconditional on the isolation cut -- iso pass AND fail both populated.
+    // ABCD: fill the full-iso-range (iso axis, MET) and (iso axis, MT) planes.
+    // Unconditional on the isolation cut -- iso pass AND fail both populated,
+    // the pass at relIso - 0.3 (skim_common.h EleIsoAxis; see the booking note).
     // The h_iso_* ABCD planes keep the NOMINAL pT > 25 selection; only the
     // (pT, mT) scan planes h_pt_mt[_antiiso]_* go down to kPtScanFloor.
-    const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
+    const bool   passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
+    const double isoAx     = EleIsoAxis(passIsoNominal, isoLead);
+    // anti-iso sideband: relIso window, iso-FAILING (an iso-passing electron
+    // has relIso < 0.3 = antiIsoLo, so the window alone already excludes it)
+    const bool   inAntiIso = !passIsoNominal && isoLead >= antiIsoLo && isoLead < antiIsoHi;
     if (eleCharge->at(iLead) > 0)
     {
       if (passPtNominal)
       {
-        h_iso_met_elePlus->Fill(isoLead, met, w);
-        h_iso_mt_elePlus ->Fill(isoLead, mt,  w);
-        h_iso_pt_elePlus ->Fill(isoLead, elePt->at(iLead), w);
-        if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoLead, elePt->at(iLead), w);
+        h_iso_met_elePlus->Fill(isoAx, met, w);
+        h_iso_mt_elePlus ->Fill(isoAx, mt,  w);
+        h_iso_pt_elePlus ->Fill(isoAx, elePt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoAx, elePt->at(iLead), w);
       }
-      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+      if (inAntiIso)
         h_pt_mt_antiiso_elePlus->Fill(elePt->at(iLead), mt, w);
     }
     else if (eleCharge->at(iLead) < 0)
     {
       if (passPtNominal)
       {
-        h_iso_met_eleMinus->Fill(isoLead, met, w);
-        h_iso_mt_eleMinus ->Fill(isoLead, mt,  w);
-        h_iso_pt_eleMinus ->Fill(isoLead, elePt->at(iLead), w);
-        if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoLead, elePt->at(iLead), w);
+        h_iso_met_eleMinus->Fill(isoAx, met, w);
+        h_iso_mt_eleMinus ->Fill(isoAx, mt,  w);
+        h_iso_pt_eleMinus ->Fill(isoAx, elePt->at(iLead), w);
+        if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoAx, elePt->at(iLead), w);
       }
-      if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
+      if (inAntiIso)
         h_pt_mt_antiiso_eleMinus->Fill(elePt->at(iLead), mt, w);
     }
 
@@ -1714,6 +1774,8 @@ int skim_Wel(const char *fname, SampleType sample)
     else if (eleCharge->at(iLead) < 0) h_pt_mt_eleMinus->Fill(elePt->at(iLead), mt, w);
 
     if (!passPtNominal) continue; // everything below keeps the nominal pT > 25 cut
+
+    if (applySF) sfStats.Add(wGen, esf); // <SF> record over the nominal W selection
 
     h_lepPt ->Fill(elePt->at(iLead),  w);
     h_lepEta->Fill(eleEta->at(iLead), w);
@@ -1733,26 +1795,68 @@ int skim_Wel(const char *fname, SampleType sample)
     const int    ybin    = FindYBin(y, kYEdges,   kNY);
     const int    ybin_FB = FindYBin(y, kYEdgesFB, kNY);
 
-    // The LHE member twins (t_*) are filled right next to their nominal fit
-    // template with the per-event member weights (same events, same x).
+    // The LHE member twins (t_*) and the electron-SF twins (s_*) are filled
+    // right next to their nominal fit template with the same x: members with
+    // the per-event member weights, SF twins with wGen x (one source varied).
+    const double lpt = elePt->at(iLead);
     if (ybin >= 0)
     {
-      if      (isWp) { h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp[ybin], met, mw); }
-      else if (isWm) { h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm[ybin], met, mw); }
+      if (isWp)
+      {
+        h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wp[ybin], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wp[ybin], met, wGen, esf);
+      }
+      else if (isWm)
+      {
+        h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wm[ybin], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wm[ybin], met, wGen, esf);
+      }
       if (passMtCut)
       {
-        if      (isWp) { h_leppt_mt40_Wp[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], elePt->at(iLead), mw); }
-        else if (isWm) { h_leppt_mt40_Wm[ybin]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], elePt->at(iLead), mw); }
+        if (isWp)
+        {
+          h_leppt_mt40_Wp[ybin]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp[ybin], lpt, wGen, esf);
+        }
+        else if (isWm)
+        {
+          h_leppt_mt40_Wm[ybin]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm[ybin], lpt, wGen, esf);
+        }
       }
     }
     if (ybin_FB >= 0)
     {
-      if      (isWp) { h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw); }
-      else if (isWm) { h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw); }
+      if (isWp)
+      {
+        h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wp_FB[ybin_FB], met, wGen, esf);
+      }
+      else if (isWm)
+      {
+        h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw);
+        if (applySF) pOSF::FillSFTwins(s_met_Wm_FB[ybin_FB], met, wGen, esf);
+      }
       if (passMtCut)
       {
-        if      (isWp) { h_leppt_mt40_Wp_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], elePt->at(iLead), mw); }
-        else if (isWm) { h_leppt_mt40_Wm_FB[ybin_FB]->Fill(elePt->at(iLead), w); if (lheOk) pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], elePt->at(iLead), mw); }
+        if (isWp)
+        {
+          h_leppt_mt40_Wp_FB[ybin_FB]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp_FB[ybin_FB], lpt, wGen, esf);
+        }
+        else if (isWm)
+        {
+          h_leppt_mt40_Wm_FB[ybin_FB]->Fill(lpt, w);
+          if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], lpt, mw);
+          if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm_FB[ybin_FB], lpt, wGen, esf);
+        }
       }
     }
   }
@@ -1790,12 +1894,23 @@ int skim_Wel(const char *fname, SampleType sample)
   }
   // LHE member twins of the fit templates (MC only; the vector is empty for data)
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
+  // Electron-SF twins (MC only): the per-source <h>_eleReco/eleIDIso/eleTrigUp|Down
+  // and the combined <h>_eleSFUp|Down (built here from the three) + the <SF> record
+  if (applySF)
+  {
+    sfStats.Print(std::cout, "skim_Wel nominal W selection (pT>25, iso-pass, matched)",
+                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels);
+    eleSF.PrintCounters(std::cout, "skim_Wel");
+    const int nSF = pOSF::FinalizeAndWriteSFTwins(sfTwinSets);
+    std::cout << "[INFO] electron-SF twins written: " << nSF << " (" << sfTwinSets.size()
+              << " fit templates x [3 sources + combined " << pOSF::kEleSFCombinedName << "] x Up/Down)\n";
+  }
   for (int b = 0; b < NISO; ++b)
   {
     h_met_iso_elePlus [b]->Write("", TObject::kOverwrite);
     h_met_iso_eleMinus[b]->Write("", TObject::kOverwrite);
   }
-  // ABCD 2D planes (relIso vs MET / m_T / lepton pT), per charge
+  // ABCD 2D planes (electron iso axis vs MET / m_T / lepton pT), per charge
   h_iso_met_elePlus ->Write("", TObject::kOverwrite);
   h_iso_met_eleMinus->Write("", TObject::kOverwrite);
   h_iso_mt_elePlus  ->Write("", TObject::kOverwrite);
@@ -2321,13 +2436,15 @@ int skim_Zee(const char *fname, SampleType sample)
   const double etaMax         = 2.4;   // common mu/e fiducial edge (ECAL would allow 2.5); the
                                        // 1.4442-1.566 crack is vetoed per leg on eleSCEta (2026-09-14)
   const bool   requireOS      = true;
-  const bool   requireTightID = true;  // active gate: eleMVAIdWP95 (switched from eleCutIdWP95 2026-07-02, matching skim_Wel + the iso/ID study)
   const bool   applyVz        = true;
   const double vzMax          = 15.0;
   const bool   applyHiBin     = false;
   const int    hiBinMin       = 0;
   const int    hiBinMax       = 200;
-  const double isoMax         = 0.095; // = skim_Wel's cut on the Delta-beta PF relIso (RelIsoPF); J(QCD) optimum of correction/isolation_ele.C
+  // Leg ID + isolation = skim_Wel's (skim_common.h, 2026-09-29): ID
+  // kEleIDBranch (eleMVAIdWP90) outside the crack, iso-pass kEleIsoBranch
+  // (eleMVAIsoWP90) && relIso < 0.3. Until then: eleMVAIdWP95 (since
+  // 2026-07-02) + relIso < 0.095.
 
   std::string outPrefix = "ZToEE_pO2025";
 
@@ -2399,38 +2516,21 @@ int skim_Zee(const char *fname, SampleType sample)
   tEle->SetBranchStatus("eleSCEta", 1);
   tEle->SetBranchAddress("eleSCEta", &eleSCEta);
 
-  // -------- Electron IDs (kept around; active gate uses eleMVAIdWP95) --------
-  std::vector<int> *eleMVAIdWP80 = nullptr, *eleMVAIdWP85 = nullptr;
-  std::vector<int> *eleMVAIdWP90 = nullptr, *eleMVAIdWP95 = nullptr;
-  std::vector<int> *eleCutIdWP70 = nullptr, *eleCutIdWP80 = nullptr;
-  std::vector<int> *eleCutIdWP90 = nullptr, *eleCutIdWP95 = nullptr;
-
-  auto hookID = [&](const char *bname, std::vector<int> **addr)
-  {
-    if (HasBranch(tEle, bname))
+  // -------- Electron ID + MVA isolation (THE selection, skim_common.h) --------
+  // Bound by name from kEleIDBranch / kEleIsoBranch like skim_Wel; mandatory
+  // (the gate used to be skipped silently when the ID branch was missing).
+  std::vector<int> *eleIDSel = nullptr, *eleIsoSel = nullptr;
+  for (const char *bn : {kEleIDBranch, kEleIsoBranch})
+    if (!HasBranch(tEle, bn))
     {
-      tEle->SetBranchStatus(bname, 1);
-      tEle->SetBranchAddress(bname, addr);
+      std::cerr << "[FATAL] skim_Zee: no " << bn << " branch in " << fname
+                << " -- the electron ID/isolation (skim_common.h) cannot be applied\n";
+      f->Close();
+      return 2;
     }
-  };
-  hookID("eleMVAIdWP80", &eleMVAIdWP80);
-  hookID("eleMVAIdWP85", &eleMVAIdWP85);
-  hookID("eleMVAIdWP90", &eleMVAIdWP90);
-  hookID("eleMVAIdWP95", &eleMVAIdWP95);
-  hookID("eleCutIdWP70", &eleCutIdWP70);
-  hookID("eleCutIdWP80", &eleCutIdWP80);
-  hookID("eleCutIdWP90", &eleCutIdWP90);
-  hookID("eleCutIdWP95", &eleCutIdWP95);
-
-  const bool has_eleID = HasBranch(tEle, "eleMVAIdWP95");
-
-  // -------- Iso WPs (kept around; active gate uses RelIsoPF) --------
-  std::vector<int> *eleMVAIsoWP80 = nullptr, *eleMVAIsoWP85 = nullptr;
-  std::vector<int> *eleMVAIsoWP90 = nullptr, *eleMVAIsoWP95 = nullptr;
-  hookID("eleMVAIsoWP80", &eleMVAIsoWP80);
-  hookID("eleMVAIsoWP85", &eleMVAIsoWP85);
-  hookID("eleMVAIsoWP90", &eleMVAIsoWP90);
-  hookID("eleMVAIsoWP95", &eleMVAIsoWP95);
+  tEle->SetBranchStatus(kEleIDBranch, 1);  tEle->SetBranchAddress(kEleIDBranch,  &eleIDSel);
+  tEle->SetBranchStatus(kEleIsoBranch, 1); tEle->SetBranchAddress(kEleIsoBranch, &eleIsoSel);
+  std::vector<int> eleIsoPass; // rebuilt per event (BuildEleIsoPass)
 
   std::vector<float> *elePFChIso = nullptr, *elePFNeuIso = nullptr, *elePFPhoIso = nullptr;
   std::vector<float> *elePFPUIso = nullptr;
@@ -2471,6 +2571,26 @@ int skim_Zee(const char *fname, SampleType sample)
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
   unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
+
+  // -------- Electron efficiency scale factors (MC only; electron_sf.h) --------
+  // Both legs: RECO x [iso ? IDISO : 1] per leg, times the per-event trigger
+  // factor from the inclusive per-lepton path-fired efficiencies (this
+  // selection requires the trigger bit, no matching). Twins of hMass (the
+  // Z_incl signal template): hMass_eleReco/eleIDIso/eleTrigUp|Down + the
+  // combined hMass_eleSFUp|Down. Missing inputs are FATAL; PO_ELE_SF=off
+  // disables on purpose.
+  pOSF::ElectronSF eleSF;
+  const bool       applySF = isMC && pOSF::ElectronSFEnabled();
+  if (applySF && !eleSF.Load(std::cout))
+  {
+    std::cerr << "[FATAL] skim_Zee: electron SF inputs missing/unreadable (see the [SF] ERR line above)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applySF) std::cout << "[WARN] skim_Zee: PO_ELE_SF=off -> MC filled WITHOUT electron scale factors\n";
+  std::vector<pOSF::SFTwins> sfTwinSets; // the hMass twin set (finalized + written at the end)
+  pOSF::SFTwins              s_mass;     // booked with hMass below
+  pOSF::SFStats              sfStats;
 
   // -------- HLT objects --------
   TTree *tHLTobj = (TTree *)f->Get("hltobject/HLT_OxyL1SingleEG10_v");
@@ -2569,6 +2689,8 @@ int skim_Zee(const char *fname, SampleType sample)
       nBins, massMin, massMax);
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
   if (hasLhe) t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
+  if (applySF) s_mass = pOSF::BookSFTwins(hMass, sfTwinSets, pOSF::kEleSFSourceNames, // electron-SF twins
+                                          pOSF::kEleSFCombinedName, pOSF::kEleSFCombinedNote);
 
   // -------- Kinematics of the dielectron (Z) system and its electrons --------
   // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
@@ -2642,31 +2764,25 @@ int skim_Zee(const char *fname, SampleType sample)
     if (has_hlt && !TriggerFired(HLT_OxyL1SingleEG10_v1)) continue;
     nPassEvent++;
 
+    if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta || !eleIDSel || !eleIsoSel) continue;
+    // per-electron iso decision of this event (eleMVAIsoWP90 && relIso < 0.3)
+    BuildEleIsoPass(nEle, eleIsoSel, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso, eleIsoPass);
+
     for (int i = 0; i < nEle; ++i)
     {
-      bool passIsolead = true;
-
-      if (!elePt || !eleEta || !elePhi || !eleCharge || !eleSCEta) continue;
       if (elePt->at(i) < ptMin2) continue;
       if (TMath::Abs(eleEta->at(i)) > etaMax) continue;
       if (InEcalGap(eleSCEta->at(i))) continue; // ECAL crack veto, leg 1 (2026-09-14)
+      if (eleIDSel->at(i) == 0) continue;        // THE electron ID (kEleIDBranch)
 
-      if (requireTightID && has_eleID && eleMVAIdWP95->at(i) == 0) continue;
-
-      /* WP-based iso, kept for cross-check
-      if (eleMVAIsoWP95->at(i) != 1) passIsolead = false;
-      */
-      const double isoLead = RelIsoPF(i, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
-      if (isoLead >= isoMax) passIsolead = false;
+      const bool passIsolead = (eleIsoPass.at(i) != 0);
 
       for (int j = i + 1; j < nEle; ++j)
       {
-        bool passIsosec = true;
-
         if (elePt->at(j) < ptMin2) continue;
         if (TMath::Abs(eleEta->at(j)) > etaMax) continue;
         if (InEcalGap(eleSCEta->at(j))) continue; // ECAL crack veto, leg 2 (2026-09-14)
-        if (requireTightID && has_eleID && eleMVAIdWP95->at(j) == 0) continue;
+        if (eleIDSel->at(j) == 0) continue;
 
         if (requireOS && eleCharge->at(i) * eleCharge->at(j) >= 0) continue;
 
@@ -2682,27 +2798,42 @@ int skim_Zee(const char *fname, SampleType sample)
         v2.SetPtEtaPhiM(elePt->at(j), eleEta->at(j), elePhi->at(j), ELE_MASS);
         const double m = (v1 + v2).M();
 
-        /* WP-based iso, kept for cross-check
-        if (eleMVAIsoWP95->at(j) != 1) passIsosec = false;
-        */
-        const double isosub = RelIsoPF(j, elePt, elePFChIso, elePFNeuIso, elePFPhoIso, elePFPUIso);
-        if (isosub >= isoMax) passIsosec = false;
+        const bool passIsosec = (eleIsoPass.at(j) != 0);
+
+        // Electron efficiency SFs of this pair (MC; data: 1): RECO for both legs,
+        // IDISO for the legs passing the iso, the two-leg trigger factor.
+        // `w` stays the SF-free event weight (the base of the SF twins).
+        // *** eleSCEta (raw supercluster eta) per leg: electron_sf.h. ***
+        const pOSF::EventSF esf = applySF ? eleSF.Z(elePt->at(i), eleSCEta->at(i), passIsolead,
+                                                    elePt->at(j), eleSCEta->at(j), passIsosec)
+                                          : pOSF::EventSF::Unit();
+        const double wPair = w * esf.nom;
 
         if (passIsolead && passIsosec)
         {
-          hMass_extended->Fill(m, w);
+          hMass_extended->Fill(m, wPair);
           if (!(m < 60 || m > 120))
           {
-            hMass->Fill(m, w);
-            if (lheOk) pOLhe::FillTwins(t_mass, m, mw); // LHE member twins (per pair, per-event weights)
+            hMass->Fill(m, wPair);
+            if (lheOk) // LHE member twins (per pair; member weights rescaled by the pair's SF)
+            {
+              pOLhe::MemberWeights mwPair = mw;
+              pOLhe::ScaleMemberWeights(mwPair, esf.nom);
+              pOLhe::FillTwins(t_mass, m, mwPair);
+            }
+            if (applySF) // electron-SF twins + the <SF> record
+            {
+              pOSF::FillSFTwins(s_mass, m, w, esf);
+              sfStats.Add(w, esf);
+            }
             const TLorentzVector ll = v1 + v2;
-            h_Zpt ->Fill(ll.Pt(),  w);
-            h_Zeta->Fill(ll.Eta(), w);
-            h_Zy  ->Fill(ll.Rapidity(), w);
-            h_Zphi->Fill(ll.Phi(), w);
-            h_lepPt ->Fill(v1.Pt(),  w); h_lepPt ->Fill(v2.Pt(),  w);
-            h_lepEta->Fill(v1.Eta(), w); h_lepEta->Fill(v2.Eta(), w);
-            h_lepPhi->Fill(v1.Phi(), w); h_lepPhi->Fill(v2.Phi(), w);
+            h_Zpt ->Fill(ll.Pt(),  wPair);
+            h_Zeta->Fill(ll.Eta(), wPair);
+            h_Zy  ->Fill(ll.Rapidity(), wPair);
+            h_Zphi->Fill(ll.Phi(), wPair);
+            h_lepPt ->Fill(v1.Pt(),  wPair); h_lepPt ->Fill(v2.Pt(),  wPair);
+            h_lepEta->Fill(v1.Eta(), wPair); h_lepEta->Fill(v2.Eta(), wPair);
+            h_lepPhi->Fill(v1.Phi(), wPair); h_lepPhi->Fill(v2.Phi(), wPair);
 
             // Hadronic recoil: u = -MET - q_T, with q_T = the dielectron (ll).
             // u_par is along q_T (should peak near -q_T), u_perp is transverse.
@@ -2717,10 +2848,10 @@ int skim_Zee(const char *fname, SampleType sample)
                 const double cphi = ll.Px() / qT, sphi = ll.Py() / qT;
                 const double uPar  =  ux * cphi + uy * sphi;
                 const double uPerp = -ux * sphi + uy * cphi;
-                h_uPar    ->Fill(uPar,  w);
-                h_uPerp   ->Fill(uPerp, w);
-                h_uPar_qT ->Fill(qT, uPar,  w);
-                h_uPerp_qT->Fill(qT, uPerp, w);
+                h_uPar    ->Fill(uPar,  wPair);
+                h_uPerp   ->Fill(uPerp, wPair);
+                h_uPar_qT ->Fill(qT, uPar,  wPair);
+                h_uPerp_qT->Fill(qT, uPerp, wPair);
               }
             }
           }
@@ -2729,8 +2860,11 @@ int skim_Zee(const char *fname, SampleType sample)
         if (m < 60 || m > 120) continue;
         if (lead < 20 || sub < 20) continue;
 
-        // Tighter pT cut, no iso requirement.
-        hMass_vipul->Fill(m, w);
+        // Tighter pT cut, no iso requirement -> RECO x trigger only (no ID+iso factor).
+        const double wPairNoIso = applySF ? w * eleSF.Z(elePt->at(i), eleSCEta->at(i), false,
+                                                         elePt->at(j), eleSCEta->at(j), false).nom
+                                          : w;
+        hMass_vipul->Fill(m, wPairNoIso);
         nPassPair++;
       }
     }
@@ -2743,6 +2877,14 @@ int skim_Zee(const char *fname, SampleType sample)
               << "; events without usable ttbar_w: " << nLheSkipped
               << "; events with |rho| > " << pOLhe::kMaxMemberRatio
               << " neutralized (nominal kept, variations dropped): " << nLheCapped << "\n";
+  if (applySF) // the <SF> record of this job
+  {
+    sfStats.Print(std::cout, "skim_Zee selected pairs (Z peak, both legs iso-pass)",
+                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels);
+    eleSF.PrintCounters(std::cout, "skim_Zee");
+    std::cout << "[INFO] electron-SF twin sets booked: " << sfTwinSets.size()
+              << " (hMass: 3 sources + combined " << pOSF::kEleSFCombinedName << ", x Up/Down)\n";
+  }
 
   gSystem->mkdir("rootfile", kTRUE); // ensure ./rootfile exists (fresh checkout)
   TFile *fout = new TFile(("./rootfile/" + outPrefix + "_" + mcTag + "_hist.root").c_str(), "RECREATE");
@@ -2750,6 +2892,7 @@ int skim_Zee(const char *fname, SampleType sample)
   hMass_extended->Write("", 2);
   hMass_vipul->Write("", 2);
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite); // LHE member twins of hMass (MC only)
+  if (applySF) pOSF::FinalizeAndWriteSFTwins(sfTwinSets);      // electron-SF twins of hMass (MC only; combined built here)
   h_Zpt->Write("", 2);   h_Zeta->Write("", 2);   h_Zphi->Write("", 2);   h_Zy->Write("", 2);
   h_lepPt->Write("", 2); h_lepEta->Write("", 2); h_lepPhi->Write("", 2);
   h_uPar->Write("", 2); h_uPerp->Write("", 2);

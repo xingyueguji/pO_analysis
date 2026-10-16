@@ -7,6 +7,7 @@
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the hMass_<syst>Up/Down twins written by skim/lhe_updown.py
 #include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames: the hMass_mu{ID,Iso,Trig}Up/Down twins written by skim.C (muon MC only)
+#include "../skim/electron_sf.h" // pOSF::kEleSFSystNames: the hMass_eleSFUp/Down twins written by skim.C (electron MC only, 2026-09-29)
 
 #include <algorithm>
 #include <fstream>
@@ -241,17 +242,21 @@ void dileptonpeak(bool isElec = 0)
             write_clone(h_Wtau, "wtau");   // W+/W- -> tau nu
             write_clone(h_DYth, "ztau");   // DY -> tau tau
 
-            // --- shape systematics (2026-09-07 LHE, 2026-09-14 muon SFs): <process>_<syst>Up/Down ---
+            // --- shape systematics (2026-09-07 LHE, 2026-09-14 muon SFs, 2026-09-29
+            // electron SFs): <process>_<syst>Up/Down ---
             // Same sources and treatment as the nominal templates above, from
             // the hMass_<syst>Up/Down twins in every MC skim file (nPDF /
-            // qcdScale / alphaS from skim/lhe_updown.py, both flavours; muID /
-            // muIso / muTrig from skim.C, muon channel only): rebinned +
-            // k_s-scaled, W+ + W- summed. A syst is written (and listed in the
-            // sidecar the fork's card generator reads) only when all four
-            // processes have both directions.
+            // qcdScale / alphaS from skim/lhe_updown.py, both flavours; the
+            // combined lepton-SF nuisance from skim.C -- muSF in the muon
+            // channel, eleSF in the electron one): rebinned + k_s-scaled, W+ + W-
+            // summed. A syst is written (and listed in the sidecar the fork's
+            // card generator reads) only when all four processes have both
+            // directions.
             std::vector<std::string> systNames(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
             if (!isElec)
                 systNames.insert(systNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
+            else
+                systNames.insert(systNames.end(), pOSF::kEleSFSystNames, pOSF::kEleSFSystNames + pOSF::kNEleSFSysts);
             std::vector<std::string> systsWritten;
             for (const std::string &systStr : systNames)
             {

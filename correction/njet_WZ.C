@@ -18,9 +18,11 @@
 // jet information, so this macro re-runs the selection on the ntuples):
 //   W channels (Wmu/Wel): the full 8-step W selection at the NOMINAL cuts --
 //     PF lepton pT>25, pO filters + |vz|<15, trigger, DY veto, Tight ID
-//     (mu: muIDTight+PF, e: eleMVAIdWP95), leading-lepton pT>25 & |eta|<2.4,
-//     Delta-beta relIso < 0.15/0.095, trigger match DR<0.4. The gen-reco
-//     match is a no-op in the skim and is skipped here.
+//     (mu: muIDTight+PF, e: eleMVAIdWP90 outside the crack), leading-lepton
+//     pT>25 & |eta|<2.4, isolation (mu: Delta-beta relIso < 0.15; e since
+//     2026-09-29: eleMVAIsoWP90 && relIso < 0.3, both = skim_common.h),
+//     trigger match DR<0.4. The gen-reco match is a no-op in the skim and is
+//     skipped here.
 //     NB there is NO MET/m_T cut in the W selection, so the DATA W sample
 //     contains sizeable QCD (~19% mu / ~50% e of the events, 2026-07-29
 //     numbers) which peaks at HIGH njet -- read the nominal W data/MC njet
@@ -28,8 +30,9 @@
 //     discriminant selection, purity 84.5% mu / 69% e) is filled alongside
 //     as the cleaner W-njet distribution.
 //   Z channels (Zmm/Zee): iso-selected OS pair in the Z peak [60,120] GeV
-//     (legs: pT>10, |eta|<2.4, ID'd (mu: Global+Tight, e: eleMVAIdWP95),
-//     relIso < 0.2/0.095; leading leg pT>15; trigger bit). The event is
+//     (legs: pT>10, |eta|<2.4, ID'd (mu: Global+Tight, e: eleMVAIdWP90
+//     outside the crack), isolated (mu: relIso < 0.15; e: eleMVAIsoWP90 &&
+//     relIso < 0.3); leading leg pT>15; trigger bit). The event is
 //     counted ONCE, on the first accepted pair (skim iteration order);
 //     jets are cleaned against both legs.
 //
@@ -188,7 +191,8 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   // -------- config = the skim's --------
   const double lepPt25     = 25.0;
   const double dyPtMin     = isMu ? 15.0 : 10.0;   // DY-veto leg pT (intentionally asymmetric)
-  const double isoMax      = isMu ? 0.15 : 0.095;
+  // e (since 2026-09-29, = skim_common.h): eleMVAIsoWP90 && relIso < 0.3 -- see passIso below
+  const double isoMax      = isMu ? 0.15 : kEleIsoRelMax;
   const double dyMassMin   = 80.0, dyMassMax = 110.0;
   const double etaMax      = 2.4;
   const double trigMatchDR = 0.4;  // 2026-08-12: tracks skim.C:283/963 (see there)
@@ -254,7 +258,7 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   const char *bEta = isMu ? "muEta"      : "eleEta";
   const char *bPhi = isMu ? "muPhi"      : "elePhi";
   const char *bChg = isMu ? "muCharge"   : "eleCharge";
-  const char *bID  = isMu ? "muIDTight"  : "eleMVAIdWP95";
+  const char *bID  = isMu ? "muIDTight"  : kEleIDBranch; // e: eleMVAIdWP90 since 2026-09-29
   const char *bCh  = isMu ? "muPFChIso"  : "elePFChIso";
   const char *bNeu = isMu ? "muPFNeuIso" : "elePFNeuIso";
   const char *bPho = isMu ? "muPFPhoIso" : "elePFPhoIso";
@@ -289,11 +293,20 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
 
   // ECAL-gap veto input (electrons only, 2026-09-14) -- tracks the skim's eleIDNoGap
   std::vector<float> *scEta = nullptr;
+  std::vector<int>   *eleMVAIso = nullptr; // e iso decision (2026-09-29) -- tracks the skim's eleIsoPass
   if (!isMu)
   {
     if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunW: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
     tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+    if (!HasBranch(tLep, kEleIsoBranch)) { std::cerr << "[FATAL] RunW: missing EventTree branch " << kEleIsoBranch << "\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus(kEleIsoBranch, 1); tLep->SetBranchAddress(kEleIsoBranch, &eleMVAIso);
   }
+  // isolation of lepton i: relIso < isoMax, AND for electrons the MVA iso WP
+  auto passIso = [&](int i) -> bool
+  {
+    if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) return false;
+    return isMu || (eleMVAIso && eleMVAIso->at(i) != 0);
+  };
 
   const bool has_muIsPF = isMu && HasBranch(tLep, "muIsPF");
   if (has_muIsPF) { tLep->SetBranchStatus("muIsPF", 1); tLep->SetBranchAddress("muIsPF", &muIsPF); }
@@ -407,7 +420,7 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
         if (lepID->at(i) == 0) continue;
         if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
         if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
-        if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+        if (!passIso(i)) continue;
         cand.push_back(i);
       }
       bool veto = false;
@@ -439,8 +452,8 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
     if (lepPt->at(iLead) <= lepPt25) continue;
     if (std::abs(lepEta->at(iLead)) > etaMax) continue;
 
-    // (7) leading-lepton isolation
-    if (RelIsoPF(iLead, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+    // (7) leading-lepton isolation (e: MVA iso WP90 && relIso < 0.3)
+    if (!passIso(iLead)) continue;
 
     // (8) trigger match
     if (!PassLeadingLeptonTrigMatch(trigMatchDR, iLead, lepEta, lepPhi,
@@ -485,7 +498,9 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   const double ptMin1  = 15.0; // leading leg
   const double ptMin2  = 10.0; // both legs
   const double etaMax  = 2.4;
-  const double isoMax  = isMu ? 0.15 : 0.095; // = the skim's (Zmm 0.2 -> 0.15 on 2026-09-14, harmonized with the W)
+  // = the skim's (Zmm 0.2 -> 0.15 on 2026-09-14, harmonized with the W; Zee since
+  // 2026-09-29 eleMVAIsoWP90 && relIso < 0.3 = skim_common.h, see passIso below)
+  const double isoMax  = isMu ? 0.15 : kEleIsoRelMax;
   const double vzMax   = 15.0;
   const double massMin = 60.0, massMax = 120.0;
   const double lepMass = isMu ? MU_MASS : ELE_MASS;
@@ -546,7 +561,7 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   const char *bEta = isMu ? "muEta"      : "eleEta";
   const char *bPhi = isMu ? "muPhi"      : "elePhi";
   const char *bChg = isMu ? "muCharge"   : "eleCharge";
-  const char *bID  = isMu ? "muIDTight"  : "eleMVAIdWP95";
+  const char *bID  = isMu ? "muIDTight"  : kEleIDBranch; // e: eleMVAIdWP90 since 2026-09-29
   const char *bCh  = isMu ? "muPFChIso"  : "elePFChIso";
   const char *bNeu = isMu ? "muPFNeuIso" : "elePFNeuIso";
   const char *bPho = isMu ? "muPFPhoIso" : "elePFPhoIso";
@@ -585,11 +600,19 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
 
   // ECAL-gap veto input (electrons only, 2026-09-14) -- both legs, as in skim_Zee
   std::vector<float> *scEta = nullptr;
+  std::vector<int>   *eleMVAIso = nullptr; // e iso decision (2026-09-29), both legs, as in skim_Zee
   if (!isMu)
   {
     if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunZ: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
     tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+    if (!HasBranch(tLep, kEleIsoBranch)) { std::cerr << "[FATAL] RunZ: missing EventTree branch " << kEleIsoBranch << "\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus(kEleIsoBranch, 1); tLep->SetBranchAddress(kEleIsoBranch, &eleMVAIso);
   }
+  auto passIso = [&](int i) -> bool
+  {
+    if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) return false;
+    return isMu || (eleMVAIso && eleMVAIso->at(i) != 0);
+  };
 
   // -------- HLT bit --------
   const std::string hltNeedle = isMu ? "HLT_OxyL1SingleMuOpen_v1" : "HLT_OxyL1SingleEG10_v1";
@@ -669,7 +692,7 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
     for (int i = 0; i < nLep && iSel < 0; ++i)
     {
       if (!passLeg(i)) continue;
-      if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+      if (!passIso(i)) continue;
       for (int j = i + 1; j < nLep; ++j)
       {
         if (!passLeg(j)) continue;
@@ -686,7 +709,7 @@ int RunZ(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
         const double m = (v1 + v2).M();
         if (m < massMin || m > massMax) continue;
 
-        if (RelIsoPF(j, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+        if (!passIso(j)) continue;
 
         iSel = i;
         jSel = j;

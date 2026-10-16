@@ -9,6 +9,7 @@
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> per-sample k_s = sigma*L/N_gen
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames: the <hist>_<syst>Up/Down twins written by skim/lhe_updown.py
 #include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames: the <hist>_mu{ID,Iso,Trig}Up/Down twins written by skim.C (muon MC only)
+#include "../skim/electron_sf.h" // pOSF::kEleSFSystNames: the <hist>_eleSFUp/Down twins written by skim.C (electron MC only, 2026-09-29)
 
 #include <algorithm>
 #include <fstream>
@@ -184,6 +185,23 @@ void mtandmet(bool isElec = 1)
     PlotStyle psCounts = ps;
     psCounts.boxY1 -= 0.025;
     psCounts.boxY2 -= 0.025;
+    // The lepton-pT stacks add two more lines (MC/data and r_pre, see
+    // prefitLines): shift the band down by one more line so the first line
+    // still sits where it does on the two-line box (top at 0.77 either way),
+    // and put the legend under the taller box in TWO columns: 0.1 high (the
+    // same row height as the one-column 0.2), so its bottom edge stays where
+    // the auto legend's was and it covers no more of the stack than before.
+    PlotStyle psLepPt = psCounts;
+    psLepPt.boxY1 -= 0.05;
+    psLepPt.boxY2 -= 0.05;
+    {
+        const double boxBottom = 0.5 * (psLepPt.boxY1 + psLepPt.boxY2) - 0.5 * 0.05 * 5;
+        psLepPt.legX1 = psLepPt.boxX1;
+        psLepPt.legX2 = psLepPt.boxX2;
+        psLepPt.legY2 = boxBottom - 0.025;
+        psLepPt.legY1 = psLepPt.legY2 - 0.1;
+        psLepPt.legNColumns = 2;
+    }
 
     // (Optional) one tuner you can reuse for all plots
     PlotTuner commonTuner = [&](TCanvas *c, TH1 *h)
@@ -266,6 +284,31 @@ void mtandmet(bool isElec = 1)
         return Form("%s: %.0f", withQcd ? "Total MC+QCD" : "Total MC", s);
     };
 
+    // Two more info-box lines of the lepton-pT stacks (2026-10-13): where the
+    // prefit MC sits against the data, from the stack AS DRAWN (bins 1..N, like
+    // the count lines above):
+    //   MC/data = (W + DY + QCD)/data      < 1: the stack is BELOW the data
+    //   r_pre   = (data - DY - QCD)/W      W = W signal + W->tau nu, i.e. what
+    //                                      the fit's r scales; > 1: the data
+    //                                      want more W (the fit's r starts here)
+    // The two are not inverses of each other: r leaves the backgrounds alone.
+    // Error = data Poisson only, sqrt(N)/W. NB the QCD is the DISPLAY template
+    // the stack draws (qcd_pt_mt40), not the fit's in-fit-ABCD prefit
+    // qcd_abcd -- plotting/prefit_r.C prints both (inclusive r differs by
+    // <= 0.03).
+    auto prefitLines = [](TH1 *hData, const std::vector<TH1 *> &wParts,
+                          const std::vector<TH1 *> &stack) -> std::vector<std::string>
+    {
+        auto integ = [](TH1 *h) { return h ? h->Integral(1, h->GetNbinsX()) : 0.0; };
+        const double D = integ(hData);
+        double W = 0.0, tot = 0.0;
+        for (TH1 *h : wParts) W += integ(h);
+        for (TH1 *h : stack) tot += integ(h);
+        if (D <= 0.0 || W <= 0.0) return {};
+        return {Form("MC/data: %.3f", tot / D),
+                Form("r_{pre} = (D#minusB)/W: %.2f#pm%.2f", (D - (tot - W)) / W, std::sqrt(D) / W)};
+    };
+
     // --- ABCD QCD (low-MET) background, MET stacks ----------------------------
     // Inclusive-in-rapidity per-charge QCD MET template from
     // correction/qcd_abcd.C (ABCD: data-EWK anti-iso shape x transfer factor),
@@ -290,6 +333,19 @@ void mtandmet(bool isElec = 1)
     // m_T>40 pT SHAPE, total = A0 = qcdB0*qcdC0/qcdD0 instead of T_MET x V).
     TH1D *abcdCountsPlus = nullptr, *abcdCountsMinus = nullptr;
     TH1D *qcdAbcdPlusBase = nullptr, *qcdAbcdMinusBase = nullptr;
+    // ELECTRONS since 2026-09-29 (user decision): the in-fit SR template is the
+    // FAKE-FACTOR-WEIGHTED one of correction/qcd_abcd.C (buildFFTemplate:
+    // T0 x f(pT) x C40(pT), f = the measured exponential pT dependence of the
+    // fake factor), plus its slope +-1 sigma twins = the qcdFF_ele_<C> shape
+    // nuisance (one per charge). Read as-is -- the total is the FF prediction,
+    // NOT renormalized to the flat A0.
+    TH1D *ffPlus = nullptr, *ffMinus = nullptr;              // qcd_pt_mt40_ff_ele{Plus,Minus}
+    TH1D *ffPlusUp = nullptr, *ffPlusDn = nullptr, *ffMinusUp = nullptr, *ffMinusDn = nullptr;
+    // the slope twins actually used (set only when the FF base was accepted)
+    TH1D *qcdAbcdPlusUpBase = nullptr, *qcdAbcdPlusDnBase = nullptr;
+    TH1D *qcdAbcdMinusUpBase = nullptr, *qcdAbcdMinusDnBase = nullptr;
+    const std::string ffSystName[2] = {"qcdFF_" + std::string(isElec ? "ele" : "mu") + "_Wp",
+                                       "qcdFF_" + std::string(isElec ? "ele" : "mu") + "_Wm"};
     {
         TFile *fqcd = TFile::Open(qcdFile.c_str(), "READ");
         if (fqcd && !fqcd->IsZombie())
@@ -313,6 +369,22 @@ void mtandmet(bool isElec = 1)
             TH1D *cm = (TH1D *)fqcd->Get(Form("abcd_counts_%sMinus", qlep.c_str()));
             if (cp) { abcdCountsPlus  = (TH1D *)cp->Clone("abcd_counts_Plus_loc");  abcdCountsPlus->SetDirectory(nullptr); }
             if (cm) { abcdCountsMinus = (TH1D *)cm->Clone("abcd_counts_Minus_loc"); abcdCountsMinus->SetDirectory(nullptr); }
+            if (isElec) // the fake-factor-weighted SR template + its slope twins (2026-09-29)
+            {
+                auto getFF = [&](const char *nm) -> TH1D * {
+                    TH1D *h = (TH1D *)fqcd->Get(nm);
+                    if (!h) return nullptr;
+                    h = (TH1D *)h->Clone(Form("%s_loc", nm));
+                    h->SetDirectory(nullptr);
+                    return h;
+                };
+                ffPlus    = getFF("qcd_pt_mt40_ff_elePlus");
+                ffMinus   = getFF("qcd_pt_mt40_ff_eleMinus");
+                ffPlusUp  = getFF("qcd_pt_mt40_ff_elePlus_ffUp");
+                ffPlusDn  = getFF("qcd_pt_mt40_ff_elePlus_ffDown");
+                ffMinusUp = getFF("qcd_pt_mt40_ff_eleMinus_ffUp");
+                ffMinusDn = getFF("qcd_pt_mt40_ff_eleMinus_ffDown");
+            }
             fqcd->Close();
             delete fqcd;
         }
@@ -393,8 +465,49 @@ void mtandmet(bool isElec = 1)
                               cg, b0, c0, d0, A0, A0 / v, v);
             return h;
         };
-        qcdAbcdPlusBase  = mkAbcdBase(qcdPtMt40PlusBase,  abcdCountsPlus,  "qcd_abcd_Plus_base",  "W+");
-        qcdAbcdMinusBase = mkAbcdBase(qcdPtMt40MinusBase, abcdCountsMinus, "qcd_abcd_Minus_base", "W-");
+        if (!isElec)
+        {
+            qcdAbcdPlusBase  = mkAbcdBase(qcdPtMt40PlusBase,  abcdCountsPlus,  "qcd_abcd_Plus_base",  "W+");
+            qcdAbcdMinusBase = mkAbcdBase(qcdPtMt40MinusBase, abcdCountsMinus, "qcd_abcd_Minus_base", "W-");
+        }
+        else
+        {
+            // Electrons: the FF-weighted template IS the base (total = the FF
+            // prediction A0ff, printed next to the flat A0 it replaces). It is
+            // taken only if it is complete (nominal + both slope twins) and
+            // matches the A0ff exported with the SAME qcd_abcd.C run -- a stale
+            // or missing FF template must never silently fall back to flat T.
+            auto mkFFBase = [&](TH1D *ff, TH1D *up, TH1D *dn, TH1D *counts, const char *cg) -> bool {
+                if (!ff || !up || !dn || !counts) return false;
+                const double a0ff = countBin(counts, "A0ff");
+                const double b0 = countBin(counts, "qcdB0"), c0 = countBin(counts, "qcdC0"), d0 = countBin(counts, "qcdD0");
+                const double v = ff->Integral();
+                if (a0ff <= 0.0 || std::fabs(v / a0ff - 1.0) > 1e-6)
+                {
+                    std::cerr << Form("[ERROR] qcd_abcd FF template (%s): total %.3f vs exported A0ff %.3f"
+                                      " -- stale qcd_abcd_ele.root, re-run correction/run_qcd_abcd.sh ele\n",
+                                      cg, v, a0ff);
+                    return false;
+                }
+                std::cout << Form("[QCD-ABCD] %s: FAKE-FACTOR template, total A0ff = %.1f (flat A0 = B0*C40/D0 ="
+                                  " %.1f -> FF/flat %.3f); slope twins %.1f / %.1f (%+.1f%% / %+.1f%%)\n",
+                                  cg, v, d0 > 0 ? b0 * c0 / d0 : 0.0, (d0 > 0 && b0 * c0 > 0) ? v / (b0 * c0 / d0) : 0.0,
+                                  up->Integral(), dn->Integral(), 100.0 * (up->Integral() / v - 1.0),
+                                  100.0 * (dn->Integral() / v - 1.0));
+                return true;
+            };
+            if (mkFFBase(ffPlus, ffPlusUp, ffPlusDn, abcdCountsPlus, "W+") &&
+                mkFFBase(ffMinus, ffMinusUp, ffMinusDn, abcdCountsMinus, "W-"))
+            {
+                qcdAbcdPlusBase  = (TH1D *)ffPlus->Clone("qcd_abcd_Plus_base");  qcdAbcdPlusBase->SetDirectory(nullptr);
+                qcdAbcdMinusBase = (TH1D *)ffMinus->Clone("qcd_abcd_Minus_base"); qcdAbcdMinusBase->SetDirectory(nullptr);
+                qcdAbcdPlusUpBase = ffPlusUp;   qcdAbcdPlusDnBase = ffPlusDn;
+                qcdAbcdMinusUpBase = ffMinusUp; qcdAbcdMinusDnBase = ffMinusDn;
+            }
+            else
+                std::cerr << "[ERROR] electron fake-factor SR template (qcd_pt_mt40_ff_ele*) missing, incomplete"
+                          << " or stale in " << qcdFile << " -- qcd_abcd + CR templates will NOT be written.\n";
+        }
         if (!qcdAbcdPlusBase || !qcdAbcdMinusBase)
             std::cerr << "[WARN] abcd_counts_* missing/incomplete in " << qcdFile
                       << " -- re-run correction/run_qcd_abcd.sh. qcd_abcd + CR templates"
@@ -564,12 +677,16 @@ void mtandmet(bool isElec = 1)
     };
 
     // The shape systematics this channel's MC skim files carry: the LHE families
-    // (both flavours; skim/lhe_updown.py) + the lepton-SF families of THIS
-    // flavour (muon: skim/muon_sf.h, written by skim.C; electron: none yet).
-    // Single list for attachSysts() and the sidecar below.
+    // (both flavours; skim/lhe_updown.py) + the lepton-SF family of THIS
+    // flavour (muon: muSF, skim/muon_sf.h; electron since 2026-09-29: eleSF,
+    // skim/electron_sf.h -- both written by skim.C). Single list for
+    // attachSysts() and the sidecar below. (The electron qcdFF shape nuisance
+    // sits on the data-driven qcd_abcd template and is handled separately.)
     std::vector<std::string> systNames(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
     if (!isElec)
         systNames.insert(systNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
+    else
+        systNames.insert(systNames.end(), pOSF::kEleSFSystNames, pOSF::kEleSFSystNames + pOSF::kNEleSFSysts);
 
     // Shape systematics for one region (2026-09-07). For every syst in
     // `systNames` and direction Up/Down, read the per-sample
@@ -622,10 +739,13 @@ void mtandmet(bool isElec = 1)
 
     // One lepton-pT stack region. accumulate=true (lab bins) also feeds the
     // inclusive accumulators, mirroring how h_met_inclusive* are built.
+    // qcdAbcdUp/Dn + qcdSyst (electrons, 2026-09-29): the per-y slope twins of
+    // the FF-weighted qcd_abcd, attached as <qcd_abcd>_<qcdSyst>Up/Down.
     auto lepPtStack = [&](int var, int iy, const char *chg, const char *suf,
                           TH1D *qcdH, const char *sub1, const std::string &sub2,
                           const std::string &outPath, bool accumulate,
-                          TH1D *qcdAbcdH = nullptr) -> bool
+                          TH1D *qcdAbcdH = nullptr, TH1D *qcdAbcdUp = nullptr,
+                          TH1D *qcdAbcdDn = nullptr, const std::string &qcdSyst = "") -> bool
     {
         const std::string nm = Form("%s_%s_y%d%s", varStem[var], chg, iy, suf);
         TH1D *hD = (TH1D *)f->Get(nm.c_str());
@@ -652,12 +772,14 @@ void mtandmet(bool isElec = 1)
             Form("Passing Events: %.0f", hD->Integral(1, hD->GetNbinsX())),
             Form("W signal MC: %.0f", sigInt({hWp, hWm})),
             totalLine(bkgs, names)};
+        for (const std::string &l : prefitLines(hD, {hWp, hWm, hWptau, hWmtau}, bkgs))
+            box.push_back(l);
 
         // pT axes start at the selection floor (bin edge 24 encloses the
         // 25 GeV cut on the 2 GeV grid) -- no empty [0,25) band. The helper
         // restores the full range after saving, so the Combine-input writing
         // below sees untouched histograms.
-        PlotStyle psPt = psCounts;
+        PlotStyle psPt = psLepPt;
         psPt.xRangeLo = 24.0;
         psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(hD, bkgs, names, outPath,
@@ -675,6 +797,17 @@ void mtandmet(bool isElec = 1)
         // and h_leppt_mt40_* only -- which is also why the plain leppt variant
         // was retired (2026-09-21): it could carry none.
         attachSysts(regionsPt[var].back(), Form("_lp%s", varTag[var]), nm.c_str());
+        // The electron fake-factor slope nuisance (one per charge): the slope
+        // +-1 sigma twins of the FF-weighted qcd_abcd, split in y exactly like
+        // the nominal. Stored under Combine's <process>_$SYSTEMATIC naming for
+        // the qcd_abcd histogram; the sidecar lists it for that charge only.
+        if (!qcdSyst.empty() && qcdAbcdH && qcdAbcdUp && qcdAbcdDn)
+        {
+            RegionTemplates &rr = regionsPt[var].back();
+            const std::string pre = rr.dir + Form("_lp%s", varTag[var]);
+            rr.syst["qcd_abcd_" + qcdSyst + "Up"]   = cloneDetached(qcdAbcdUp, (pre + "_qcd_abcd_" + qcdSyst + "Up").c_str());
+            rr.syst["qcd_abcd_" + qcdSyst + "Down"] = cloneDetached(qcdAbcdDn, (pre + "_qcd_abcd_" + qcdSyst + "Down").c_str());
+        }
 
         if (accumulate)
         {
@@ -1273,17 +1406,30 @@ void mtandmet(bool isElec = 1)
             TH1D *qcdA_Wm    = qcdPerY(qcdAbcdMinusBase, wQcdWm[iy],   Form("qcd_abcd_Wm_y%d", iy));
             TH1D *qcdA_Wp_FB = qcdPerY(qcdAbcdPlusBase,  wQcdWpFB[iy], Form("qcd_abcd_Wp_y%d_FB", iy));
             TH1D *qcdA_Wm_FB = qcdPerY(qcdAbcdMinusBase, wQcdWmFB[iy], Form("qcd_abcd_Wm_y%d_FB", iy));
+            // electrons: the qcdFF slope twins, same per-y weights (null otherwise)
+            TH1D *qA_Wp_U    = qcdPerY(qcdAbcdPlusUpBase,  wQcdWp[iy],   Form("qcd_abcd_Wp_y%d_ffU", iy));
+            TH1D *qA_Wp_D    = qcdPerY(qcdAbcdPlusDnBase,  wQcdWp[iy],   Form("qcd_abcd_Wp_y%d_ffD", iy));
+            TH1D *qA_Wm_U    = qcdPerY(qcdAbcdMinusUpBase, wQcdWm[iy],   Form("qcd_abcd_Wm_y%d_ffU", iy));
+            TH1D *qA_Wm_D    = qcdPerY(qcdAbcdMinusDnBase, wQcdWm[iy],   Form("qcd_abcd_Wm_y%d_ffD", iy));
+            TH1D *qA_Wp_FB_U = qcdPerY(qcdAbcdPlusUpBase,  wQcdWpFB[iy], Form("qcd_abcd_Wp_y%d_FB_ffU", iy));
+            TH1D *qA_Wp_FB_D = qcdPerY(qcdAbcdPlusDnBase,  wQcdWpFB[iy], Form("qcd_abcd_Wp_y%d_FB_ffD", iy));
+            TH1D *qA_Wm_FB_U = qcdPerY(qcdAbcdMinusUpBase, wQcdWmFB[iy], Form("qcd_abcd_Wm_y%d_FB_ffU", iy));
+            TH1D *qA_Wm_FB_D = qcdPerY(qcdAbcdMinusDnBase, wQcdWmFB[iy], Form("qcd_abcd_Wm_y%d_FB_ffD", iy));
 
             const std::string mtLab = " , m_{T} > 40 GeV";
             bool ok40 = true;
             ok40 &= lepPtStack(kVarMt40, iy, "Wp", "",    qcd_pt40_Wp,    Channeltypewplus,  yLabel[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d", iy),    /*accumulate=*/true,  qcdA_Wp);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d", iy),    /*accumulate=*/true,  qcdA_Wp,
+                               qA_Wp_U, qA_Wp_D, ffSystName[0]);
             ok40 &= lepPtStack(kVarMt40, iy, "Wm", "",    qcd_pt40_Wm,    Channeltypewminus, yLabel[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d", iy),    /*accumulate=*/true,  qcdA_Wm);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d", iy),    /*accumulate=*/true,  qcdA_Wm,
+                               qA_Wm_U, qA_Wm_D, ffSystName[1]);
             ok40 &= lepPtStack(kVarMt40, iy, "Wp", "_FB", qcd_pt40_Wp_FB, Channeltypewplus,  yLabel_FB[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d_FB", iy), /*accumulate=*/false, qcdA_Wp_FB);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wp_y%d_FB", iy), /*accumulate=*/false, qcdA_Wp_FB,
+                               qA_Wp_FB_U, qA_Wp_FB_D, ffSystName[0]);
             ok40 &= lepPtStack(kVarMt40, iy, "Wm", "_FB", qcd_pt40_Wm_FB, Channeltypewminus, yLabel_FB[iy] + mtLab,
-                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d_FB", iy), /*accumulate=*/false, qcdA_Wm_FB);
+                               outLepPtMt40Dir + Form("/leppt_mt40_Wm_y%d_FB", iy), /*accumulate=*/false, qcdA_Wm_FB,
+                               qA_Wm_FB_U, qA_Wm_FB_D, ffSystName[1]);
             if (!ok40 && iy == 0)
                 std::cerr << "[WARN] h_leppt_mt40_* not found (skim predates the m_T>40"
                           << " lepton-pT histos); m_T>40 stacks skipped.\n";
@@ -1382,9 +1528,12 @@ void mtandmet(bool isElec = 1)
         pushIf(h_leppt_inclusive_MC_Wtau[var], "W+/W- tau");
         pushIf(qcd_pt_mt40_incl, "QCD (ABCD)");
         box.push_back(totalLine(bkgs, names));
+        for (const std::string &l : prefitLines(h_leppt_inclusive[var],
+                                                {h_leppt_inclusive_MC_signal[var], h_leppt_inclusive_MC_Wtau[var]}, bkgs))
+            box.push_back(l);
 
         // pT axis starts at the selection floor (see lepPtStack)
-        PlotStyle psPt = psCounts;
+        PlotStyle psPt = psLepPt;
         psPt.xRangeLo = 24.0;
         psPt.xRangeHi = 100.0;
         SaveNicePlot1D_WithBkg(
@@ -1665,7 +1814,8 @@ void mtandmet(bool isElec = 1)
                 const std::string side = combineOut.substr(0, combineOut.size() - 5) + "_systs.txt";
                 std::ofstream sf(side.c_str());
                 sf << "# Shape systematics in " << combineOut << " (plotting/mtandmet.C)\n"
-                   << "# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>\n";
+                   << "# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>\n"
+                   << "# a process token <hist>@<charge> restricts the row to that charge's channels\n";
                 // directive for the fork's card generator, only when a separate muTrig
                 // nuisance is shipped (today the three sources go in as ONE combined
                 // `muSF`, so this is dormant): its correlation model follows the
@@ -1689,6 +1839,29 @@ void mtandmet(bool isElec = 1)
                     else if (nFull > 0)
                         std::cerr << "[WARN] " << combineOut << ": shape syst " << syst << " complete in only "
                                   << nFull << "/" << regs.size() << " regions -> NOT listed in " << side << "\n";
+                }
+                // The electron fake-factor slope nuisances (2026-09-29): on the
+                // data-driven qcd_abcd template only, ONE PER CHARGE -- the token
+                // qcd_abcd@<charge> puts the fork's `shape` row on the qcd column
+                // of that charge's channels alone (the two slopes are measured
+                // on disjoint samples). Listed only when every region of the
+                // charge carries both directions.
+                for (int ic = 0; ic < 2; ++ic)
+                {
+                    const std::string cg  = (ic == 0) ? "Wp" : "Wm";
+                    const std::string key = "qcd_abcd_" + ffSystName[ic];
+                    int nCh = 0, nFull = 0;
+                    for (auto &r : regs)
+                    {
+                        if (r.dir.compare(0, cg.size() + 1, cg + "_") != 0) continue;
+                        ++nCh;
+                        if (r.syst.count(key + "Up") && r.syst.count(key + "Down")) ++nFull;
+                    }
+                    if (nFull == 0) continue;
+                    if (nFull == nCh) { sf << ffSystName[ic] << " qcd_abcd@" << cg << "\n"; ++nListed; }
+                    else
+                        std::cerr << "[WARN] " << combineOut << ": " << ffSystName[ic] << " complete in only "
+                                  << nFull << "/" << nCh << " " << cg << " regions -> NOT listed in " << side << "\n";
                 }
                 std::cout << "[INFO] shape systematics in " << combineOut << ": " << nListed
                           << " listed in " << side << "\n";

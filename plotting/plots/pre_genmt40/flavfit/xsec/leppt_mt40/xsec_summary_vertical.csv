@@ -1,0 +1,25 @@
+process,row,kind,value_nb,err_lo_nb,err_hi_nb,stat_lo_nb,stat_hi_nb,source
+Wp,mu only,fit,59.65810,2.22357,2.22357,1.27934,1.27934,xsec_flavfit.csv
+Wp,e only,fit,63.54489,2.83559,2.83559,1.86861,1.86861,xsec_flavfit.csv
+Wp,mu + e combined,fit,60.71503,2.12981,2.12981,1.04962,1.04962,xsec_flavfit.csv
+Wp,POWHEG NLO x EPPS21,theory,49.80288,1.90247,1.30918,,,gen_xsec.root member 0, nPDF 68% CL (53 Hessian pairs)
+Wp,pp 5.02 TeV x A,pp,39.60000,0.76349,0.76349,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+Wp,pp 13 TeV x A,pp,82.72000,1.94648,1.94648,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+Wm,mu only,fit,48.61798,1.89018,1.89018,1.15994,1.15994,xsec_flavfit.csv
+Wm,e only,fit,46.26743,2.28481,2.28481,1.63921,1.63921,xsec_flavfit.csv
+Wm,mu + e combined,fit,47.88942,1.74315,1.74315,0.93213,0.93213,xsec_flavfit.csv
+Wm,POWHEG NLO x EPPS21,theory,39.62681,1.44860,0.98119,,,gen_xsec.root member 0, nPDF 68% CL (53 Hessian pairs)
+Wm,pp 5.02 TeV x A,pp,24.40000,0.47193,0.47193,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+Wm,pp 13 TeV x A,pp,62.91200,1.44293,1.44293,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+W,mu only,fit,108.27608,3.72359,3.72359,1.73307,1.73307,xsec_flavfit.csv
+W,e only,fit,109.81232,4.41074,4.41074,2.48566,2.48566,xsec_flavfit.csv
+W,mu + e combined,fit,108.60445,3.59762,3.59762,1.40649,1.40649,xsec_flavfit.csv
+W,POWHEG NLO x EPPS21,theory,89.42970,3.33702,2.27820,,,gen_xsec.root member 0, nPDF 68% CL (53 Hessian pairs)
+W,pp 5.02 TeV x A,pp,64.00000,1.22961,1.22961,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+W,pp 13 TeV x A,pp,145.76000,3.39788,3.39788,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+Z,mu only,fit,9.41298,0.56818,0.56818,0.49230,0.49230,xsec_flavfit.csv
+Z,e only,fit,11.92344,0.91667,0.91667,0.78865,0.78865,xsec_flavfit.csv
+Z,mu + e combined,fit,10.19862,0.52258,0.52258,0.41754,0.41754,xsec_flavfit.csv
+Z,POWHEG NLO x EPPS21,theory,8.76923,0.31720,0.22882,,,gen_xsec.root member 0, nPDF 68% CL (53 Hessian pairs)
+Z,pp 5.02 TeV x A,pp,5.11680,0.10206,0.10206,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)
+Z,pp 13 TeV x A,pp,12.06400,0.27805,0.27805,,,CMS JHEP 04 (2025) 162, pp fiducial x A (total unc.)

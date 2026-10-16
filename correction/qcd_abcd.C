@@ -76,6 +76,25 @@
 // machinery and the original kappa budget are UNCHANGED (QCD_MODE=lnN|free
 // still consume them).
 //
+// ELECTRON CHANNEL SINCE 2026-09-29 (user decisions): (1) the electron
+// selection is the forest WP90 MVA ID + WP90 MVA iso (+ relIso < 0.3), whose
+// iso-pass is a boolean, so the skim stores the electron ABCD planes on an
+// "iso axis" (skim_common.h EleIsoAxis): iso-pass at relIso - 0.3 in
+// [-0.3, 0), everything else at its relIso. Here that is just a different
+// ABCDConfig: iso-pass = [isoPassLo, isoCut) = [-0.3, 0), anti-iso sideband =
+// [0.3, 1.0), the gap = the MVA-iso-failing electrons below relIso 0.3. The
+// muon keeps isoPassLo = 0 (relIso axis), so every muon number is unchanged.
+// (2) the electron SR QCD template is FAKE-FACTOR WEIGHTED instead of flat-T
+// (buildFFTemplate): QCD_SR(pT) = T0 x f(pT) x C40(pT), with f(pT) =
+// exp(s (pT-40)/10) normalized to 1 on the anti-iso m_T<30 (D) pT spectrum and
+// s = the slope measured by runFFCheck's likelihood fit in the m_T < 30
+// control region. In the fit the in-fit ABCD scales sB/sC/sD keep floating
+// the LEVEL T0 = B0/D0 and C40 (unchanged 1-bin CRs); s enters as ONE
+// Gaussian-constrained shape nuisance per charge (qcdFF_ele_Wp/Wm, the
+// template at the slope's 68% profile-likelihood edges). The FF-shift row
+// therefore leaves the electron residual lnN, which becomes the anti-iso
+// window variation of the FF-weighted total.
+//
 // Inputs : ../skim/rootfile/WToMuNu_pO_PFMet_hist.root        (data)
 //          ../skim/rootfile/WToMuNu_pO_PFMet_{Wp,Wm,DY,DYtau,Wptau,Wmtau}_hist.root
 // Output : ./plots/qcd_abcd_mu/{met_fit,leppt_fit}/  (two self-contained views,
@@ -111,19 +130,31 @@
 #include <vector>
 
 #include "../plotting/plotting_helper.C"
-#include "../skim/mc_norm.h" // pONorm::MCScale -> per-sample k_s = A*sigma*L/N_gen
+#include "../skim/mc_norm.h"     // pONorm::MCScale -> per-sample k_s = A*sigma*L/N_gen
+#include "../skim/skim_common.h" // pOSkim::kEleIsoAxisLo / kEleAntiIsoLo/Hi: the electron iso axis
 
 namespace
 {
 // ---------------- ABCD configuration (all tunable; projections, no re-skim) --
 struct ABCDConfig
 {
+  // iso-pass (regions A, B) = x in [isoPassLo, isoCut). The muon planes carry
+  // plain relIso, so isoPassLo = 0; the electron planes carry the iso axis of
+  // skim_common.h (iso-pass stored at relIso - 0.3), so there isoPassLo =
+  // -0.3 and isoCut = 0 (2026-09-29).
+  double isoPassLo = 0.0;
   double isoCut    = 0.15; // signal: relIso < isoCut          (regions A, B)
   double isoFailLo = 0.30; // anti-iso sideband, low edge      (regions C, D)
   double isoFailHi = 1.00; // anti-iso sideband, high edge
   // y-axis split: high (>=) vs low (<). Named yCut, NOT metCut: the same value
   // splits whichever y the plane carries (MET on the met pass, m_T on the mt pass).
   double yCut      = 30.0;
+  // x-axis title of the relIso-like axis (plots only)
+  std::string isoTitle = "relIso";
+  // Fake-factor-weighted SR template (buildFFTemplate) instead of flat T:
+  // electrons since 2026-09-29 (user decision); the muon F(pT) is flat (LRT
+  // p = 0.82/0.84), so the muon keeps the flat T.
+  bool useFF = false;
 };
 
 // The lepton-pT discriminant's m_T cut (= mtCutForPtDisc in the skim). The
@@ -325,9 +356,9 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   c->SetRightMargin(0.15);
   c->SetLeftMargin(0.13);
   h->SetTitle("");
-  h->GetXaxis()->SetTitle("relIso");
+  h->GetXaxis()->SetTitle(cfg.isoTitle.c_str());
   h->GetYaxis()->SetTitle(ytit);
-  h->GetXaxis()->SetRangeUser(0.0, cfg.isoFailHi);
+  h->GetXaxis()->SetRangeUser(cfg.isoPassLo, cfg.isoFailHi);
   if (yLo >= 0.0)
     h->GetYaxis()->SetRangeUser(yLo, h->GetYaxis()->GetXmax());
   // visible y-range edges (== full axis unless yLo zoomed it) for lines/boxes
@@ -351,12 +382,12 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
   };
   vline(cfg.isoCut);
   vline(cfg.isoFailLo);
-  if (drawYSplit) hline(cfg.yCut, 0.0, cfg.isoFailHi);
+  if (drawYSplit) hline(cfg.yCut, cfg.isoPassLo, cfg.isoFailHi);
   if (srCut > 0.0)
   {
-    hline(srCut, 0.0, cfg.isoFailHi);
+    hline(srCut, cfg.isoPassLo, cfg.isoFailHi);
     // shade the EXCLUDED bands: the y buffer and the relIso gap
-    TBox *by = new TBox(0.0, cfg.yCut, cfg.isoFailHi, srCut);
+    TBox *by = new TBox(cfg.isoPassLo, cfg.yCut, cfg.isoFailHi, srCut);
     by->SetFillColorAlpha(kGray + 2, 0.35);
     by->SetLineWidth(0);
     by->Draw();
@@ -369,7 +400,7 @@ void draw2D(TH2 *h, const ABCDConfig &cfg, const std::string &outNoExt,
     lr.SetTextSize(0.045);
     lr.SetTextAlign(22);
     const double ymax  = yVis2;
-    const double xPass = 0.5 * cfg.isoCut;
+    const double xPass = 0.5 * (cfg.isoPassLo + cfg.isoCut);
     const double xFail = 0.5 * (cfg.isoFailLo + cfg.isoFailHi);
     lr.DrawLatex(xPass, 0.5 * cfg.yCut, "B");
     lr.DrawLatex(xFail, 0.5 * cfg.yCut, "D");
@@ -418,15 +449,15 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
   if (ewk2D) qcd2D->Add(ewk2D, -1.0);
 
   // --- region counts (QCD-only) ---
-  res.A = count2D(qcd2D, 0.0, cfg.isoCut,            cfg.yCut, 1e9);
-  res.B = count2D(qcd2D, 0.0, cfg.isoCut,            0.0,        cfg.yCut);
+  res.A = count2D(qcd2D, cfg.isoPassLo, cfg.isoCut,  cfg.yCut, 1e9);
+  res.B = count2D(qcd2D, cfg.isoPassLo, cfg.isoCut,  0.0,        cfg.yCut);
   res.C = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, cfg.yCut, 1e9);
   res.D = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, 0.0,        cfg.yCut);
 
   // context: raw data and EWK in EVERY region (purity table + r-scan inputs)
   auto reg = [&](TH2 *h, int which) -> Count {
     if (!h) return Count{};
-    const double xlo = (which < 2) ? 0.0 : cfg.isoFailLo;
+    const double xlo = (which < 2) ? cfg.isoPassLo : cfg.isoFailLo;
     const double xhi = (which < 2) ? cfg.isoCut : cfg.isoFailHi;
     const bool   hi  = (which % 2 == 0);           // 0=A,1=B,2=C,3=D
     return count2D(h, xlo, xhi, hi ? cfg.yCut : 0.0, hi ? 1e9 : cfg.yCut);
@@ -475,7 +506,7 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
   {
     TH2D *h = (TH2D *)m.f->Get(hname.c_str());
     if (!h) continue;
-    Count c = count2D(h, 0.0, cfg.isoCut, 0.0, cfg.yCut); // region B, raw MC
+    Count c = count2D(h, cfg.isoPassLo, cfg.isoCut, 0.0, cfg.yCut); // region B, raw MC
     const double k = pONorm::MCScale(m.label);
     c.n *= k;
     c.e *= k;
@@ -510,7 +541,7 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
     double maxdev = 0.0;
     for (int i = 0; i < 5; ++i)
     {
-      const Count b = count2D(qcd2D, 0.0, cfg.isoCut, edges[i][0], edges[i][1]);
+      const Count b = count2D(qcd2D, cfg.isoPassLo, cfg.isoCut, edges[i][0], edges[i][1]);
       const Count d = count2D(qcd2D, cfg.isoFailLo, cfg.isoFailHi, edges[i][0], edges[i][1]);
       const double t = (d.n != 0.0) ? b.n / d.n : 0.0;
       const double dev = (res.T != 0.0) ? 100.0 * (t / res.T - 1.0) : 0.0;
@@ -584,9 +615,9 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
            ytit.c_str(), /*drawYSplit=*/true, /*srCut=*/kSRMtCut);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
-  TH1D *passData = projY(data2D, 0.0, cfg.isoCut,
+  TH1D *passData = projY(data2D, cfg.isoPassLo, cfg.isoCut,
                          Form("pass_data_%s_%s%s", plane.c_str(), lep.c_str(), chg.c_str()));
-  TH1D *passEWK = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut,
+  TH1D *passEWK = ewk2D ? projY(ewk2D, cfg.isoPassLo, cfg.isoCut,
                                 Form("pass_ewk_%s_%s%s", plane.c_str(), lep.c_str(), chg.c_str()))
                         : nullptr;
 
@@ -688,9 +719,9 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
          /*drawYSplit=*/false, /*srCut=*/-1.0, /*yLo=*/kPtAxisLo);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
-  TH1D *passData = projY(data2D, 0.0, cfg.isoCut,
+  TH1D *passData = projY(data2D, cfg.isoPassLo, cfg.isoCut,
                          Form("pass_data_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
-  TH1D *passEWK = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut,
+  TH1D *passEWK = ewk2D ? projY(ewk2D, cfg.isoPassLo, cfg.isoCut,
                                 Form("pass_ewk_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()))
                         : nullptr;
 
@@ -790,14 +821,24 @@ struct ChargeInfo
   double ffShift = 0;                  // FF-weighted vs flat-T total, % (runFFCheck)
   double ffShiftErr = 0;               // its statistical uncertainty (toys), %
   std::string ffShiftP = "= 1";        // toy p(shift this far out | F flat in pT), with its relation
+  // The fitted slope of F = F0 exp(s (pT-40)/10) (runFFCheck, profile likelihood
+  // over the drawn bins) with its 68% CL interval, and the SAME fit with the
+  // W-related EWK subtracted at r_W = 1.2 (the coherent-subtraction record).
+  bool   ffOk = false;
+  double ffS = 0, ffSLo = 0, ffSHi = 0, ffF0 = 0, ffSr12 = 0;
+  // The fake-factor-weighted SR template (buildFFTemplate, cfg.useFF): totals
+  // at s-hat / the interval edges, and the anti-iso window spread of the
+  // nominal total (%) = the residual lnN of the FF model. Templates owned here.
+  double ffA0 = 0, ffA0Up = 0, ffA0Dn = 0, ffWin = 0;
+  TH1D  *ffTmpl = nullptr, *ffTmplUp = nullptr, *ffTmplDn = nullptr;
 };
 
 // Iso-pass data yield of a lepton-pT plane (the denominator of the QCD fraction).
-double isoPassData(TFile *fData, const std::string &hname, double isoCut)
+double isoPassData(TFile *fData, const std::string &hname, double isoPassLo, double isoCut)
 {
   TH2D *h = (TH2D *)fData->Get(hname.c_str());
   if (!h) return 0.0;
-  return count2D(h, 0.0, isoCut, 0.0, 1e9).n;
+  return count2D(h, isoPassLo, isoCut, 0.0, 1e9).n;
 }
 
 // ----------------------------------------------------------------------------
@@ -993,6 +1034,53 @@ FFFlatness ffFlatness(const std::vector<double> &x, const std::vector<double> &n
   return r;
 }
 
+// 68% CL profile-likelihood interval of the slope s of F = F0 exp(s(pT-40)/10)
+// over the same bins and per-bin model as ffFlatness (F0 profiled with the
+// same ffMaximize range, so the maximum is ffFlatness's own): 2 DeltalnL = 1,
+// bracketed outward from sHat in 0.01 steps, then bisected. Returns false if a
+// side does not close within |s - sHat| < 2 (that edge is then the scan end).
+bool ffSlopeInterval(const std::vector<double> &x, const std::vector<double> &np,
+                     const std::vector<double> &nf, const std::vector<double> &bp,
+                     const std::vector<double> &bf, double sHat, double &lo, double &hi)
+{
+  const size_t n = x.size();
+  auto prof = [&](double s) {
+    auto inner = [&](double F0) {
+      double t = 0.0;
+      for (size_t k = 0; k < n; ++k)
+        t += ffLnL(F0 * std::exp(s * (x[k] - 40.0) / 10.0), np[k], nf[k], bp[k], bf[k]);
+      return t;
+    };
+    double best = 0.0;
+    ffMaximize(inner, 0.0, 2.0, 60, best);
+    return best;
+  };
+  const double Lmax = prof(sHat);
+  auto q = [&](double s) { return 2.0 * (Lmax - prof(s)) - 1.0; }; // <= 0 inside
+  bool ok = true;
+  for (int side = -1; side <= 1; side += 2)
+  {
+    double inside = sHat, out = sHat;
+    bool found = false;
+    for (int k = 1; k <= 200; ++k)
+    {
+      out = sHat + side * 0.01 * k;
+      if (q(out) > 0.0) { found = true; break; }
+      inside = out;
+    }
+    if (found)
+      for (int it = 0; it < 40; ++it)
+      {
+        const double m = 0.5 * (inside + out);
+        if (q(m) > 0.0) out = m; else inside = m;
+      }
+    else
+      ok = false;
+    (side < 0 ? lo : hi) = found ? 0.5 * (inside + out) : out;
+  }
+  return ok;
+}
+
 // a p-value for a TLatex label: 0.123 or 5.7#times10^{-4}
 std::string ffFmtP(double p)
 {
@@ -1009,10 +1097,13 @@ std::string ffFmtP(double p)
 // number. The group's alternative ("fake factor method") would instead measure
 // F(pT) = QCD(iso-pass)/QCD(anti-iso) per pT bin in the dijet-dominated
 // m_T < yCut region and apply it bin-by-bin to the anti-iso m_T > 40 sideband.
-// Here that is run as a CHECK of the flat-T assumption, deliberately kept out
-// of the fit (the per-bin prompt subtraction is still prefit-r and the B-region
-// stats are thin; if F(pT) shows a genuine trend, the documented upgrade is
-// Combine's RooParametricHist bin-by-bin ABCD): compare
+// Here that is run as a CHECK of the flat-T assumption (both flavours). Since
+// 2026-09-29 the ELECTRON fit uses the fake factor (user decision, after the
+// 4.4-4.8 sigma rise measured below): NOT bin by bin (thin B stats, per-bin
+// prefit-r subtraction) but through the exponential fit's ONE slope, which
+// buildFFTemplate turns into the SR template and its qcdFF Up/Down; the
+// in-fit CRs keep floating the level. (The fully per-bin in-fit version would
+// be Combine's RooParametricHist ABCD -- not done.) Compare
 //   P(pT)    = F(pT) x N_antiiso,mT>40(pT)     (fake-factor prediction)
 //   Flat(pT) = T_mT  x N_antiiso,mT>40(pT)     (what the fit uses)
 // and quote the per-bin F/T deviations and the total shift.
@@ -1210,6 +1301,17 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::vector<M
   const int dofFree = std::max((int)dx.size() - 1, 1);
   const double pFree = TMath::Prob(fl.qFree(), dofFree);
   const double pSlope = TMath::Prob(fl.qSlope(), 1);
+  // The slope of the exponential fit and its 68% CL profile-likelihood
+  // interval -> ChargeInfo: buildFFTemplate turns it into the electron SR
+  // template and its qcdFF Up/Down (printed with the flatness tests below).
+  {
+    double lo = fl.s, hi = fl.s;
+    ci.ffOk  = !dx.empty() && ffSlopeInterval(dx, dnp, dnf, dbp, dbf, fl.s, lo, hi);
+    ci.ffS   = fl.s;
+    ci.ffSLo = lo;
+    ci.ffSHi = hi;
+    ci.ffF0  = fl.F0s;
+  }
 
   // The FF-vs-flat total from per-bin COUNTS, built exactly like pred/flat
   // (F = T where D < kMinDen), with T = sum N / sum D over the same bins
@@ -1346,6 +1448,18 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::vector<M
     dFlo = std::min(dFlo, 100.0 * (F2 / F1 - 1.0));
     dFhi = std::max(dFhi, 100.0 * (F2 / F1 - 1.0));
   }
+  // ... and the slope refitted with that subtraction (the prefit-r dependence
+  // of the FF template's one shape parameter)
+  {
+    std::vector<double> rbp, rbf;
+    for (const FFBin &b : B)
+      if (b.drawn)
+      {
+        rbp.push_back(std::max(b.bp + (kRW - 1.0) * b.wp, kBFloor));
+        rbf.push_back(std::max(b.bf + (kRW - 1.0) * b.wf, kBFloor));
+      }
+    ci.ffSr12 = ffFlatness(dx, dnp, dnf, rbp, rbf, true).s;
+  }
 
   // ---- printed table + totals (the log is the AN's source) ----
   std::cout << "\n=== per-pT-bin fake factor (diagnostic)  " << lep << " " << chg
@@ -1424,6 +1538,15 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::vector<M
                     "  FF/flat - 1 %+.1f%% -> %+.1f%%\n",
                     kRW, Tcnt, Tr, Tcnt != 0.0 ? 100.0 * (Tr / Tcnt - 1.0) : 0.0, dFlo, dFhi,
                     100.0 * shiftCnt, 100.0 * shiftR);
+  std::cout << Form("  exponential slope (the FF template's shape parameter): s = %.4f  68%% CL"
+                    " [%.4f, %.4f] (%+.4f / %+.4f)%s  -> F x %.3f [%.3f, %.3f] per 10 GeV;"
+                    "  F0(40 GeV) = %.4f\n"
+                    "    with the W-related EWK at r_W = %.1f: s = %.4f (%+.4f = %+.2f sigma)\n",
+                    ci.ffS, ci.ffSLo, ci.ffSHi, ci.ffSHi - ci.ffS, ci.ffSLo - ci.ffS,
+                    ci.ffOk ? "" : "  [interval did NOT close -- edge = scan end]",
+                    std::exp(ci.ffS), std::exp(ci.ffSLo), std::exp(ci.ffSHi), ci.ffF0,
+                    kRW, ci.ffSr12, ci.ffSr12 - ci.ffS,
+                    (ci.ffSHi > ci.ffSLo) ? 2.0 * (ci.ffSr12 - ci.ffS) / (ci.ffSHi - ci.ffSLo) : 0.0);
 
   // ---- F(pT): profile-likelihood intervals, the flat line, the slope fit ----
   // The statistics sit in a top margin above the frame (not inside it): the
@@ -1565,6 +1688,199 @@ void runFFCheck(TFile *fData, const std::vector<MCFile> &mc, const std::vector<M
 }
 
 // ----------------------------------------------------------------------------
+// FAKE-FACTOR-WEIGHTED SR TEMPLATE (cfg.useFF: electrons since 2026-09-29,
+// user decision "change the uniform transfer factor to a pT-dependent fake
+// factor of electrons"; fitted in-fit, QCD_MODE=abcd):
+//     QCD_SR(pT_j) = T0 x f(pT_j) x C40(pT_j)
+//   C40(pT_j) : the anti-iso (isoFail window) m_T > 40 lepton-pT spectrum,
+//               data - EWK(r=1), negative bins clamped -- the flat template's
+//               own shape (h_iso_pt_mt40 plane, 2 GeV bins = the fit's bins)
+//   f(pT)     : g(pT) / <g>_D, g = exp(s (pT - 40)/10), <g>_D = the average of
+//               g over the anti-iso m_T < yCut pT spectrum D(pT) (pT >= 25,
+//               data - EWK; the h_pt_mt_antiiso plane, 1 GeV bins)
+//   T0        : B0/D0 of the m_T plane = the in-fit ABCD's own counts
+// By construction sum_i D_i T0 f_i = T0 D0 = B0: at m_T < 30 the FF model
+// reproduces exactly the counts the flat T is built from and only
+// redistributes them in pT; C40 being harder than D, the SR total goes UP (the
+// "FF shift" of runFFCheck). In the fit the 1-bin CRs and the formula
+// sB sC/sD keep floating the LEVEL (T0, C40) exactly as for the flat
+// template; the one SHAPE parameter s is runFFCheck's profile-likelihood fit
+// (m_T < 30, EWK at r = 1) and enters as a Gaussian-constrained shape
+// nuisance per charge (qcdFF_<lep>_<C> in the fork): the Up/Down templates
+// are this construction at the 68% interval edges of s, each re-normalized on
+// D, so they move the SR total as well (the FF-shift uncertainty). The
+// residual lnN of the FF model is the anti-iso window variation of the
+// FF-weighted total (nominal s and D normalization; T0 and C40 re-projected
+// per window). f is evaluated at the centre of the populated part of each bin
+// (the [24,26) bin holds 25-26 GeV only). The pT > 100 overflow is not in the
+// template: the fit drops it (data and MC alike).
+// Writes qcd_pt_mt40_ff_<lep><chg> and its _ffUp / _ffDown twins; mtandmet.C
+// uses them as the electron qcd_abcd template and its qcdFF variation.
+// ----------------------------------------------------------------------------
+void buildFFTemplate(TFile *fData, const std::vector<MCFile> &mc, const std::string &chg,
+                     const ABCDConfig &cfg, const std::string &lep, ChargeInfo &ci,
+                     TFile *fout)
+{
+  const std::string tagc = lep + chg;
+  if (!ci.ffOk || ci.mt.D.n <= 0.0 || ci.mt.B.n <= 0.0)
+  {
+    std::cerr << "[ERR] buildFFTemplate " << tagc << ": no valid fake-factor slope or"
+              << " m_T-plane B/D (runFFCheck / runPlaneCharge) -> NO FF template written;"
+              << " mtandmet.C will then refuse to write the qcd_abcd template\n";
+    return;
+  }
+  // (1) C40(pT): the anti-iso m_T > 40 pT spectrum, QCD-only, clamped
+  const std::string hpt = Form("h_iso_pt_mt40_%s", tagc.c_str());
+  TH2D *qPt = (TH2D *)fData->Get(hpt.c_str());
+  // (2) D(pT): the anti-iso m_T < yCut pT spectrum, QCD-only
+  const std::string hanti = Form("h_pt_mt_antiiso_%s", tagc.c_str());
+  TH2D *qA = (TH2D *)fData->Get(hanti.c_str());
+  // the m_T counting plane: D0 per anti-iso window (window systematic)
+  const std::string hmt = Form("h_iso_mt_%s", tagc.c_str());
+  TH2D *qMt = (TH2D *)fData->Get(hmt.c_str());
+  if (!qPt || !qA || !qMt)
+  {
+    std::cerr << "[ERR] buildFFTemplate " << tagc << ": missing " << hpt << " / " << hanti
+              << " / " << hmt << " -> NO FF template written\n";
+    return;
+  }
+  auto qcdOnly = [&](TH2D *d, const std::string &hname) -> TH2D * {
+    TH2D *q = (TH2D *)d->Clone(Form("%s_ffq", hname.c_str()));
+    q->SetDirectory(nullptr);
+    if (TH2D *e = sumEWK2D(mc, hname.c_str(), Form("%s_ffqe", hname.c_str()))) { q->Add(e, -1.0); delete e; }
+    return q;
+  };
+  qPt = qcdOnly(qPt, hpt);
+  qA  = qcdOnly(qA, hanti);
+  qMt = qcdOnly(qMt, hmt);
+
+  auto c40Of = [&](double lo, double hi, const char *nm) -> TH1D * {
+    TH1D *h = projY(qPt, lo, hi, nm);
+    for (int j = 1; j <= h->GetNbinsX(); ++j)
+      if (h->GetBinContent(j) < 0.0) h->SetBinContent(j, 0.0);
+    return h;
+  };
+  TH1D *c40 = c40Of(cfg.isoFailLo, cfg.isoFailHi, Form("ff_c40_%s", tagc.c_str()));
+  const int nb = c40->GetNbinsX();
+
+  const int byhi = qA->GetYaxis()->FindBin(cfg.yCut - 1e-6);
+  TH1D *dSpec = qA->ProjectionX(Form("ff_dspec_%s", tagc.c_str()), 1, byhi);
+  dSpec->SetDirectory(nullptr);
+  const double kPtMin = 25.0;
+  // f is evaluated at the centre of the POPULATED part of a bin (pT > 25)
+  auto xEff = [&](const TAxis *ax, int i) -> double {
+    return 0.5 * (std::max(ax->GetBinLowEdge(i), kPtMin) + ax->GetBinUpEdge(i));
+  };
+  auto g = [](double s, double x) { return std::exp(s * (x - 40.0) / 10.0); };
+  // <g>_D over pT >= 25 (the pT > 100 overflow counted at 105 GeV)
+  auto meanG = [&](double s) -> double {
+    double sw = 0.0, sg = 0.0;
+    const TAxis *ax = dSpec->GetXaxis();
+    for (int i = 1; i <= dSpec->GetNbinsX() + 1; ++i)
+    {
+      const bool ovf = (i > dSpec->GetNbinsX());
+      if (!ovf && ax->GetBinUpEdge(i) <= kPtMin + 1e-6) continue;
+      const double x = ovf ? 105.0 : xEff(ax, i);
+      const double d = dSpec->GetBinContent(i);
+      sw += d;
+      sg += d * g(s, x);
+    }
+    return (sw > 0.0 && sg > 0.0) ? sg / sw : 1.0;
+  };
+  const double T0 = ci.mt.B.n / ci.mt.D.n; // == ci.mt.T
+  auto make = [&](double s, const std::string &nm, const char *what) -> TH1D * {
+    TH1D *h = (TH1D *)c40->Clone(nm.c_str());
+    h->SetDirectory(nullptr);
+    h->SetTitle(Form("QCD SR template (%s), FF-weighted %s: T0 x f(p_{T}) x C40(p_{T}), s = %.4f;"
+                     "p_{T} [GeV];events", tagc.c_str(), what, s));
+    const double norm = meanG(s);
+    for (int j = 0; j <= nb + 1; ++j)
+    {
+      if (j == 0 || j == nb + 1) { h->SetBinContent(j, 0.0); h->SetBinError(j, 0.0); continue; }
+      const double f = g(s, xEff(h->GetXaxis(), j)) / norm;
+      h->SetBinContent(j, T0 * f * c40->GetBinContent(j));
+      h->SetBinError(j, T0 * f * c40->GetBinError(j)); // shape stat only (as ScaleToIsoPass)
+    }
+    return h;
+  };
+  ci.ffTmpl   = make(ci.ffS,   "qcd_pt_mt40_ff_" + tagc,            "(nominal slope)");
+  ci.ffTmplUp = make(ci.ffSHi, "qcd_pt_mt40_ff_" + tagc + "_ffUp",   "(slope +1 sigma)");
+  ci.ffTmplDn = make(ci.ffSLo, "qcd_pt_mt40_ff_" + tagc + "_ffDown", "(slope -1 sigma)");
+  ci.ffA0   = ci.ffTmpl->Integral(1, nb);
+  ci.ffA0Up = ci.ffTmplUp->Integral(1, nb);
+  ci.ffA0Dn = ci.ffTmplDn->Integral(1, nb);
+  const double flatIn = T0 * c40->Integral(1, nb); // flat T0 over the SAME bins
+
+  // (4) the anti-iso window variation of the FF-weighted total
+  const double lo[4] = {cfg.isoFailLo - 0.05, cfg.isoFailLo, cfg.isoFailLo + 0.05, cfg.isoFailLo + 0.10};
+  const double hi[3] = {cfg.isoFailHi, 0.60, 0.50};
+  const double norm0 = meanG(ci.ffS);
+  std::ostringstream wl;
+  double maxdev = 0.0;
+  for (int il = 0; il < 4; ++il)
+    for (int ih = 0; ih < 3; ++ih)
+    {
+      if (il != 1 && ih != 0) continue;
+      if (hi[ih] <= lo[il] + 0.05) continue;
+      const Count d = count2D(qMt, lo[il], hi[ih], 0.0, cfg.yCut);
+      if (d.n <= 0.0) continue;
+      TH1D *cw = c40Of(lo[il], hi[ih], Form("ff_c40w_%s_%d_%d", tagc.c_str(), il, ih));
+      double a = 0.0;
+      for (int j = 1; j <= nb; ++j)
+        a += g(ci.ffS, xEff(cw->GetXaxis(), j)) / norm0 * cw->GetBinContent(j);
+      a *= ci.mt.B.n / d.n;
+      delete cw;
+      const double dev = (ci.ffA0 > 0.0) ? 100.0 * (a / ci.ffA0 - 1.0) : 0.0;
+      if (std::fabs(dev) > maxdev) maxdev = std::fabs(dev);
+      wl << Form("    anti-iso [%.3f,%.2f): T0 = %.4f  FF total = %7.1f (%+6.1f%%)\n",
+                 lo[il], hi[ih], ci.mt.B.n / d.n, a, dev);
+    }
+  ci.ffWin = maxdev;
+
+  // (5) the record
+  std::cout << "\n=== FAKE-FACTOR-WEIGHTED SR TEMPLATE (the electron qcd_abcd of QCD_MODE=abcd)  "
+            << lep << " " << chg << " ===\n"
+            << Form("  QCD_SR(pT) = T0 x f(pT) x C40(pT);  T0 = B0/D0 = %.1f/%.1f = %.4f (m_T plane);"
+                    "  f = e^{s(pT-40)/10} / <.>_D\n", ci.mt.B.n, ci.mt.D.n, T0)
+            << Form("  slope s = %.4f [%.4f, %.4f] (68%% prof.-lik., runFFCheck) -> F x %.3f per 10 GeV;"
+                    "  <e^{s(pT-40)/10}>_D = %.4f -> F(40 GeV) = T0/<.>_D = %.4f (fitted F0 %.4f)\n",
+                    ci.ffS, ci.ffSLo, ci.ffSHi, std::exp(ci.ffS), norm0,
+                    norm0 > 0.0 ? T0 / norm0 : 0.0, ci.ffF0)
+            << Form("  SR total (pT 24-100, the fitted range): FF = %.1f   [slope +1 sigma %.1f (%+.1f%%),"
+                    " -1 sigma %.1f (%+.1f%%)]\n",
+                    ci.ffA0, ci.ffA0Up, ci.ffA0 > 0 ? 100.0 * (ci.ffA0Up / ci.ffA0 - 1.0) : 0.0,
+                    ci.ffA0Dn, ci.ffA0 > 0 ? 100.0 * (ci.ffA0Dn / ci.ffA0 - 1.0) : 0.0)
+            << Form("  flat T0 over the same bins = %.1f  ->  FF/flat - 1 = %+.1f%%;  in-fit A40 = B0*C40/D0"
+                    " = %.1f (incl. the pT>100 anti-iso overflow, %.1f%% of C40)\n",
+                    flatIn, flatIn > 0 ? 100.0 * (ci.ffA0 / flatIn - 1.0) : 0.0, ci.mt.Apred40,
+                    ci.mt.C40.n > 0 ? 100.0 * (1.0 - c40->Integral(1, nb) / ci.mt.C40.n) : 0.0);
+  std::cout << "  FF / flat per pT range:";
+  {
+    const double edges[6] = {24.0, 30.0, 40.0, 50.0, 70.0, 100.0};
+    for (int k = 0; k < 5; ++k)
+    {
+      const int b1 = c40->GetXaxis()->FindBin(edges[k] + 1e-6), b2 = c40->GetXaxis()->FindBin(edges[k + 1] - 1e-6);
+      const double ffv = ci.ffTmpl->Integral(b1, b2), fl = T0 * c40->Integral(b1, b2);
+      std::cout << Form("  [%.0f,%.0f) %.2f", edges[k], edges[k + 1], fl > 0 ? ffv / fl : 0.0);
+    }
+  }
+  std::cout << "\n  anti-iso window variation of the FF-weighted total (nominal s and D normalization):\n"
+            << wl.str()
+            << Form("    -> max |deviation| = %.1f%%  (the residual lnN of the FF model)\n", ci.ffWin);
+
+  // (6) write
+  fout->cd();
+  for (TH1D *h : {ci.ffTmpl, ci.ffTmplUp, ci.ffTmplDn})
+    h->Write(h->GetName(), TObject::kOverwrite);
+
+  delete c40;
+  delete dSpec;
+  delete qPt;
+  delete qA;
+  delete qMt;
+}
+
+// ----------------------------------------------------------------------------
 // IN-FIT ABCD PREDICTION CHECK (2026-08-31, prefit r = 1 throughout).
 // The counting relation A = B*C40/D is algebraically symmetric -- "horizontal"
 // (A = C40 x T, T = B/D migrated along relIso) and "vertical" (A = B x R,
@@ -1626,8 +1942,8 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
   const double R    = r.C40.n / r.D.n; // vertical transfer: m_T migration
   const double Rerr = std::fabs(R) * std::sqrt(relErr(r.C40) * relErr(r.C40) +
                                                relErr(r.D) * relErr(r.D));
-  const Count Aact = count2D(qcd2D, 0.0, cfg.isoCut, kSRMtCut, 1e9);
-  const Count wSR  = count2D(w2D,  0.0, cfg.isoCut, kSRMtCut, 1e9);
+  const Count Aact = count2D(qcd2D, cfg.isoPassLo, cfg.isoCut, kSRMtCut, 1e9);
+  const Count wSR  = count2D(w2D,  cfg.isoPassLo, cfg.isoCut, kSRMtCut, 1e9);
   const double ratio = Aact.n / r.Apred40;
   const double ratioErr = std::fabs(ratio) *
       std::sqrt(relErr(Aact) * relErr(Aact) +
@@ -1679,11 +1995,13 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
   // (all on the 0.005 grid; isoCut and isoFailLo are bin edges -- the
   // projection-boundary rule)
   std::vector<double> edges;
-  if (cfg.isoCut == 0.15) // muon
+  if (cfg.isoPassLo == 0.0) // muon (relIso axis, isoCut 0.15, sideband from 0.30)
     edges = {0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30,
              0.40, 0.50, 0.65, 0.80, 1.00};
-  else                    // electron (isoCut 0.095, sideband from 0.20)
-    edges = {0.00, 0.03, 0.06, 0.095, 0.15, 0.20, 0.25, 0.30,
+  else                      // electron iso axis (2026-09-29): iso-pass in [-0.3, 0)
+                            // at relIso - 0.3, the MVA-iso-failing gap [0, 0.3),
+                            // the anti-iso sideband [0.3, 1.0)
+    edges = {-0.30, -0.25, -0.20, -0.10, 0.00, 0.10, 0.20, 0.30,
              0.40, 0.50, 0.65, 0.80, 1.00};
 
   // rebin a fine (0.005) relIso projection onto the coarse edges
@@ -1696,8 +2014,8 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
 
   // ---- 1. horizontal view: iso-pass m_T spectrum --------------------------
   {
-    TH1D *dPass = projY(data2D, 0.0, cfg.isoCut, Form("ck_mt_data_%s%s", lep.c_str(), chg.c_str()));
-    TH1D *ePass = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut, Form("ck_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
+    TH1D *dPass = projY(data2D, cfg.isoPassLo, cfg.isoCut, Form("ck_mt_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *ePass = ewk2D ? projY(ewk2D, cfg.isoPassLo, cfg.isoCut, Form("ck_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
                         : nullptr;
     TH1D *qTpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
                        Form("ck_mt_qcd_%s%s", lep.c_str(), chg.c_str()));
@@ -1758,8 +2076,8 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
   // it up, QCD total = B x R. Where the two factorizations differ TESTABLY is
   // the stability pair (block 4: T(m_T) / R(relIso) flatness).
   {
-    TH1D *dPass = projY(data2D, 0.0, cfg.isoCut, Form("ckv_mt_data_%s%s", lep.c_str(), chg.c_str()));
-    TH1D *ePass = ewk2D ? projY(ewk2D, 0.0, cfg.isoCut, Form("ckv_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
+    TH1D *dPass = projY(data2D, cfg.isoPassLo, cfg.isoCut, Form("ckv_mt_data_%s%s", lep.c_str(), chg.c_str()));
+    TH1D *ePass = ewk2D ? projY(ewk2D, cfg.isoPassLo, cfg.isoCut, Form("ckv_mt_ewk_%s%s", lep.c_str(), chg.c_str()))
                         : nullptr;
     TH1D *qTpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
                        Form("ckv_mt_qcd_%s%s", lep.c_str(), chg.c_str()));
@@ -1829,8 +2147,8 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
     }
     if (dSR && eSR)
     {
-      const double isoCut = cfg.isoCut, isoFailLo = cfg.isoFailLo;
-      PlotTuner tuner = [isoCut, isoFailLo](TCanvas *c, TH1 *h) {
+      const double isoCut = cfg.isoCut, isoFailLo = cfg.isoFailLo, isoPassLo = cfg.isoPassLo;
+      PlotTuner tuner = [isoCut, isoFailLo, isoPassLo](TCanvas *c, TH1 *h) {
         (void)c;
         if (!h) return;
         h->SetMinimum(0.1);
@@ -1852,13 +2170,13 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
         t.SetTextSize(0.035);
         t.SetTextAlign(22);
         const double ytxt = std::pow(10.0, 0.70 * std::log10(y2) + 0.30 * std::log10(std::max(y1, 1e-3)));
-        t.DrawLatex(0.5 * isoCut, ytxt, "SR");
+        t.DrawLatex(0.5 * (isoPassLo + isoCut), ytxt, "SR");
         t.DrawLatex(0.5 * (isoFailLo + 0.6), ytxt, "C_{40}"); // clear of the legend
       };
       SaveNicePlot1D_WithBkg(dSR, {eSR, qLow},
                              {"EWK MC (r = 1)", "QCD (m_{T}<30 #times R)"},
                              outDir + Form("/srcheck_iso_vert_%s%s", lep.c_str(), chg.c_str()),
-                             "relIso", "Events / bin", "",
+                             cfg.isoTitle.c_str(), "Events / bin", "",
                              sub1,
                              Form("vertical: m_{T}>%.0f, QCD = m_{T}<%.0f shape #times R",
                                   kSRMtCut, cfg.yCut),
@@ -1910,7 +2228,7 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
                         vIn, r.Apred40, vIn > 0.0 ? r.Apred40 / vIn : 0.0);
 
       PlotStyle psH = ps;
-      psH.xRangeLo = 0.0; // the SR's own relIso bins
+      psH.xRangeLo = cfg.isoPassLo; // the SR's own relIso bins
       psH.xRangeHi = cfg.isoCut;
       PlotTuner tuner = [](TCanvas *c, TH1 *h) {
         (void)c;
@@ -1921,7 +2239,7 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
       SaveNicePlot1D_WithBkg(dSR, {eSR, qTpl},
                              {"EWK MC (r = 1)", "QCD (T #times C_{40})"},
                              outDir + Form("/srcheck_iso_horiz_%s%s", lep.c_str(), chg.c_str()),
-                             "relIso", "Events / bin", "",
+                             cfg.isoTitle.c_str(), "Events / bin", "",
                              sub1,
                              Form("horizontal: m_{T}>%.0f, QCD = T#timesC_{40} (#equiv B#timesR)",
                                   kSRMtCut),
@@ -1951,8 +2269,8 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
       qcdP->SetDirectory(nullptr);
       if (ewkP) qcdP->Add(ewkP, -1.0);
 
-      TH1D *dPass = projY(dataP, 0.0, cfg.isoCut, Form("ck_pt_data_%s%s", lep.c_str(), chg.c_str()));
-      TH1D *ePass = ewkP ? projY(ewkP, 0.0, cfg.isoCut, Form("ck_pt_ewk_%s%s", lep.c_str(), chg.c_str()))
+      TH1D *dPass = projY(dataP, cfg.isoPassLo, cfg.isoCut, Form("ck_pt_data_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *ePass = ewkP ? projY(ewkP, cfg.isoPassLo, cfg.isoCut, Form("ck_pt_ewk_%s%s", lep.c_str(), chg.c_str()))
                          : nullptr;
       TH1D *qTpl = projY(qcdP, cfg.isoFailLo, cfg.isoFailHi,
                          Form("ck_pt_qcd_%s%s", lep.c_str(), chg.c_str()));
@@ -1961,7 +2279,23 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
       // exactly (the anti-iso pT projection loses the pT>100 overflow that the
       // C40 count keeps, <~1%); reproduce that normalization here.
       if (tnP.total > 0.0) qTpl->Scale(r.Apred40 / tnP.total);
-      const Count AactPt = count2D(qcdP, 0.0, cfg.isoCut, 0.0, 1e9);
+      // cfg.useFF (electrons, 2026-09-29): the fit's qcd_abcd IS the
+      // fake-factor-weighted template -> show that one (the flat total is
+      // printed for comparison)
+      const bool showFF = cfg.useFF && ci.ffTmpl;
+      if (showFF)
+      {
+        std::cout << Form("  [pT view] FF-weighted template (the fit's qcd_abcd) = %.1f vs flat A_pred"
+                          " %.1f (FF/flat %.3f)\n",
+                          ci.ffTmpl->Integral(), r.Apred40,
+                          r.Apred40 > 0 ? ci.ffTmpl->Integral() / r.Apred40 : 0.0);
+        for (int j = 0; j <= qTpl->GetNbinsX() + 1; ++j)
+        {
+          qTpl->SetBinContent(j, ci.ffTmpl->GetBinContent(j));
+          qTpl->SetBinError(j, ci.ffTmpl->GetBinError(j));
+        }
+      }
+      const Count AactPt = count2D(qcdP, cfg.isoPassLo, cfg.isoCut, 0.0, 1e9);
       std::cout << Form("  [pT view] template total renormalized %.1f -> A_pred"
                         " %.1f (the %.1f%% gap = anti-iso pT>100 overflow, kept"
                         " by C40, outside the pT axis)\n",
@@ -1986,14 +2320,24 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
           h->SetMinimum(0.2);
           h->SetMaximum(30.0 * h->GetMaximum());
         };
+        // FF case: the box quotes the prediction actually drawn (the FF total
+        // over the plotted range) next to the flat one it replaces
+        std::vector<std::string> boxPt = boxCommon;
+        if (showFF)
+        {
+          const double aFF = ci.ffTmpl->Integral();
+          boxPt[1] = Form("A_{pred}^{FF} = T_{0}#Sigma f C_{40} = %.1f  (flat %.1f)", aFF, r.Apred40);
+          boxPt[3] = Form("A_{act}/A_{pred}^{FF} = %.2f", aFF > 0 ? AactPt.n / aFF : 0.0);
+        }
         SaveNicePlot1D_WithBkg(dPass, {ePass, qTpl},
-                               {"EWK MC (r = 1)", "QCD (in-fit ABCD)"},
+                               {"EWK MC (r = 1)", showFF ? "QCD (in-fit ABCD, F(p_{T}))" : "QCD (in-fit ABCD)"},
                                outDir + Form("/srcheck_pt_%s%s", lep.c_str(), chg.c_str()),
                                Form("p_{T}^{%s} [GeV]", lepSym.c_str()),
                                "Events / 2 GeV", "",
                                sub1,
-                               Form("SR (p_{T}>25, m_{T}>%.0f): QCD total = A_{pred}", kSRMtCut),
-                               boxCommon, psPt, tuner);
+                               showFF ? Form("SR (p_{T}>25, m_{T}>%.0f): QCD = T_{0} f(p_{T}) C_{40}(p_{T})", kSRMtCut)
+                                      : Form("SR (p_{T}>25, m_{T}>%.0f): QCD total = A_{pred}", kSRMtCut),
+                               boxPt, psPt, tuner);
       }
       delete dPass;
       if (ePass) delete ePass;
@@ -2127,7 +2471,7 @@ void runInfitCheck(TFile *fData, const std::vector<MCFile> &mcW,
 
     // T(m_T): the horizontal factor along the axis it must not depend on
     {
-      TH1D *num = projY(qcd2D, 0.0, cfg.isoCut, Form("stabT_num_%s%s", lep.c_str(), chg.c_str()));
+      TH1D *num = projY(qcd2D, cfg.isoPassLo, cfg.isoCut, Form("stabT_num_%s%s", lep.c_str(), chg.c_str()));
       TH1D *den = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi, Form("stabT_den_%s%s", lep.c_str(), chg.c_str()));
       num->Rebin(2); // 2.5 -> 5 GeV
       den->Rebin(2);
@@ -2364,6 +2708,34 @@ void printChannelReport(const std::string &lep, const ABCDConfig &cfg,
   row("TOTAL (window (+) FF shift)", totFF);
   std::cout << Form("   => reduced kappa with the FF shift replacing the tilt row  = %.2f\n",
                     1.0 + 0.01 * std::max(totFF[0], totFF[1]));
+  // THE FAKE-FACTOR MODEL (cfg.useFF, electrons since 2026-09-29): the SR
+  // template is FF-weighted, so the iso-pT correlation (the tilt / FF-shift
+  // rows above) is MODELED, with its statistical uncertainty carried by the
+  // qcdFF shape nuisance (the slope at its 68% edges). What remains for the
+  // residual lnN on the SR qcd is the anti-iso window variation of the
+  // FF-weighted total -- the kappa for QCD_ABCD_LNN_ELE in the fork.
+  if (cfg.useFF)
+  {
+    std::cout << "\n-- FAKE-FACTOR MODEL (the electron qcd_abcd since 2026-09-29) --\n";
+    std::cout << "   chg   slope s [68%]                 F x /10GeV   SR total: FF (+1s/-1s)          flat A40   FF/A40\n";
+    for (int i = 0; i < 2; ++i)
+      std::cout << Form("   %-4s  %.4f [%.4f,%.4f]   %.3f       %7.1f (%+5.1f%%/%+5.1f%%)    %7.1f   %.3f\n",
+                        cn[i], ci[i]->ffS, ci[i]->ffSLo, ci[i]->ffSHi, std::exp(ci[i]->ffS),
+                        ci[i]->ffA0,
+                        ci[i]->ffA0 > 0 ? 100.0 * (ci[i]->ffA0Up / ci[i]->ffA0 - 1.0) : 0.0,
+                        ci[i]->ffA0 > 0 ? 100.0 * (ci[i]->ffA0Dn / ci[i]->ffA0 - 1.0) : 0.0,
+                        ci[i]->mt.Apred40,
+                        ci[i]->mt.Apred40 > 0 ? ci[i]->ffA0 / ci[i]->mt.Apred40 : 0.0);
+    std::cout << "   (the slope is ONE Gaussian-constrained shape nuisance per charge in the fit,\n"
+                 "    qcdFF_" << lep << "_Wp / qcdFF_" << lep << "_Wm; the +1s/-1s columns are its template totals)\n";
+    const double winFF[2] = {P.ffWin, M.ffWin};
+    row("anti-iso window (FF total)", winFF);
+    // three decimals: the fork default is this value ROUNDED UP to 0.01
+    std::cout << Form("   => residual lnN kappa of the FF model (window only, max of the two charges) = %.3f"
+                      "   <- QCD_ABCD_LNN_%s (rounded up to %.2f)\n",
+                      1.0 + 0.01 * std::max(winFF[0], winFF[1]), lep == "ele" ? "ELE" : "MU",
+                      std::ceil(100.0 + std::max(winFF[0], winFF[1]) - 1e-9) / 100.0);
+  }
   // If the CR-B W-related content is FROZEN at absolute MC instead of floated
   // with the r POIs (QCD_WCR=frozen in the fork), the prefit-r subtraction
   // residual ~ (wB/dataB) * |r-1| comes back; quote it at |r-1| = 0.2 (the
@@ -2458,12 +2830,20 @@ void qcd_abcd(bool isElec = false)
   const std::string lepP     = isElec ? "e^{+}" : "#mu^{+}";
   const std::string lepM     = isElec ? "e^{-}" : "#mu^{-}";
 
-  ABCDConfig cfg; // muon defaults (isoCut 0.15, isoFail [0.30,1.0), yCut 30)
+  ABCDConfig cfg; // muon defaults (isoPassLo 0, isoCut 0.15, isoFail [0.30,1.0), yCut 30)
   if (isElec)
   {
-    cfg.isoCut    = 0.095; // electron signal isolation cut (skim_Wel isoMax)
-    cfg.isoFailLo = 0.20;  // anti-iso sideband low edge (gap 0.095-0.20)
-    cfg.isoFailHi = 1.00;
+    // Since 2026-09-29 the electron iso-pass is eleMVAIsoWP90 && relIso < 0.3
+    // (skim_common.h), stored on the iso axis at relIso - 0.3: iso-pass =
+    // [-0.3, 0), the gap (MVA-iso failing, relIso < 0.3) = [0, 0.3), the
+    // anti-iso sideband = [0.3, 1.0) -- the ID+iso SF cross-check's sideband.
+    // (Until then: relIso < 0.095, sideband [0.20, 1.0).)
+    cfg.isoPassLo = pOSkim::kEleIsoAxisLo;  // -0.3
+    cfg.isoCut    = 0.0;
+    cfg.isoFailLo = pOSkim::kEleAntiIsoLo;  // 0.3
+    cfg.isoFailHi = pOSkim::kEleAntiIsoHi;  // 1.0
+    cfg.isoTitle  = "iso axis (iso-pass: relIso #minus 0.3 < 0; else relIso)";
+    cfg.useFF     = true; // the fake-factor-weighted SR template (user decision 2026-09-29)
     // cfg.yCut stays 30 GeV
   }
 
@@ -2527,10 +2907,12 @@ void qcd_abcd(bool isElec = false)
   gSystem->mkdir(outPt.c_str(), kTRUE);
   gSystem->mkdir("./rootfile", kTRUE);
 
-  std::cout << "\n[CONFIG] channel=" << lep << "  isoCut=" << cfg.isoCut
+  std::cout << "\n[CONFIG] channel=" << lep << "  iso-pass=[" << cfg.isoPassLo << "," << cfg.isoCut << ")"
             << "  isoFail=[" << cfg.isoFailLo << "," << cfg.isoFailHi << ")"
             << "  yCut=" << cfg.yCut << " GeV"
-            << "  (the y split applies to EACH counted plane: MET and m_T)\n";
+            << "  (the y split applies to EACH counted plane: MET and m_T)"
+            << (cfg.useFF ? "  SR template: FAKE-FACTOR WEIGHTED (buildFFTemplate)" : "  SR template: flat T")
+            << "\n";
 
   TFile *fout = TFile::Open(outFile.c_str(), "RECREATE");
 
@@ -2607,7 +2989,7 @@ void qcd_abcd(bool isElec = false)
         ChargeInfo &ci = (cq.first == "Plus") ? infoPlus : infoMinus;
         const std::string sfx = tag.empty() ? "" : ("_" + tag);
         const double dat = isoPassData(fData,
-            Form("h_iso_pt%s_%s%s", sfx.c_str(), lep.c_str(), cq.first.c_str()), cfg.isoCut);
+            Form("h_iso_pt%s_%s%s", sfx.c_str(), lep.c_str(), cq.first.c_str()), cfg.isoPassLo, cfg.isoCut);
         if (tag.empty()) { ci.ptTot = ptn.total;   ci.ptTotErr = ptn.err;   ci.tiltNom = tilt; ci.dataAll = dat; }
         else             { ci.ptTot40 = ptn.total; ci.ptTot40Err = ptn.err; ci.tilt40 = tilt;  ci.data40 = dat; }
       }
@@ -2634,9 +3016,15 @@ void qcd_abcd(bool isElec = false)
     }
   }
 
-  // --- per-pT-bin fake-factor diagnostic (flat-T shape-assumption check) ---
+  // --- per-pT-bin fake factor: the flat-T check (both flavours) and, for the
+  // electron (cfg.useFF), the FF-weighted SR template built from its slope ---
   runFFCheck(fData, mc, mcW, "Plus", cfg, outPt, lepP, lep, infoPlus, fout);
   runFFCheck(fData, mc, mcW, "Minus", cfg, outPt, lepM, lep, infoMinus, fout);
+  if (cfg.useFF)
+  {
+    buildFFTemplate(fData, mc, "Plus", cfg, lep, infoPlus, fout);
+    buildFFTemplate(fData, mc, "Minus", cfg, lep, infoMinus, fout);
+  }
 
   // --- in-fit ABCD prediction check: horizontal/vertical SR stacks (r = 1) ---
   runInfitCheck(fData, mcW, mcZ, "Plus", cfg, outPt, lepP, lep, infoPlus);
@@ -2662,12 +3050,16 @@ void qcd_abcd(bool isElec = false)
       std::cerr << Form("[WARN] abcd_counts_%s%s: B0 self-check off (%.2f vs %.2f)"
                         " -- exported pieces do not reassemble the QCD count\n",
                         lep.c_str(), chg, bCheck, r.B.n);
+    // cfg.useFF adds 6 labeled bins (the FF template's totals and slope) --
+    // appended, so every label reader stays valid and the muon object is
+    // byte-identical to the pre-2026-09-29 one
+    const int nCnt = cfg.useFF ? 21 : 15;
     TH1D *hc = new TH1D(Form("abcd_counts_%s%s", lep.c_str(), chg),
                         Form("in-fit ABCD counts (%s%s): m_T plane, B/D at m_T<%.0f,"
                              " C40 at m_T>%.0f, anti-iso [%.3f,%.2f)",
                              lep.c_str(), chg, cfg.yCut, kSRMtCut,
                              cfg.isoFailLo, cfg.isoFailHi),
-                        15, 0.0, 15.0);
+                        nCnt, 0.0, (double)nCnt);
     hc->SetDirectory(nullptr);
     int b = 0;
     auto setb = [&](const char *lab, double v, double e) {
@@ -2691,10 +3083,26 @@ void qcd_abcd(bool isElec = false)
     setb("zD", r.zD.n, r.zD.e);
     setb("T_met", ci.met.T, ci.met.Terr);
     setb("T_mt", r.T, r.Terr);
+    if (cfg.useFF)
+    {
+      // the FF-weighted SR template (qcd_pt_mt40_ff_*): its totals over the
+      // fitted pT range (mtandmet.C checks its template against A0ff) and the
+      // slope with its 68% interval (the qcdFF nuisance's +-1 sigma)
+      setb("A0ff", ci.ffA0, 0.0);
+      setb("A0ffUp", ci.ffA0Up, 0.0);
+      setb("A0ffDown", ci.ffA0Dn, 0.0);
+      setb("ffSlope", ci.ffS, 0.0);
+      setb("ffSlopeLo", ci.ffSLo, 0.0);
+      setb("ffSlopeHi", ci.ffSHi, 0.0);
+    }
     fout->cd();
     hc->Write(hc->GetName(), TObject::kOverwrite);
     delete hc;
   }
+
+  for (ChargeInfo *ci : {&infoPlus, &infoMinus})
+    for (TH1D *h : {ci->ffTmpl, ci->ffTmplUp, ci->ffTmplDn})
+      delete h; // (null when not cfg.useFF)
 
   fout->Close();
   delete fout;

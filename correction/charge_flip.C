@@ -356,7 +356,8 @@ int RunFlip(bool isMu, SampleType sample, FlipOut &out)
 {
   const double lepPt25     = 25.0;
   const double dyPtMin     = isMu ? 15.0 : 10.0;   // DY-veto leg pT (intentionally asymmetric)
-  const double isoMax      = isMu ? 0.15 : 0.095;
+  // e (since 2026-09-29, = skim_common.h): eleMVAIsoWP90 && relIso < 0.3 -- see passIso below
+  const double isoMax      = isMu ? 0.15 : kEleIsoRelMax;
   const double dyMassMin   = 80.0, dyMassMax = 110.0;
   const double etaMax      = 2.4;
   const double trigMatchDR = 0.4;  // 2026-08-12: tracks skim.C:283/963
@@ -401,7 +402,7 @@ int RunFlip(bool isMu, SampleType sample, FlipOut &out)
   const char *bEta = isMu ? "muEta"      : "eleEta";
   const char *bPhi = isMu ? "muPhi"      : "elePhi";
   const char *bChg = isMu ? "muCharge"   : "eleCharge";
-  const char *bID  = isMu ? "muIDTight"  : "eleMVAIdWP95";
+  const char *bID  = isMu ? "muIDTight"  : kEleIDBranch; // e: eleMVAIdWP90 since 2026-09-29
   const char *bCh  = isMu ? "muPFChIso"  : "elePFChIso";
   const char *bNeu = isMu ? "muPFNeuIso" : "elePFNeuIso";
   const char *bPho = isMu ? "muPFPhoIso" : "elePFPhoIso";
@@ -432,11 +433,20 @@ int RunFlip(bool isMu, SampleType sample, FlipOut &out)
 
   // ECAL-gap veto input (electrons only, 2026-09-14) -- tracks the skim's eleIDNoGap
   std::vector<float> *scEta = nullptr;
+  std::vector<int>   *eleMVAIso = nullptr; // e iso decision (2026-09-29) -- tracks the skim's eleIsoPass
   if (!isMu)
   {
     if (!HasBranch(tLep, "eleSCEta")) { std::cerr << "[FATAL] RunFlip: missing EventTree branch eleSCEta (ECAL-gap veto)\n"; f->Close(); return 2; }
     tLep->SetBranchStatus("eleSCEta", 1); tLep->SetBranchAddress("eleSCEta", &scEta);
+    if (!HasBranch(tLep, kEleIsoBranch)) { std::cerr << "[FATAL] RunFlip: missing EventTree branch " << kEleIsoBranch << "\n"; f->Close(); return 2; }
+    tLep->SetBranchStatus(kEleIsoBranch, 1); tLep->SetBranchAddress(kEleIsoBranch, &eleMVAIso);
   }
+  // isolation of lepton i: relIso < isoMax, AND for electrons the MVA iso WP
+  auto passIso = [&](int i) -> bool
+  {
+    if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) return false;
+    return isMu || (eleMVAIso && eleMVAIso->at(i) != 0);
+  };
 
   const bool has_puIso = HasBranch(tLep, bPU);
   if (has_puIso) { tLep->SetBranchStatus(bPU, 1); tLep->SetBranchAddress(bPU, &puIso); }
@@ -569,7 +579,7 @@ int RunFlip(bool isMu, SampleType sample, FlipOut &out)
         if (lepID->at(i) == 0) continue;
         if (scEta && pOSkim::InEcalGap(scEta->at(i))) continue; // e: ECAL crack veto
         if (has_muIsPF && muIsPF && muIsPF->at(i) == 0) continue;
-        if (RelIsoPF(i, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+        if (!passIso(i)) continue;
         cand.push_back(i);
       }
       bool veto = false;
@@ -601,8 +611,8 @@ int RunFlip(bool isMu, SampleType sample, FlipOut &out)
     if (lepPt->at(iLead) <= lepPt25) continue;
     if (std::abs(lepEta->at(iLead)) > etaMax) continue;
 
-    // (7) leading-lepton isolation
-    if (RelIsoPF(iLead, lepPt, chIso, neuIso, phoIso, puIso) >= isoMax) continue;
+    // (7) leading-lepton isolation (e: MVA iso WP90 && relIso < 0.3)
+    if (!passIso(iLead)) continue;
 
     // (8) trigger match
     if (!PassLeadingLeptonTrigMatch(trigMatchDR, iLead, lepEta, lepPhi,

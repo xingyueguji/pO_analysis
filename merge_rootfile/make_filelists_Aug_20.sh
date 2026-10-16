@@ -12,6 +12,13 @@
 #
 #     Aug_20_MC_DY_{mu,ele,tau}_Z.txt      ->  Aug_20_MC_DY_{mu,ele,tau}_Z.root
 #     Aug_20_MC_W{p,m}_{mu,ele,tau}.txt    ->  Aug_20_MC_W{p,m}_{mu,ele,tau}.root
+#     Aug_20_MC_TT.txt                     ->  Aug_20_MC_TT.root
+#
+# TT (2026-10-16) = the inclusive ttbar background, POWHEG + Angantyr, same
+# production (HiForest_TT_POWHEG_Angantyr_pO_9p62TeV_2025Run3_2026_08_20);
+# ONE file serves the muon and the electron channels, like the tau samples.
+# Since the other nine are already merged on EOS, ./run_all_hadd_Aug_20.sh
+# merges only this one (it skips existing outputs).
 #
 # (= the July-29 naming with the date token swapped, so LabelFromFname in
 # skim/count_ngen.C only needs "Aug_20_MC_" added to its prefix-strip list.)
@@ -56,6 +63,7 @@ WpToTauNu|Wp_tau
 WmToMuNu|Wm_mu
 WmToENu|Wm_ele
 WmToTauNu|Wm_tau
+TT|TT
 "
 
 # GNU find (-printf) gives us file sizes for free; BSD find does not.

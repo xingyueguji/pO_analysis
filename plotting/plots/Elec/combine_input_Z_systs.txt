@@ -3,3 +3,4 @@
 nPDF signal ztau w wtau
 qcdScale signal ztau w wtau
 alphaS signal ztau w wtau
+eleSF signal ztau w wtau

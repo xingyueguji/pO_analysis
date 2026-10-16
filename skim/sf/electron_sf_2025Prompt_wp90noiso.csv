@@ -1,6 +1,6 @@
 # EGM electron ID SF, working point wp90noiso, year 2025Prompt -- flattened by skim/sf/extract_electron_sf.py
 # source: skim/sf/EGM/electron.json.gz (64221 bytes, md5 ede29ef89fa15ac54c6f25f4edb0c0d6); correction 'Electron-ID-SF' version 3
-# extracted 2026-09-24; eta = SUPERCLUSTER eta (signed), pt = electron pT; edges inclusive-low
+# extracted 2026-09-29; eta = SUPERCLUSTER eta (signed), pt = electron pT; edges inclusive-low
 # sfup/sfdown = sf +- sqrt(err_stat^2 + err_syst^2) (verified per cell: max deviation 1.11e-16),
 #   although the file's description says 'sf +- syst'; max |effData/effMC - sf| = 5.88e-08 for pT < 300
 #   (above 300 GeV sf is one merged value per eta row, NOT effData/effMC of the cell)

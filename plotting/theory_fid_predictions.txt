@@ -1,0 +1,14 @@
+# Extra theory rows for plotting/xsec_summary.C (xsec_summary_vertical.{png,pdf}).
+# One prediction per line, drawn as a row UNDER the "POWHEG NLO x EPPS21" row in
+# the order given here. Numbers = fiducial cross sections per lepton flavour in
+# the analysis fiducial (W: bare lepton pT > 25 GeV, |eta_lab| < 2.4, no m_T cut;
+# Z: pT > 15/10 GeV, |eta_lab| < 2.4, 60 < m_ll < 120 GeV), for pO = per-nucleon
+# x A = 16, in nb, with the 68% CL uncertainty as ABSOLUTE down and up values.
+#
+#   label | Wp dn up | Wm dn up | W dn up | Z dn up
+#
+# A block "-" leaves that process out; '#' starts a comment; the label may use
+# ROOT TLatex (e.g. #otimes). Example with FICTITIOUS numbers:
+#   MCFM NNLO #otimes nCTEQ15HQ | 61.2 1.8 1.5 | 48.0 1.4 1.2 | 109.2 3.0 2.6 | 10.1 0.3 0.3
+#
+# No rows yet (2026-10-06): the per-beam MCFM / other-nPDF predictions are to come.

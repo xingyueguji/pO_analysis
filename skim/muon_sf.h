@@ -881,19 +881,24 @@ inline TH1D *CloneEmptyTwin(const TH1 *nom, const std::string &name, const std::
 }
 
 // Books 3 x 2 per-source twins + the 2 combined ones; the set is appended to
-// `registry` for FinalizeAndWriteSFTwins() at the end of the job.
-inline SFTwins BookSFTwins(const TH1 *nom, std::vector<SFTwins> &registry)
+// `registry` for FinalizeAndWriteSFTwins() at the end of the job. The names
+// default to the muon's; skim/electron_sf.h passes its own (2026-09-29) --
+// the machinery below is flavour-blind (three independent sources per event).
+inline SFTwins BookSFTwins(const TH1 *nom, std::vector<SFTwins> &registry,
+                           const char *const *srcNames = kMuonSFSourceNames,
+                           const char *combName = kMuonSFCombinedName,
+                           const char *combNote = "ID, ISO, trigger shifts added in quadrature per bin")
 {
   SFTwins t;
   t.nom = nom;
   for (int s = 0; s < kNSources; ++s)
     for (int d = 0; d < 2; ++d)
-      t.h[s][d] = CloneEmptyTwin(nom, std::string(nom->GetName()) + "_" + kMuonSFSourceNames[s] + (d == 0 ? "Up" : "Down"),
-                                 std::string(" [") + kMuonSFSourceNames[s] + (d == 0 ? " +1 sigma" : " -1 sigma") + ", others nominal]");
+      t.h[s][d] = CloneEmptyTwin(nom, std::string(nom->GetName()) + "_" + srcNames[s] + (d == 0 ? "Up" : "Down"),
+                                 std::string(" [") + srcNames[s] + (d == 0 ? " +1 sigma" : " -1 sigma") + ", others nominal]");
   for (int d = 0; d < 2; ++d)
-    t.comb[d] = CloneEmptyTwin(nom, std::string(nom->GetName()) + "_" + kMuonSFCombinedName + (d == 0 ? "Up" : "Down"),
-                               std::string(" [") + kMuonSFCombinedName + (d == 0 ? " +1 sigma" : " -1 sigma")
-                                   + ": ID, ISO, trigger shifts added in quadrature per bin]");
+    t.comb[d] = CloneEmptyTwin(nom, std::string(nom->GetName()) + "_" + combName + (d == 0 ? "Up" : "Down"),
+                               std::string(" [") + combName + (d == 0 ? " +1 sigma" : " -1 sigma")
+                                   + ": " + combNote + "]");
   registry.push_back(t);
   return t;
 }
@@ -966,22 +971,29 @@ struct SFStats
     for (int s = 0; s < kNSources; ++s)
     { part[s] += wBase * e.part[s]; varUp[s] += wBase * e.var[s][0]; varDn[s] += wBase * e.var[s][1]; }
   }
-  void Print(std::ostream &log, const char *what) const
+  // names default to the muon's (see BookSFTwins); partLabels = the three
+  // <mean factor> labels of the first line, in source order
+  void Print(std::ostream &log, const char *what,
+             const char *const *srcNames = kMuonSFSourceNames,
+             const char *combName = kMuonSFCombinedName,
+             const char *const *partLabels = nullptr) const
   {
+    static const char *const kMuPartLabels[kNSources] = {"<ID>", "<ISO>", "<TRIG>"};
+    if (!partLabels) partLabels = kMuPartLabels;
     if (sw <= 0) { log << "[SF] " << what << ": no weighted events\n"; return; }
     log << "[SF] " << what << ": N = " << (long long)n << ", sum w = " << Form("%.1f", sw)
         << ", sum w*SF = " << Form("%.1f", swsf) << "  ->  <SF> = " << Form("%.5f", swsf / sw)
-        << "  (<ID> " << Form("%.5f", part[kID] / sw) << ", <ISO> " << Form("%.5f", part[kIso] / sw)
-        << ", <TRIG> " << Form("%.5f", part[kTrig] / sw) << ")\n";
+        << "  (" << partLabels[0] << " " << Form("%.5f", part[0] / sw) << ", " << partLabels[1] << " " << Form("%.5f", part[1] / sw)
+        << ", " << partLabels[2] << " " << Form("%.5f", part[2] / sw) << ")\n";
     double up2 = 0.0, dn2 = 0.0;
     for (int s = 0; s < kNSources; ++s)
     {
-      log << "[SF]     " << Form("%-7s", kMuonSFSourceNames[s]) << " Up/Down on sum w*SF: "
+      log << "[SF]     " << Form("%-7s", srcNames[s]) << " Up/Down on sum w*SF: "
           << Form("%+.3f%% / %+.3f%%", 100.0 * (varUp[s] / swsf - 1.0), 100.0 * (varDn[s] / swsf - 1.0)) << "\n";
       up2 += std::pow(varUp[s] / swsf - 1.0, 2);
       dn2 += std::pow(varDn[s] / swsf - 1.0, 2);
     }
-    log << "[SF]     " << Form("%-7s", kMuonSFCombinedName) << " Up/Down (quadrature of the three): "
+    log << "[SF]     " << Form("%-7s", combName) << " Up/Down (quadrature of the three): "
         << Form("%+.3f%% / %+.3f%%", 100.0 * std::sqrt(up2), -100.0 * std::sqrt(dn2)) << "  <- the one nuisance in the fit\n";
   }
 };

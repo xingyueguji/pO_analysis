@@ -49,6 +49,25 @@ inline bool Spec(const char *disc, TString &suffix, TString &label)
     return false;
 }
 
+// disc -> the GEN FIDUCIAL set of skim/gen_xsec.C it is measured in
+// (2026-10-13). Each discriminant's sigma = r x sigma_gen uses the gen twin of
+// its own reco selection: met has no m_T cut, leppt_mt40 cuts m_T > 40 (from
+// the W's lepton and neutrino). `tag` is inserted after the charge in every
+// gen histogram name -- h_gen_sig_Wp<tag>[_FB][_epps21] -- and in the sidecar
+// name skim/output/gen_xsec_fid<tag>.txt; `label` is for plot text. The Z
+// (h_gen_sig_Z) is the same for both. Keep in step with gen_xsec.C kFidTag.
+inline bool GenFid(const char *disc, TString &tag, TString &label)
+{
+    const TString d(disc ? disc : "");
+    // (plain p_{T}: the callers prefix "bare lepton", and TLatex stacks
+    //  p_{T}^{l} badly)
+    if (d == "met")        { tag = "";      label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4";                   return true; }
+    if (d == "leppt_mt40") { tag = "_mt40"; label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4, m_{T} > 40 GeV";   return true; }
+    std::cerr << "[ERROR] GenFid: no gen fiducial set for discriminant '" << d
+              << "' (use met|leppt_mt40)\n";
+    return false;
+}
+
 // Default path of a charge_asym.C / FBratio.C output (stem = "charge_asym" or
 // "FBratio") for one fit (comb | simfit_mu | simfit_ele), relative to
 // plotting/: <stem>_fid_<fit>_<disc>.root -- the graphs built from the FIDUCIAL
