@@ -1,5 +1,12 @@
 # Iteration 2026-09-30 — electron Reco SF from our pO tag-and-probe (one inclusive number)
 
+> **Paths (2026-10-20):** every backup below now lives in `backups/pre_<tag>/<area>/`
+> (`skim/rootfile_pre_<tag>/` → `backups/pre_<tag>/skim/rootfile/`, `<area>/pre_<tag>/` →
+> `backups/pre_<tag>/<area>/`, fork `test/pO_fit_out<sfx>_pre_<tag>/` →
+> `test/backups/pre_<tag>/pO_fit_out<sfx>/`); the Reco tag-and-probe outputs
+> (`correction/{rootfile,plots}/reco_sf_ele/`) moved to `correction/electron_sf_check/reco_sf/{rootfile,plots}/`.
+> Full list: `backups/MOVES_2026-10-20.txt`.
+
 **Status:** inputs regenerated and validated locally on 2026-09-30; **fitted on
 lxplus on 2026-09-30** (grand + μ-only + e-only, lab + fb, Asimov, impacts; fits
 14:31–15:02, impacts 15:48–15:55), downloaded and the observables chain run on

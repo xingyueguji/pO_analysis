@@ -22,9 +22,43 @@
 //   plots         : plots/{comb,flavfit}/{charge_asym,FBratio,xsec,postfit_incl}/<disc>/
 // One-command runner for the whole chain: analysis/run_observables.sh
 // (see README Module 5).
+//
+// FIT-MODEL VARIANT TAGS (2026-10-19): "leppt_mt40_abcdy" = the leppt_mt40
+// discriminant FITTED WITH THE RAPIDITY-RESOLVED IN-FIT ABCD (the fork's
+// opt-in QCD_MODE=abcdy, whose out-tree is pO_fit_out_leppt_mt40_abcdy/).
+// The full tag goes into every downstream file and folder name, so its
+// outputs sit next to the nominal ones and never overwrite them; its
+// discriminant -- Base(tag) -- picks what is the same for both: the Combine
+// inputs the fit read (InputSuffix) and the gen fiducial set (GenFid). Only
+// named explicitly: run_observables.sh 'all' runs met + leppt_mt40.
+//
+// met_mt40 (2026-10-20, user decision): PF MET as the discriminant on EXACTLY
+// the leppt_mt40 events (pT > 25 && m_T > 40) -- the apples-to-apples MET
+// counterpart, with the same in-fit ABCD regions and groups and the same
+// m_T > 40 gen fiducial (so sigma, A_ch and R_FB compare directly). Fork:
+// run_pO_fits.sh --disc met_mt40 -> pO_fit_out_met_mt40[_abcdy]/; tags
+// met_mt40 and met_mt40_abcdy here.
 // =============================================================================
 namespace pODisc
 {
+
+// tag -> the W discriminant it was fitted on ("leppt_mt40_abcdy" ->
+// "leppt_mt40", "met_mt40_abcdy" -> "met_mt40"; a plain discriminant tag maps
+// to itself)
+inline TString Base(const char *disc)
+{
+    const TString d(disc ? disc : "");
+    if (d == "leppt_mt40_abcdy") return "leppt_mt40";
+    if (d == "met_mt40_abcdy")   return "met_mt40";
+    return d;
+}
+
+// the fitted variable is PF MET (met, met_mt40[_abcdy]) rather than lepton pT
+inline bool IsMetDisc(const char *disc)
+{
+    const TString d = Base(disc);
+    return d == "met" || d == "met_mt40";
+}
 
 // disc -> (out-tree suffix, short human label for the plot info box).
 // Returns false (with an error) on an unknown tag so a typo cannot silently
@@ -34,19 +68,33 @@ inline bool Spec(const char *disc, TString &suffix, TString &label)
     const TString d(disc ? disc : "");
     if (d == "met")        { suffix = "";            label = "PF MET";               return true; }
     if (d == "leppt_mt40") { suffix = "_leppt_mt40"; label = "lep p_{T} (m_{T}>40)"; return true; }
-    // The plain no-m_T-cut "leppt" variant was dropped as a discriminant on
-    // 2026-08-16 and fully retired on 2026-09-21 (mtandmet.C no longer writes
-    // its stacks or combine_input_W_leppt.root). Named explicitly so a stale
-    // command line gets an accurate message instead of "unknown tag".
-    if (d == "leppt")
+    if (d == "leppt_mt40_abcdy")
     {
-        std::cerr << "[ERROR] discriminant 'leppt' (plain W selection) was retired "
-                     "2026-09-21 -- use leppt_mt40 (primary) or met (backup)\n";
-        return false;
+        suffix = "_leppt_mt40_abcdy"; label = "lep p_{T} (m_{T}>40), y-group ABCD"; return true;
     }
+    if (d == "met_mt40")   { suffix = "_met_mt40";   label = "PF MET (m_{T}>40)";    return true; }
+    if (d == "met_mt40_abcdy")
+    {
+        suffix = "_met_mt40_abcdy"; label = "PF MET (m_{T}>40), y-group ABCD"; return true;
+    }
+    // THE NOMINAL since 2026-10-21 (user decision): the lepton-pT fit with NO
+    // m_T cut, its SR split at m_T = 30 and the scheme-C multijet (fork
+    // QCD_MODE=mtsplit; input plotting/combine_input_nomt.C). Retired as a plain
+    // no-m_T stack variant 2026-09-21 -- restored with its own model.
+    if (d == "leppt")      { suffix = "_leppt";      label = "lep p_{T} (no m_{T} cut)"; return true; }
     std::cerr << "[ERROR] unknown discriminant tag '" << d
-              << "' (use met|leppt_mt40)\n";
+              << "' (use leppt|met|leppt_mt40|leppt_mt40_abcdy|met_mt40|met_mt40_abcdy)\n";
     return false;
+}
+
+// tag -> the suffix of the Combine inputs (plots[/Elec]/combine_input_W<suffix>.root)
+// the fit read: the out-tree suffix of its discriminant (a fit-model variant
+// reads the inputs of its discriminant; the abcdy objects live in that file)
+inline TString InputSuffix(const char *disc)
+{
+    TString suffix, label;
+    if (!Spec(Base(disc).Data(), suffix, label)) return "";
+    return suffix;
 }
 
 // disc -> the GEN FIDUCIAL set of skim/gen_xsec.C it is measured in
@@ -58,13 +106,15 @@ inline bool Spec(const char *disc, TString &suffix, TString &label)
 // (h_gen_sig_Z) is the same for both. Keep in step with gen_xsec.C kFidTag.
 inline bool GenFid(const char *disc, TString &tag, TString &label)
 {
-    const TString d(disc ? disc : "");
+    const TString d = Base(disc); // a fit-model variant shares its discriminant's set
     // (plain p_{T}: the callers prefix "bare lepton", and TLatex stacks
     //  p_{T}^{l} badly)
-    if (d == "met")        { tag = "";      label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4";                   return true; }
-    if (d == "leppt_mt40") { tag = "_mt40"; label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4, m_{T} > 40 GeV";   return true; }
+    // met and (since 2026-10-21) the nominal no-m_T leppt: no m_T cut
+    if (d == "met" || d == "leppt") { tag = ""; label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4";                   return true; }
+    if (d == "leppt_mt40" || d == "met_mt40") // the same selection, hence the same fiducial set
+                           { tag = "_mt40"; label = "p_{T} > 25 GeV, |#eta_{lab}| < 2.4, m_{T} > 40 GeV";   return true; }
     std::cerr << "[ERROR] GenFid: no gen fiducial set for discriminant '" << d
-              << "' (use met|leppt_mt40)\n";
+              << "' (use leppt|met|leppt_mt40|met_mt40)\n";
     return false;
 }
 

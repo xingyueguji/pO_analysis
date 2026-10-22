@@ -370,6 +370,23 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
   tPF->SetBranchStatus("*", 0);
   tPF->SetBranchStatus("pfPt", 1);  tPF->SetBranchAddress("pfPt",  &pfPt);
   tPF->SetBranchStatus("pfPhi", 1); tPF->SetBranchAddress("pfPhi", &pfPhi);
+  // the skim's MET since 2026-10-21: the e/gamma-calibrated PF MET (skim_common.h
+  // ComputePFMETEGCalib); electrons: the lepton branches above ARE elePt/eleEta/elePhi
+  std::vector<int>   *pfId = nullptr;
+  std::vector<float> *pfEta = nullptr, *egEleRawPt = nullptr, *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr,
+                     *egPhoPhi = nullptr, *egElePt = nullptr, *egEleEta = nullptr, *egElePhi = nullptr;
+  {
+    const std::string miss =
+        isMu ? BindEGammaMetBranches(tLep, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi, &egElePt,
+                                     &egEleEta, &egElePhi)
+             : BindEGammaMetBranches(tLep, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] RunW: no " << miss << " branch -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
 
   // -------- event loop --------
   const Long64_t nEntries = tLep->GetEntries();
@@ -474,7 +491,9 @@ int RunW(bool isMu, SampleType sample, JetReader &jr, NJetOut &out)
     if (out.njet_mt40)
     {
       tPF->GetEntry(ie);
-      const TVector2 metv = ComputePFMET(nullptr, pfPt, pfPhi);
+      const TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, isMu ? egElePt : lepPt, egEleRawPt,
+                                                isMu ? egEleEta : lepEta, isMu ? egElePhi : lepPhi, egPhoEt, egPhoRawEt,
+                                                egPhoEta, egPhoPhi);
       const double mt = TransverseMass(lepPt->at(iLead), lepPhi->at(iLead), metv);
       if (mt > kMtCutW) out.njet_mt40->Fill(njet, w);
     }

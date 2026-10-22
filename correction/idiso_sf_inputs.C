@@ -1,13 +1,13 @@
 // correction/idiso_sf_inputs.C
 //
 // Combine inputs of the ELECTRON ID+ISO SF fit (2026-09-24) + the composition
-// record. Reads the separate skim (rootfile/idiso_sf_ele/skim_<sample>.root,
+// record. Reads the separate skim (electron_sf_check/idiso_sf/rootfile/skim_<sample>.root,
 // correction/idiso_sf_skim.C); definition and names in idiso_sf_common.h.
 //
 // One W input file per (scheme, sideband window) -- the fitted variable is the
 // lepton pT at m_T > 40 (leppt_mt40), the QCD the nominal IN-FIT ABCD in the
 // (m_T x relIso) plane (idiso_sf_common.h; user 2026-09-25):
-//   rootfile/idiso_sf_ele/combine_input_idiso_<scheme>_leppt_mt40[_sblo|_sbhi].root
+//   electron_sf_check/idiso_sf/rootfile/combine_input_idiso_<scheme>_leppt_mt40[_sblo|_sbhi].root
 //     W{p,m}_{pass,fail}_k<k>/      the SR (m_T > 40, pT): data_obs signal z ztau wtau qcd
 //     W{p,m}_{pass,fail}_k<k>_CRB/  1-bin, the category at m_T < 30: data_obs qcd signal wtau z ztau
 //     W{p,m}_{pass,fail}_k<k>_CRC/  1-bin, the sideband at m_T > 40:  data_obs qcd ewk
@@ -17,7 +17,7 @@
 //   + <same>_meta.txt               scheme, disc, sbwin, nbins, bin edges, x title
 //                                   (read by the fork's make_pO_idiso_sf_cards.sh)
 // and ONE Z tag-and-probe input (the Z TnP is its OWN fit -- see below):
-//   rootfile/idiso_sf_ele/combine_input_idiso_ztnp.root  Z_PP/, Z_PF/ (+ _meta.txt,
+//   electron_sf_check/idiso_sf/rootfile/combine_input_idiso_ztnp.root  Z_PP/, Z_PF/ (+ _meta.txt,
 //                                   scheme ztnp)
 // WHY a separate Z fit: sharing r_Z between the Z_PP peak and the DY of the W
 // channels lets the W side pull it -- and with it the Z TnP efficiency: in one
@@ -55,7 +55,7 @@
 // few % of the QCD, so an ABCD non-closure of that size decides the W count).
 //
 // Run from correction/ (after the skim):
-//   ./run_idiso_sf.sh inputs                   (keeps logs/idiso_sf_ele_inputs.log)
+//   ./run_idiso_sf.sh inputs                   (keeps electron_sf_check/idiso_sf/logs/idiso_sf_ele_inputs.log)
 //   root -l -b -q 'idiso_sf_inputs.C+()'       (bare)
 
 #include "TFile.h"

@@ -6,13 +6,13 @@
 #
 # <channel> :  Zmm | Zee | Wmu | Wel | all
 # [samples] :  space-separated subset of:
-#                Data DY Wp Wm DYtau Wptau Wmtau
-#              (default: all 7)
+#                Data DY Wp Wm DYtau Wptau Wmtau TT
+#              (default: all 8; TT = the inclusive ttbar background, 2026-10-16)
 #
 # Examples:
-#   ./run_all.sh Zmm                  # all 7 samples for Z->mumu
+#   ./run_all.sh Zmm                  # all 8 samples for Z->mumu
 #   ./run_all.sh Wel "Data DY"        # only data + DY MC for W->enu
-#   ./run_all.sh all                  # 4 channels x 7 samples = 28 jobs
+#   ./run_all.sh all                  # 4 channels x 8 samples = 32 jobs
 #   DATA_FILE=root://.../other.root ./run_all.sh Wmu Data   # override data file
 #
 # Input files (single source of truth): the data-file path is read from
@@ -46,12 +46,13 @@ sample_enum() {
   case "$1" in
     Data)  echo kData  ;; DY)    echo kDY    ;; Wp)    echo kWp    ;; Wm) echo kWm ;;
     DYtau) echo kDYtau ;; Wptau) echo kWptau ;; Wmtau) echo kWmtau ;;
+    TT)    echo kTT    ;;
     *)     return 1 ;;
   esac
 }
 
 ALL_CHANNELS=(Zmm Zee Wmu Wel)
-ALL_SAMPLES=(Data DY Wp Wm DYtau Wptau Wmtau)
+ALL_SAMPLES=(Data DY Wp Wm DYtau Wptau Wmtau TT)
 
 # Data-file path: the single source of truth is `kDefaultDataFile` in
 # skim_common.h (which also holds the MC paths via ResolveMCSample). Derive it
@@ -141,8 +142,24 @@ printf "Skim run: %d channel(s) x %d sample(s) = %d job(s)\n" \
        "${#CHANNELS[@]}" "${#SAMPLES[@]}" "$total"
 echo "============================================================"
 
+zDone=0      # a Z channel was skimmed in THIS invocation
+recoilDone=0 # correction/run_recoil_res.sh already run by this invocation
 for ch in "${CHANNELS[@]}"; do
   chEnum=$(channel_enum "$ch")
+  # The W MC skim reads the MET-resolution factor measured on the Z recoil
+  # (skim/met_res.h <- correction/run_recoil_res.sh, 2026-10-20) and is FATAL
+  # without it: refresh it once, before the first W channel, whenever the Z
+  # skims were just redone (they are its input) or the file is missing.
+  case "$ch" in
+    Zmm|Zee) zDone=1 ;;
+    Wmu|Wel)
+      if (( ! recoilDone )) && { (( zDone )) || [[ ! -f ../correction/rootfile/recoil_res.root ]]; }; then
+        record "[recoil] refreshing correction/rootfile/recoil_res.root (the W MC skim's MET-resolution input)"
+        ( cd ../correction && ./run_recoil_res.sh ) >/dev/null 2>&1 \
+          || record "[recoil] FAILED -- see correction/logs/recoil_res.log (the W MC jobs will stop)"
+        recoilDone=1
+      fi ;;
+  esac
   for s in "${SAMPLES[@]}"; do
     sEnum=$(sample_enum "$s")
     log="logs/skim_${ch}_${s}.log"

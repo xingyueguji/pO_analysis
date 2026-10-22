@@ -35,7 +35,7 @@
 //   ./run_idiso_sf.sh skim [samples]                  (keeps the logs)
 //   root -l -b -q 'idiso_sf_skim.C+("Data")'          (bare)
 //   root -l -b -q 'idiso_sf_skim.C+("Wp", 200000)'    (first N events, a quick test)
-// Output: rootfile/idiso_sf_ele/skim_<sample>.root
+// Output: electron_sf_check/idiso_sf/rootfile/skim_<sample>.root
 
 #include "TFile.h"
 #include "TTree.h"

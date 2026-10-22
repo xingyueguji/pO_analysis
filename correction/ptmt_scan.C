@@ -174,6 +174,7 @@ void ptmt_scan(bool isElec = false)
       {"DYtau",     "DYtau", false},
       {"Wp_tau",    "Wptau", false},
       {"Wm_tau",    "Wmtau", false},
+      {"TT",        "TT",    false},   // ttbar background (2026-10-16)
   };
   std::vector<TFile *> fMC;
   for (const Spec &s : spec)

@@ -6,7 +6,12 @@
 # Runs the two macros that write the fit inputs, for the requested flavour(s):
 #   mtandmet.C+(isElec)      -> plots[/Elec]/combine_input_W.root              (met, backup)
 #                               plots[/Elec]/combine_input_W_leppt_mt40.root  (PRIMARY, + 6 CR dirs)
+#                               plots[/Elec]/combine_input_W_met_mt40.root    (its PF-MET counterpart,
+#                                                                              2026-10-20: same events)
 #   dileptonpeak.C+(isElec)  -> plots[/Elec]/combine_input_Z.root
+#   combine_input_nomt.C+(isElec) -> plots[/Elec]/combine_input_W_leppt.root  (THE NOMINAL since
+#                               2026-10-21: the no-m_T lepton-pT fit, SR split at m_T = 30,
+#                               scheme-C multijet + anchors; + its _mtsplit.txt group sidecar)
 # each with its `<input>_systs.txt` sidecar (the list of shape systematics
 # actually written -- the fork's card generator READS these, never assumes).
 # Then, from the lepton-pT inputs just written (2026-10-13):
@@ -47,7 +52,7 @@ is_elec() { case "$1" in mu) echo false ;; ele) echo true ;; esac; }
 
 # Pre-build both macros once, so two flavours cannot race on the ACLiC
 # artifacts (skim/run_all.sh has been bitten by exactly that).
-for m in mtandmet dileptonpeak prefit_r; do
+for m in mtandmet dileptonpeak combine_input_nomt prefit_r; do
   root -l -b -q -e ".L ${m}.C+" >/dev/null 2>&1 || {
     echo "[ERR] ${m}.C does not compile:"
     root -l -b -q -e ".L ${m}.C+" 2>&1 | tail -20
@@ -58,13 +63,13 @@ done
 rc=0
 for c in $CHANS; do
   e=$(is_elec "$c")
-  for m in mtandmet dileptonpeak; do
+  for m in mtandmet dileptonpeak combine_input_nomt; do
     log="logs/${m}_${c}.log"
     echo "=== ${m}(${c})  ->  $log"
-    if root -l -b -q "${m}.C+(${e})" >"$log" 2>&1; then
+    if root -l -b -q "${m}.C+(${e})" >"$log" 2>&1 && ! grep -q "^\[ERROR\]" "$log"; then
       # Headlines worth seeing without opening the log. "ERROR check plot N" is
       # benign macro debug output, not a failure -- excluded on purpose.
-      grep -E "^\[QCD|^\[INFO\] Saved|^\[INFO\] shape systematics" "$log" | sed 's/^/    /' || true
+      grep -E "^\[QCD|^\[INFO\] Saved|^\[INFO\] shape systematics|^\[INFO\] group sidecar|^\[NOMT-IN\]" "$log" | sed 's/^/    /' || true
       nw=$(grep -c "^\[WARN\]" "$log" || true)
       if [ "$nw" -gt 0 ]; then
         # The "<proc> is empty -> flooring central bin" warnings are expected
@@ -82,15 +87,18 @@ if [ "$rc" -eq 0 ]; then
   echo "=== Combine inputs written (re-run correction/run_qcd_abcd.sh first if the skim changed):"
   ls -1 plots/combine_input_*.root plots/Elec/combine_input_*.root 2>/dev/null | sed 's/^/    /'
 
-  # Prefit signal strength per rapidity bin, mu vs e, from the inputs above.
-  log="logs/prefit_r_leppt_mt40.log"
-  echo "=== prefit_r(leppt_mt40)  ->  $log"
-  if root -l -b -q 'prefit_r.C+("leppt_mt40")' >"$log" 2>&1 && grep -q "^\[prefit_r\] wrote" "$log"; then
-    # the inclusive r per charge (lab tables), and any input mismatch
-    grep -E "^\[prefit_r\] (Wp|Wm|W), lab binning" -A 15 "$log" | grep -E "binning|^   bin |incl " | sed 's/^/    /' || true
-    grep -E "WARN|ERROR" "$log" | sed 's/^/    /' || true
-  else
-    echo "[ERR] prefit_r failed -- tail of $log:"; tail -20 "$log"; rc=1
-  fi
+  # Prefit signal strength per rapidity bin, mu vs e, from the inputs above
+  # (the lepton-pT input and, since 2026-10-20, its PF-MET counterpart met_mt40).
+  for d in leppt_mt40 met_mt40; do
+    log="logs/prefit_r_${d}.log"
+    echo "=== prefit_r(${d})  ->  $log"
+    if root -l -b -q "prefit_r.C+(\"${d}\")" >"$log" 2>&1 && grep -q "^\[prefit_r\] wrote" "$log"; then
+      # the inclusive r per charge (lab tables), and any input mismatch
+      grep -E "^\[prefit_r\] (Wp|Wm|W), lab binning" -A 15 "$log" | grep -E "binning|^   bin |incl " | sed 's/^/    /' || true
+      grep -E "WARN|ERROR" "$log" | sed 's/^/    /' || true
+    else
+      echo "[ERR] prefit_r(${d}) failed -- tail of $log:"; tail -20 "$log"; rc=1
+    fi
+  done
 fi
 exit $rc

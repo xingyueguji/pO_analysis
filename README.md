@@ -34,6 +34,8 @@ skim → ngen → ABCD QCD → structured Combine inputs (mtandmet/dileptonpeak)
 # ---- pO_analysis (plain ROOT) ----
 cd correction  && ./run_trig_eff_mb.sh both                                  # 0 trigger SFs (the muon AND electron MC skims read these rootfiles)
 cd ../skim     && ./run_all.sh all && ./run_lhe_updown.sh && ./run_ngen.sh   # 1,2 skims (MC weighted by the lepton SFs) + nPDF Up/Down + N_gen
+#   (run_all.sh refreshes correction/rootfile/recoil_res.root between the Z and the W channels:
+#    the W MC skim's MET-resolution input, correction/run_recoil_res.sh, 2026-10-20)
 cd ../correction && ./run_qcd_abcd.sh                                        # 3a ABCD QCD (mu+ele, logged)
 cd ../plotting && ./run_combine_inputs.sh                                    # 3b Combine inputs (mu+ele, logged) + prefit r vs y
 #   theory graphs are one-time + yield-independent: root -l -q -b 'plotRpOtheory.C+'
@@ -42,10 +44,12 @@ cd ../plotting && ./run_combine_inputs.sh                                    # 3
 cd ../../HiggsAnalysis-CombinedLimit/test && cmsenv && ./run_pO_fits.sh --asimov   # 4 fit (simfit = DEFAULT; --asimov adds the closure fit)
 #   ./run_pO_fits.sh both flavfit --asimov   # the mu-only + e-only simultaneous fits
 #   ./run_pO_fits.sh both all --asimov       # grand + mu-only + e-only in one go
+#   (default --disc leppt since 2026-10-21 = the no-m_T lepton-pT fit, QCD_MODE=mtsplit)
 
 # ---- pO_analysis (plain ROOT) ----
-cd ../../pO_analysis/analysis && ./run_observables.sh                            # 5 observables (met)
-#   ./run_observables.sh leppt_mt40 | all    -> per-discriminant folders (Module 5; + mu-vs-e overlays when flavfit ran)
+cd ../../pO_analysis/analysis && ./run_observables.sh                            # 5 observables (leppt = the nominal)
+#   ./run_observables.sh leppt_mt40 | met | all  -> per-discriminant folders (Module 5; + mu-vs-e overlays when flavfit ran)
+#   ./run_observables.sh met_mt40[_abcdy]    -> the PF-MET fit on the leppt_mt40 events (fork: --disc met_mt40, 2026-10-20)
 ```
 
 ## Layout
@@ -92,12 +96,13 @@ cd merge_rootfile/
 cd skim/
 grep '^DATA_FILE=' run_all.sh           # 2.1 sanity-check the input path
 ./run_all.sh Wmu Data                   # 2.2 smoke-test one channel×sample
-./run_all.sh all                        # 2.3 everything (Zmm Zee Wmu Wel × 7 samples)
+./run_all.sh all                        # 2.3 everything (Zmm Zee Wmu Wel × 8 samples)
 ./run_lhe_updown.sh                     # 2.4 nPDF/qcdScale/alphaS Up/Down templates from the LHE weights (MC files; needs lhe_env.sh;
                                         #     members area-normalized before combining since 2026-09-14 -- see skim/lhe_updown.py)
 ```
 CLI: `./run_all.sh <Zmm|Zee|Wmu|Wel|all> [samples…]` (samples ⊂
-`Data DY Wp Wm DYtau Wptau Wmtau`).
+`Data DY Wp Wm DYtau Wptau Wmtau TT`; `TT` = the inclusive ttbar background,
+one file for every channel, since 2026-10-16).
 
 **Check:** `skim/logs/*.log` (per-job OK/FAIL), `skim/output/*.txt` (cutflow),
 `skim/rootfile/*_hist.root`. W files hold `h_{mt,met}_W{p,m}_y0..11` (+ `_FB`)
@@ -126,7 +131,7 @@ multiply the event weight by ID × ISO × trigger scale factors
 file with `python3 skim/sf/extract_muon_sf.py <file>`; the Z→μμ iso cut was
 harmonized to the W's 0.15 the same day so ONE iso SF serves both) and the
 MB-derived trigger SF, inclusive in rapidity, from
-`correction/rootfile/trig_eff_mb_mu.root` (run `correction/run_trig_eff_mb.sh mu`
+`correction/muon_sf_check/trigger/rootfile/trig_eff_mb_mu.root` (run `correction/run_trig_eff_mb.sh mu`
 FIRST — a missing input is FATAL, never a silent SF = 1;
 `PO_MUON_SF=off ./run_all.sh Wmu` disables it for checks). Each MC job logs an
 `[SF]` block (inputs + provenance, the inclusive trigger SF and the per-y
@@ -147,7 +152,7 @@ cross-check validated in pO data (Z tag-and-probe 0.959 ± 0.025 vs EGM
 RECO × ID+ISO × TRIG (`skim/electron_sf.h`): the EGM 2025Prompt `Reco20to75` /
 `RecoAbove75` and `wp90iso` tables (CSVs flattened by
 `python3 skim/sf/extract_electron_sf.py`, looked up in the RAW supercluster η)
-and the inclusive MB-derived trigger SF of `correction/rootfile/trig_eff_mb_ele.root`
+and the inclusive MB-derived trigger SF of `correction/electron_sf_check/trigger/rootfile/trig_eff_mb_ele.root`
 (run `correction/run_trig_eff_mb.sh ele` FIRST; `PO_ELE_SF=off` disables;
 `kEleRecoSource` selects the Reco factor: `kRecoEgm` = the EGM tables,
 applied on 2026-09-29 and again since 2026-10-01; `kRecoTnP` = our pO
@@ -186,7 +191,7 @@ cd correction/
 # 3b. Data/MC MT+MET plots AND the structured Combine inputs. FROM plotting/.
 #     Through the logging wrapper (mtandmet.C + dileptonpeak.C per flavour):
 cd ../plotting/
-./run_combine_inputs.sh                     # mu+ele -> plots[/Elec]/combine_input_{W,W_leppt_mt40,Z}.root + sidecars
+./run_combine_inputs.sh                     # mu+ele -> plots[/Elec]/combine_input_{W,W_leppt,W_leppt_mt40,W_met_mt40,Z}.root + sidecars
 #   ./run_combine_inputs.sh ele             # one flavour; logs/{mtandmet,dileptonpeak}_<chan>.log
 #   ...then, from those inputs, the PREFIT signal strength r_pre = (data-DY-QCD)/W
 #   per rapidity bin, mu vs e (prefit_r.C) -> plots/prefit_r/leppt_mt40/
@@ -226,9 +231,9 @@ flat T (its F(pT) is flat). See the "FAKE-FACTOR" blocks of
 
 `combine_input_W.root` is **structured**: one TDirectory per fit region
 (`Wp_lab_y0..11`, `Wm_lab_y*`, `Wp_fb_y*`, `Wm_fb_y*`, `Wp_incl`, `Wm_incl`,
-`W_incl`), each with the 6 **absolute** templates `data_obs/signal/z/ztau/wtau/qcd`
-(MET discriminant; per-y ABCD QCD). `combine_input_Z.root` has a `Z_incl/` dir
-(`data_obs/signal/w/wtau/ztau`, mass peak). **Since 2026-09-07 every MC
+`W_incl`), each with the 7 **absolute** templates `data_obs/signal/z/ztau/wtau/ttbar/qcd`
+(MET discriminant; per-y ABCD QCD; `ttbar` since 2026-10-16). `combine_input_Z.root` has a `Z_incl/` dir
+(`data_obs/signal/w/wtau/ztau/ttbar`, mass peak). **Since 2026-09-07 every MC
 process of every region also carries the LHE shape systematics
 `<process>_{nPDF,qcdScale,alphaS}Up/Down`** (from the skim's Up/Down twins,
 Module 2.4; their absence for plain `leppt` is what retired that variant on
@@ -259,7 +264,7 @@ One driver does everything per channel. Full details:
 ```bash
 cd HiggsAnalysis-CombinedLimit/test
 cmsenv
-./run_pO_fits.sh [mu|ele|both] [simfit|flavfit|all] [--disc met|leppt_mt40] [--dry-run] [--no-postfit] [--draw-only] [--asimov] [--no-statonly] [--no-contour] [--extract-only]
+./run_pO_fits.sh [mu|ele|both] [simfit|flavfit|all] [--disc leppt|met|leppt_mt40|met_mt40] [--dry-run] [--no-postfit] [--draw-only] [--asimov] [--no-statonly] [--no-contour] [--extract-only]
 ```
 
 ### The grand simultaneous fit — `simfit` (2026-08-04, the DEFAULT)
@@ -364,19 +369,22 @@ POI scheme); only the input file, the output tree, the postfit x-title and the
 QCD treatment change (`QCD_MODE` defaults to `abcd` for `leppt_mt40`, `lnN`
 for `met` — see Module 4).
 
-**RETIRED 2026-09-21 — a third variant `leppt`** (lepton pT, plain W selection,
-`combine_input_W_leppt.root` → `pO_fit_out_leppt/`). It was dropped as a
-discriminant on 2026-08-16; `pO_fit_out_leppt/` never had a simfit, and the
-skim stores LHE/SF systematic twins only for `h_met_*` and `h_leppt_mt40_*`,
-so its Combine input carried **no shape systematics** and could not be fitted
-by the current card generator. `mtandmet.C` no longer writes that file or its
-`plots[/Elec]/leppt/` stacks, and deletes any pre-retirement copy on each run;
-`disc_variants.h` and `run_observables.sh` reject the tag with a message
-naming the replacement. To bring it back, restore the two-entry variant table
-at the top of `mtandmet.C` (`kVarNom`/`kVarMt40`) and the `leppt` rows in
-those two consumers. NB `skim.C` still fills `h_leppt_W{p,m}_y*` (the
-no-m_T-cut per-y histos) — they are now unread, but dropping them needs a
-full re-skim, so they were left in place.
+**`leppt` = THE NOMINAL since 2026-10-21** (lepton pT, NO m_T cut;
+`combine_input_W_leppt.root` → `pO_fit_out_leppt/`, the default `--disc` of
+`run_pO_fits.sh`, `run_pO_impacts.sh` and `run_observables.sh`). Retired on
+2026-09-21 (no shape systematics then) and restored with its own model,
+scheme C: each (flavour, charge, y) bin is two channels, m_T < 30 (= the ABCD
+region B) and m_T ≥ 30, sharing r; multijet per bin = T_y × exp(s (pT −
+40)/10) × the group's anti-iso pT shape × the bin's anti-iso count, with a
+free level PER BIN and per-bin anti-iso anchor CRs in the fit (fork
+`QCD_MODE=mtsplit`, its default for `leppt`), plus a window lnN per charge and
+a transfer lnN per rapidity group on the m_T ≥ 30 multijet. Written by
+`plotting/combine_input_nomt.C` (run by `run_combine_inputs.sh`) from
+`correction/qcd_abcd_nomt.h runNoMt` (run by `correction/run_qcd_abcd.sh`,
+which also draws its diagnostic plots in `plots/qcd_abcd_<lep>/nomt_fit/`);
+gen fiducial without m_T. All skims use the e/γ-calibrated PF MET since
+2026-10-21c (`skim_common.h ComputePFMETEGCalib`). Details in CLAUDE.md and
+`docs/iterations/2026-10-21_leppt-nomt-schemeC.md`.
 
 > **WARNING — carry the SAME `--disc` through the ENTIRE workflow of a variant
 > run.** The out-trees carry no marker of which discriminant produced them —

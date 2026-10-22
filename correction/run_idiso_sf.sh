@@ -7,14 +7,15 @@
 # runs in the Combine fork (test/run_pO_idiso_sf.sh), separate from the
 # nominal fit stream, and compared with the EGM 2025Prompt wp90iso SF.
 #
+# Outputs (since 2026-10-20) under correction/electron_sf_check/idiso_sf/:
 # Usage:  ./run_idiso_sf.sh [skim|inputs|plots|all] [samples...]
 #   skim    the separate skim, one job per sample (default: all 7,
-#           Data Wp Wm DY DYtau Wptau Wmtau)       -> rootfile/idiso_sf_ele/skim_<s>.root
+#           Data Wp Wm DY DYtau Wptau Wmtau)       -> rootfile/skim_<s>.root
 #   inputs  templates, QCD, Combine inputs + the composition record
-#                                                  -> rootfile/idiso_sf_ele/combine_input_idiso_*.root
+#                                                  -> rootfile/combine_input_idiso_*.root
 #   plots   efficiencies, SF, EGM overlay; needs the fit summaries downloaded
 #           from lxplus (FORK_TEST overrides the fork's test/ dir)
-#                                                  -> plots/idiso_sf_ele/
+#                                                  -> plots/
 #   all     skim + inputs (everything before the lxplus fit)
 #
 # Logs: logs/idiso_sf_ele_skim_<sample>.log, logs/idiso_sf_ele_inputs.log,
@@ -32,13 +33,15 @@ case "$STAGE" in
 esac
 SAMPLES="${*:-Data Wp Wm DY DYtau Wptau Wmtau}"
 
-mkdir -p logs rootfile plots
+OUT=electron_sf_check/idiso_sf   # = idiso_sf_common.h's kRootDir / kPlotDir parent
+LOG=$OUT/logs
+mkdir -p "$LOG" "$OUT/rootfile" "$OUT/plots"
 
 build() {  # $1 = macro; pre-build once so no two jobs race on the ACLiC artifacts
   echo "[BUILD] compiling $1 ..."
-  if ! root -l -b -q -e ".L $1+" > "logs/idiso_sf_ele_build.log" 2>&1; then
-    echo "[FAIL] compilation of $1 failed -- see logs/idiso_sf_ele_build.log" >&2
-    tail -20 logs/idiso_sf_ele_build.log >&2
+  if ! root -l -b -q -e ".L $1+" > "$LOG/idiso_sf_ele_build.log" 2>&1; then
+    echo "[FAIL] compilation of $1 failed -- see $LOG/idiso_sf_ele_build.log" >&2
+    tail -20 "$LOG/idiso_sf_ele_build.log" >&2
     exit 1
   fi
 }
@@ -58,7 +61,7 @@ fail=0
 if [ "$STAGE" = "skim" ] || [ "$STAGE" = "all" ]; then
   build idiso_sf_skim.C
   for s in $SAMPLES; do
-    run_root "skim $s" "idiso_sf_skim.C+(\"$s\")" "logs/idiso_sf_ele_skim_${s}.log" \
+    run_root "skim $s" "idiso_sf_skim.C+(\"$s\")" "$LOG/idiso_sf_ele_skim_${s}.log" \
              '^\[INPUT\]|^\[RESULT\]|^\[GENMATCH\]|^\[WARN\]|^\[FATAL\]' || fail=$((fail+1))
   done
 fi
@@ -67,19 +70,19 @@ if [ "$STAGE" = "inputs" ] || [ "$STAGE" = "all" ]; then
     echo "[SKIP] inputs: the skim had failures" >&2
   else
     build idiso_sf_inputs.C
-    run_root "inputs" "idiso_sf_inputs.C+()" "logs/idiso_sf_ele_inputs.log" \
+    run_root "inputs" "idiso_sf_inputs.C+()" "$LOG/idiso_sf_ele_inputs.log" \
              '^\[RESULT\]|^\[EPS\]|^\[ZTNP\]|^\[EGMPRED\]|^\[ABCD\]|^\[OUT\]|^\[WARN\]|^\[FATAL\]' || fail=$((fail+1))
   fi
 fi
 if [ "$STAGE" = "plots" ]; then
   build idiso_sf_plots.C
-  run_root "plots" "idiso_sf_plots.C+()" "logs/idiso_sf_ele_plots.log" \
+  run_root "plots" "idiso_sf_plots.C+()" "$LOG/idiso_sf_ele_plots.log" \
            '^\[FIT\]|^\[SF\]|^\[EGM\]|^\[PULL\]|^\[OUT\]|^\[WARN\]|^\[FATAL\]' || fail=$((fail+1))
 fi
 
 echo "============================================================"
 if [ "$fail" -eq 0 ]; then
-  echo "[DONE] failures=0   logs in $(pwd)/logs/"
+  echo "[DONE] failures=0   logs in $(pwd)/$LOG/"
 else
   echo "[DONE] failures=${fail}  -- check the logs above" >&2
   exit 1

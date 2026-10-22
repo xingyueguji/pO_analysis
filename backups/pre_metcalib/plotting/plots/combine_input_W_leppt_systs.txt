@@ -1,0 +1,8 @@
+# Shape systematics in ./plots/combine_input_W_leppt.root (plotting/combine_input_nomt.C)
+# <systematic> <processes carrying <process>_<systematic>Up/Down in every SR channel>
+# a process token <hist>@<charge> restricts the row to that charge's channels
+nPDF signal z ztau wtau ttbar
+qcdScale signal z ztau wtau ttbar
+alphaS signal z ztau wtau ttbar
+muSF signal z ztau wtau ttbar
+metResMu signal z ztau wtau ttbar

@@ -11,8 +11,13 @@
 // its fitted scale:
 //
 //     postfit(bin i) = lumi * [ r_<C>_y<i> * (signal_i + wtau_i)
-//                             + r_Z        * (z_i + ztau_i) ]
+//                             + r_Z        * (z_i + ztau_i)
+//                             + ttbar_i ]
 //                    + qcdScale_<F>_<C> * qcd_i
+//
+// (ttbar since 2026-10-16: frozen MC with lumi and its own lnN. The CSV
+// carries no ttbar multiplier, so THIS shortcut applies lumi only -- exact for
+// fits with shape nuisances, which take the shapes_fit_s path below anyway.)
 //
 // where lumi = kLumi^theta_lumi and qcdScale = kappa^theta are read as
 // MULTIPLIERS from the CSV (extract_pO_simfit.C writes them into the qcd_norm
@@ -23,6 +28,9 @@
 // the evaluated formula (sB*sC/sD x kappa^theta) and applies to the
 // A0-normalized `qcd_abcd` template instead of `qcd`; selected via the CSV's
 // 18th column qcd_model ("abcd"); column absent -> plain qcd, unchanged.
+// QCD_MODE=abcdy (2026-10-19, the in-fit ABCD per rapidity group): the same
+// with qcd_model "abcdy" -> the multiplier (each bin's GROUP formula) applies
+// to the `qcd_abcdy` template.
 // Summing those over i reproduces combine's postfit sum identically -- and
 // needs only the structured inputs (combine_input_W*.root) plus the fitted
 // parameters (simfit/summary/comb_W_yields.csv), i.e. no fitDiagnostics file.
@@ -55,6 +63,7 @@
 #include "plotting_helper.C"
 #include "disc_variants.h"
 #include "fit_variants.h" // pOFit::Spec (which fit: comb / mu-only / e-only)
+#include "../correction/abcd_ygroups.h" // pOAbcdY::kNGroups (qcd_model abcdy, the ndf count)
 #include "TFile.h"
 #include "TH1D.h"
 #include "TMath.h"
@@ -212,8 +221,11 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
 
     const TString fork = pOFit::WorkDir(dsuf, spec);   // the fit's work dir (honours $FORK_TEST)
     const TString sCsv = csv ? TString(csv) : pOFit::SummaryFile(dsuf, spec, "W_yields.csv");
-    const TString sMuW  = muWFile  ? TString(muWFile)  : TString::Format("./plots/combine_input_W%s.root", dsuf.Data());
-    const TString sEleW = eleWFile ? TString(eleWFile) : TString::Format("./plots/Elec/combine_input_W%s.root", dsuf.Data());
+    // the inputs of the tag's discriminant (a fit-model variant such as
+    // leppt_mt40_abcdy has its own out-tree but reads the leppt_mt40 inputs)
+    const TString isuf  = pODisc::InputSuffix(disc);
+    const TString sMuW  = muWFile  ? TString(muWFile)  : TString::Format("./plots/combine_input_W%s.root", isuf.Data());
+    const TString sEleW = eleWFile ? TString(eleWFile) : TString::Format("./plots/Elec/combine_input_W%s.root", isuf.Data());
     const TString sFD   = fitDiag ? TString(fitDiag) : fork + "/fits/simfit_lab/fitDiagnostics_simfit_lab.root";
 
     SimfitPars pars = ReadPars(sCsv);
@@ -246,7 +258,7 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
         }
     }
 
-    const bool isMET = (TString(disc) == "met");
+    const bool isMET = pODisc::IsMetDisc(disc); // met, met_mt40[_abcdy] (2026-10-20)
     const char *xTitle = isMET ? "PF MET (GeV)" : "Lepton p_{T} (GeV)";
     const char *yTitle = "Events / 2.0 GeV";
 
@@ -268,9 +280,27 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
 
         // charge sets: Wp only, Wm only, both
         const char *tag[3] = {"Wp", "Wm", "W"};
+        // mtsplit (2026-10-21, the no-m_T fit): every bin has TWO channels
+        // <F>_<C>_lab_y<i>_lo (m_T < 30) / _hi; the stacks sum both (part 0) and
+        // are drawn per channel too (parts 1, 2). Needs the shapes_fit_s path.
+        const bool isMtSplit = (pars.qcdModel == "mtsplit");
+        if (isMtSplit && !useShapes)
+        {
+            std::cerr << "[ERROR] postfit_incl: an mtsplit fit needs the fitDiagnostics shapes (" << sFD << ") -- skipped\n";
+            fW->Close();
+            delete fW;
+            continue;
+        }
+        const int nParts = isMtSplit ? 3 : 1;
+        for (int ip = 0; ip < nParts; ++ip)
         for (int is = 0; is < 3; ++is)
         {
-            TH1D *hData = nullptr, *hSig = nullptr, *hZ = nullptr, *hZt = nullptr, *hWt = nullptr, *hQ = nullptr;
+            std::vector<TString> chSuf = {""};
+            if (isMtSplit) chSuf = (ip == 0) ? std::vector<TString>{"_lo", "_hi"} : std::vector<TString>{ip == 1 ? "_lo" : "_hi"};
+            const TString partTag = (ip == 0) ? "" : (ip == 1 ? "_mtlo" : "_mthi");
+            const TString partLab = (ip == 0) ? (isMtSplit ? ", all m_{T}" : "") : (ip == 1 ? ", m_{T} < 30" : ", m_{T} #geq 30");
+            TH1D *hData = nullptr, *hSig = nullptr, *hZ = nullptr, *hZt = nullptr, *hWt = nullptr, *hQ = nullptr,
+                 *hTT = nullptr; // ttbar: optional, fits made before 2026-10-16 have none
             for (int ic = 0; ic < 2; ++ic)
             {
                 if (is == 0 && ic == 1) continue; // Wp only
@@ -279,21 +309,27 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
                 for (int iy = 0; iy < 12; ++iy)
                 {
                     const TString R = TString::Format("%s_lab_y%d", C, iy);
-                    // data (unscaled)
-                    AccTemplate(fW, R + "/data_obs", hData, Form("pfincl_data_%s_%s", flavs[fl], tag[is]));
+                    // data (unscaled); mtsplit per-channel parts read the channel's own dir
+                    const TString RD = (ip == 0) ? R : R + chSuf[0];
+                    AccTemplate(fW, RD + "/data_obs", hData, Form("pfincl_data_%s_%s%s", flavs[fl], tag[is], partTag.Data()));
                     if (useShapes)
                     {
                         // the fit's own postfit templates (thetas applied), per
-                        // grand-fit channel <F>_<C>_lab_y<i>, on the input's axis
-                        const TH1 *ref = (TH1 *)fW->Get(R + "/data_obs");
-                        const TString ch = TString::Format("shapes_fit_s/%s_%s", flavs[fl], R.Data());
-                        bool okc = ref != nullptr;
-                        okc &= AccPostfitShape(fFD, ch + "/signal", ref, hSig, Form("pfincl_sig_%s_%s", flavs[fl], tag[is]));
-                        okc &= AccPostfitShape(fFD, ch + "/wtau",   ref, hWt,  Form("pfincl_wt_%s_%s",  flavs[fl], tag[is]));
-                        okc &= AccPostfitShape(fFD, ch + "/z",      ref, hZ,   Form("pfincl_z_%s_%s",   flavs[fl], tag[is]));
-                        okc &= AccPostfitShape(fFD, ch + "/ztau",   ref, hZt,  Form("pfincl_zt_%s_%s",  flavs[fl], tag[is]));
-                        okc &= AccPostfitShape(fFD, ch + "/qcd",    ref, hQ,   Form("pfincl_q_%s_%s",   flavs[fl], tag[is]));
-                        if (!okc) std::cerr << "[WARN] postfit_incl: incomplete " << ch << " in " << sFD << "\n";
+                        // grand-fit channel <F>_<C>_lab_y<i>[_lo|_hi], on the input's axis
+                        const TH1 *ref = (TH1 *)fW->Get(RD + "/data_obs");
+                        for (const TString &cs : chSuf)
+                        {
+                            const TString ch = TString::Format("shapes_fit_s/%s_%s%s", flavs[fl], R.Data(), cs.Data());
+                            const TString pt = partTag;
+                            bool okc = ref != nullptr;
+                            okc &= AccPostfitShape(fFD, ch + "/signal", ref, hSig, Form("pfincl_sig_%s_%s%s", flavs[fl], tag[is], pt.Data()));
+                            okc &= AccPostfitShape(fFD, ch + "/wtau",   ref, hWt,  Form("pfincl_wt_%s_%s%s",  flavs[fl], tag[is], pt.Data()));
+                            okc &= AccPostfitShape(fFD, ch + "/z",      ref, hZ,   Form("pfincl_z_%s_%s%s",   flavs[fl], tag[is], pt.Data()));
+                            okc &= AccPostfitShape(fFD, ch + "/ztau",   ref, hZt,  Form("pfincl_zt_%s_%s%s",  flavs[fl], tag[is], pt.Data()));
+                            okc &= AccPostfitShape(fFD, ch + "/qcd",    ref, hQ,   Form("pfincl_q_%s_%s%s",   flavs[fl], tag[is], pt.Data()));
+                            if (!okc) std::cerr << "[WARN] postfit_incl: incomplete " << ch << " in " << sFD << "\n";
+                            AccPostfitShape(fFD, ch + "/ttbar", ref, hTT, Form("pfincl_tt_%s_%s%s", flavs[fl], tag[is], pt.Data()));
+                        }
                         continue;
                     }
                     // postfit-scaled templates: clone region histos, scale, add
@@ -313,13 +349,18 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
                     const double rZB  = pars.rZ * pars.lumi;
                     const double qcdB = (fl == 0) ? pars.qcdMu[ic][iy] : pars.qcdEle[ic][iy];
                     // abcd mode: the multiplier (sB*sC/sD x kappa^theta) applies
-                    // to the A0-normalized qcd_abcd template, not the plain qcd
-                    const char *qcdProc = (pars.qcdModel == "abcd") ? "qcd_abcd" : "qcd";
+                    // to the A0-normalized qcd_abcd template, not the plain qcd;
+                    // abcdy: the group multiplier, on the qcd_abcdy template
+                    const char *qcdProc = (pars.qcdModel == "abcd")    ? "qcd_abcd"
+                                          : (pars.qcdModel == "abcdy") ? "qcd_abcdy"
+                                                                       : "qcd";
                     addScaled("signal", hSig, rB,   Form("pfincl_sig_%s_%s", flavs[fl], tag[is]));
                     addScaled("wtau",   hWt,  rB,   Form("pfincl_wt_%s_%s",  flavs[fl], tag[is]));
                     addScaled("z",      hZ,   rZB,  Form("pfincl_z_%s_%s",   flavs[fl], tag[is]));
                     addScaled("ztau",   hZt,  rZB,  Form("pfincl_zt_%s_%s",  flavs[fl], tag[is]));
                     addScaled(qcdProc,  hQ,   qcdB, Form("pfincl_q_%s_%s",   flavs[fl], tag[is]));
+                    if (fW->Get(R + "/ttbar")) // inputs since 2026-10-16
+                        addScaled("ttbar", hTT, pars.lumi, Form("pfincl_tt_%s_%s", flavs[fl], tag[is]));
                 }
             }
             if (!hData || !hSig) { std::cerr << "[ERROR] no histograms accumulated for " << tag[is] << "\n"; continue; }
@@ -327,13 +368,16 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
             // stack order matches the per-bin postfit plots (draw_postfit_pO.C)
             std::vector<TH1 *> bkgs = {hSig, hZ, hZt, hWt, hQ};
             std::vector<std::string> names = {"W signal", "DY", "DY #tau", "W #tau", "QCD (ABCD)"};
+            // ttbar last (stack colours are positional -- the five above keep theirs)
+            if (hTT) { bkgs.push_back(hTT); names.push_back("t#bar{t}"); }
 
-            TH1D *hTot = (TH1D *)hSig->Clone(Form("pfincl_tot_%s_%s", flavs[fl], tag[is]));
+            TH1D *hTot = (TH1D *)hSig->Clone(Form("pfincl_tot_%s_%s%s", flavs[fl], tag[is], partTag.Data()));
             hTot->SetDirectory(nullptr);
             if (hZ) hTot->Add(hZ);
             if (hZt) hTot->Add(hZt);
             if (hWt) hTot->Add(hWt);
             if (hQ) hTot->Add(hQ);
+            if (hTT) hTot->Add(hTT);
 
             // info box: same content style as the per-bin plots; the per-bin r's
             // cannot be quoted here, so point at the y-binned plots instead.
@@ -345,16 +389,24 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
             // 1 QCD param per (flavour, charge) -- the right count here, since
             // the 3 CR scales are constrained by CR data outside this sum.
             // + the LHE shape nuisances (one theta each, shared by everything)
-            const int ndfPars = (pars.qcdShared ? ((is == 2) ? 28 : 15)
-                                                : ((is == 2) ? 49 : 25)) + nLhe;
+            // (+1 for the ttbar normalization lnN when the fit has ttbar)
+            // abcdy: one QCD multiplier per (flavour, charge, rapidity GROUP)
+            // -> 24(12) r's + r_Z + 2(1) x kNGroups + lumi
+            // mtsplit (per-bin level since 2026-10-21b): one free level per BIN
+            const int nG = (pars.qcdModel == "mtsplit") ? 12 : pOAbcdY::kNGroups;
+            // mtsplit: the same count as abcdy with its own nG (the
+            // anchors are pinned by their CRs outside this sum)
+            const int ndfPars = ((pars.qcdModel == "abcdy" || pars.qcdModel == "mtsplit") ? ((is == 2) ? 26 + 2 * nG : 14 + nG)
+                                 : pars.qcdShared ? ((is == 2) ? 28 : 15)
+                                                  : ((is == 2) ? 49 : 25)) + nLhe + (hTT ? 1 : 0);
             int ndf = nUsed - ndfPars;
             if (ndf < 1) ndf = (nUsed > 0 ? nUsed : 1);
             // the same numbers as the info box, on the console: they are quoted
             // (CLAUDE.md, the AN), and a number that lives only in a PNG is lost
             // to the run_observables log (2026-09-29)
-            std::cout << Form("[postfit-incl] %s %-3s %-4s data %6.0f  postfit %8.1f  (data/postfit %.3f)  "
+            std::cout << Form("[postfit-incl] %s %-3s %-4s%-6s data %6.0f  postfit %8.1f  (data/postfit %.3f)  "
                               "BC chi2/ndf = %6.1f/%-3d = %.2f, p = %.2g\n",
-                              fitTag, flavs[fl], tag[is], hData->Integral(), hTot->Integral(),
+                              fitTag, flavs[fl], tag[is], partTag.Data(), hData->Integral(), hTot->Integral(),
                               hTot->Integral() > 0 ? hData->Integral() / hTot->Integral() : 0.0, chi2, ndf,
                               chi2 / ndf, TMath::Prob(chi2, ndf));
             std::vector<std::string> box = {
@@ -365,6 +417,8 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
                 useShapes ? "sum of 12 lab y bins (shapes_fit_s)"
                           : (nLhe > 0 ? "sum of 12 lab y bins (APPROX: shape #theta's ignored)"
                                       : "sum of 12 lab y bins (per-bin r's)")};
+            // mtsplit: which m_T channel(s), in the box (the header has no room)
+            if (isMtSplit) box.push_back(std::string("channels: ") + TString(partLab(2, partLab.Length() - 2)).Data());
 
             PlotStyle ps;
             ps.drawOpt = "hist";
@@ -390,7 +444,7 @@ static void postfit_incl_impl(const char *disc, const char *fitTag,
                 h->SetMaximum(10.25 * h->GetMaximum());
             };
 
-            const std::string out = outDir + "/postfit_" + flavs[fl] + "_" + tag[is];
+            const std::string out = outDir + "/postfit_" + flavs[fl] + "_" + tag[is] + partTag.Data();
             SaveNicePlot1D_WithBkg(hData, bkgs, names, out, xTitle, yTitle,
                                    "", lepLab,
                                    Form("%s lab incl (%s postfit)", tag[is], who.Data()),

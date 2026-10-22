@@ -1,0 +1,11 @@
+# The no-m_T lepton-pT fit, scheme C (QCD_MODE=mtsplit) in ./plots/Elec/combine_input_W_leppt.root (plotting/combine_input_nomt.C)
+# SR channels <C>_<binning>_y<i>_lo (m_T < 30) and _hi (m_T >= 30); per rapidity group the anchors
+# <C>_<binning>_<group>_CRD (anti-iso, m_T < 30) and _CRH (anti-iso, m_T >= 30). Lines: <binning> <group> <bins>
+# kappaHi = the measured residual lnN of the m_T >= 30 multijet (correction/qcd_abcd.C runNoMt, max of the charges)
+#! kappaHi 1.168
+lab fwd 10 11
+lab bwd 0 1
+lab cen 2 3 4 5 6 7 8 9
+fb fwd 10 11
+fb bwd 0 1
+fb cen 2 3 4 5 6 7 8 9

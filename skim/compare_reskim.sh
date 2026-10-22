@@ -1,14 +1,22 @@
 #!/bin/bash
 # skim/compare_reskim.sh -- run compare_hists.C on every *_hist.root of a backup
 # directory against the current rootfile/ (bit-identity gate after a re-skim).
-#   ./compare_reskim.sh [backup-dir]     (default rootfile_pre_lhe)
-# Log (the record): logs/compare_<tag>.log for backup dir rootfile_pre_<tag>.
+#   ./compare_reskim.sh [backup]     backup = a directory, or a tag (pre_<tag> or
+#                                    <tag>) resolved to ../backups/pre_<tag>/skim/rootfile
+#                                    (default pre_lhe; backups moved there 2026-10-20 --
+#                                    until then skim/rootfile_pre_<tag>)
+# Log (the record): logs/compare_<tag>.log.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-bk="${1:-rootfile_pre_lhe}"
+arg="${1:-pre_lhe}"
+if [ -d "$arg" ]; then bk="$arg"; else bk="../backups/pre_${arg#pre_}/skim/rootfile"; fi
 [ -d "$bk" ] || { echo "[ERR] no backup dir $bk"; exit 2; }
 mkdir -p logs
-log="logs/compare_$(basename "$bk" | sed 's/^rootfile_pre_//').log"
+case "$bk" in
+  *backups/pre_*/skim/rootfile*) tag=$(echo "$bk" | sed 's#.*backups/pre_\([^/]*\)/skim/rootfile.*#\1#') ;;
+  *) tag=$(basename "$bk" | sed 's/^rootfile_pre_//') ;;
+esac
+log="logs/compare_${tag}.log"
 
 main() {
 set -euo pipefail   # the caller's set +e (kept for PIPESTATUS) must not leak in here

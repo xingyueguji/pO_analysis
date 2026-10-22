@@ -1,7 +1,7 @@
 #!/bin/bash
 # plotting/run_syst_shapes.sh -- LHE shape-systematics diagnostics with a log.
 #
-#   ./run_syst_shapes.sh [met|leppt_mt40|all]      (default: leppt_mt40)
+#   ./run_syst_shapes.sh [met|leppt_mt40|met_mt40|all]      (default: leppt_mt40)
 #
 # Runs syst_shapes.C for the discriminant(s): per-region Up/Down-over-nominal
 # plots of nPDF / qcdScale / alphaS for every MC process of the Combine inputs,
@@ -17,9 +17,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 mkdir -p logs
 arg="${1:-leppt_mt40}"
 case "$arg" in
-  all) DISCS="met leppt_mt40" ;;
-  met|leppt_mt40) DISCS="$arg" ;;
-  *) echo "[ERR] usage: $0 [met|leppt_mt40|all]"; exit 2 ;;
+  all) DISCS="met leppt_mt40 met_mt40" ;;
+  met|leppt_mt40|met_mt40) DISCS="$arg" ;;
+  *) echo "[ERR] usage: $0 [met|leppt_mt40|met_mt40|all]"; exit 2 ;;
 esac
 # pre-build once (no ACLiC race if several discs run)
 root -l -b -q -e '.L syst_shapes.C+' >/dev/null 2>&1 || { echo "[ERR] syst_shapes.C does not compile"; root -l -b -q -e '.L syst_shapes.C+' 2>&1 | tail -20; exit 1; }

@@ -1,9 +1,10 @@
 # Shape systematics in ./plots/Elec/combine_input_W_leppt_mt40.root (plotting/mtandmet.C)
 # <systematic> <processes carrying <process>_<systematic>Up/Down in every SR region>
 # a process token <hist>@<charge> restricts the row to that charge's channels
-nPDF signal z ztau wtau
-qcdScale signal z ztau wtau
-alphaS signal z ztau wtau
-eleSF signal z ztau wtau
-qcdFF_ele_Wp qcd_abcd@Wp
-qcdFF_ele_Wm qcd_abcd@Wm
+nPDF signal z ztau wtau ttbar
+qcdScale signal z ztau wtau ttbar
+alphaS signal z ztau wtau ttbar
+eleSF signal z ztau wtau ttbar
+eleReco signal z ztau wtau ttbar
+qcdFF_ele_Wp qcd_abcd@Wp qcd_abcdy@Wp
+qcdFF_ele_Wm qcd_abcd@Wm qcd_abcdy@Wm

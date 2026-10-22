@@ -5,11 +5,25 @@
 # through every filename and output folder so variants never overwrite each
 # other (2026-08-03).
 #
-#   ./run_observables.sh [met|leppt_mt40|all]              (default: met)
+#   ./run_observables.sh [leppt|leppt_mt40|met|all]        (default: leppt)
+#   ./run_observables.sh leppt_mt40_abcdy                   (opt-in, 2026-10-19)
+#   ./run_observables.sh met_mt40 | met_mt40_abcdy          (opt-in, 2026-10-20: PF MET
+#                                                            on the leppt_mt40 events)
 #
-# leppt_mt40 is the PRIMARY discriminant, met the backup. The third variant
-# "leppt" (plain W selection, no m_T cut) was dropped 2026-08-16 and retired
-# 2026-09-21 -- mtandmet.C no longer writes its input or its stacks.
+# leppt is THE NOMINAL since 2026-10-21 (user decision): the lepton-pT fit with
+# NO m_T cut, its SR split at m_T = 30, the scheme-C multijet (fork
+# QCD_MODE=mtsplit, out-tree pO_fit_out_leppt/, input
+# plotting/combine_input_nomt.C), gen fiducial without m_T. leppt_mt40 (the
+# nominal until then) is kept for later, met is the backup. ('leppt' was a
+# retired plain no-m_T stack variant 2026-09-21..2026-10-21.)
+#
+# leppt_mt40_abcdy = the leppt_mt40 fits made with the fork's opt-in
+# QCD_MODE=abcdy (rapidity-resolved in-fit ABCD), read from its own out-tree
+# pO_fit_out_leppt_mt40_abcdy/; every output carries the full tag
+# (plots/{comb,flavfit}/.../leppt_mt40_abcdy/, *_leppt_mt40_abcdy.root,
+# logs/run_observables_leppt_mt40_abcdy.log), so the nominal outputs are never
+# touched. Not part of 'all'. Comparison with the nominal fit:
+# plotting/run_compare_fits.sh (plotting/compare_fits.C).
 #
 # Per discriminant it runs (each block only when its fit outputs exist):
 #
@@ -39,6 +53,10 @@
 #     xsec_contour_WZ_flav(disc, bn)  xsec/<disc>/xsec_contour_WZ_<bn>  (lab AND fb)
 #   and each fit's own plots: xsec_contour_WZ_fit -> xsec/<disc>/..._<bn>_<flav>,
 #   postfit_incl_fit -> postfit_incl/<disc>/postfit_<flav>_{Wp,Wm,W}.
+#   r_per_bin(disc, ref) -> r/<disc>/ (2026-10-20): the POSTFIT r per rapidity
+#   bin of mu-only | mu+e | e-only, r_e/r_mu, the e multijet each group would
+#   need for r_e = r_mu against its fitted uncertainty, and for a fit-model
+#   variant tag (leppt_mt40_abcdy) the base tag's fits overlaid (ref_tag).
 # (The LEGACY per-flavour per-bin chain -- observables(isElec), observables_overlay,
 #  xsec_fiducial(_diff) on <chan>_fitted_yields.root -- was removed with those
 #  fits on 2026-09-22.)
@@ -72,9 +90,26 @@ disc_suffix() {
   case "$1" in
     met)        echo "" ;;
     leppt_mt40) echo "_leppt_mt40" ;;
-    leppt)      echo "[ERROR] disc 'leppt' (plain W selection) was retired 2026-09-21" \
-                     "-- use leppt_mt40 (primary) or met (backup)" >&2; exit 1 ;;
-    *)          echo "[ERROR] unknown disc '$1' (met|leppt_mt40)" >&2; exit 1 ;;
+    # the fork's QCD_MODE=abcdy out-tree (2026-10-19, opt-in; see the header)
+    leppt_mt40_abcdy) echo "_leppt_mt40_abcdy" ;;
+    # the PF-MET counterpart of leppt_mt40 (2026-10-20): the same events, the
+    # same in-fit ABCD and m_T > 40 gen fiducial -> pO_fit_out_met_mt40[_abcdy]/
+    met_mt40)         echo "_met_mt40" ;;
+    met_mt40_abcdy)   echo "_met_mt40_abcdy" ;;
+    # the nominal since 2026-10-21: the no-m_T lepton-pT fit (QCD_MODE=mtsplit)
+    leppt)      echo "_leppt" ;;
+    *)          echo "[ERROR] unknown disc '$1' (leppt|met|leppt_mt40|leppt_mt40_abcdy|met_mt40|met_mt40_abcdy)" >&2; exit 1 ;;
+  esac
+}
+
+# ref_tag <disc>: the tag whose fits differ from <disc>'s only in the fit model
+# (same data, same inputs) -- r_per_bin.C overlays them. Empty for a plain
+# discriminant (= pODisc::Base in plotting/disc_variants.h).
+ref_tag() {
+  case "$1" in
+    leppt_mt40_abcdy) echo "leppt_mt40" ;;
+    met_mt40_abcdy)   echo "met_mt40" ;;
+    *)                echo "" ;;
   esac
 }
 
@@ -135,9 +170,12 @@ run_one() {
       echo "[ERROR] no fit outputs for disc=$disc:"
       echo "        simfit  : $COMBF"
       echo "        flavfit : pO_fit_out${dsuf}/simfit_{mu,ele}/summary/simfit_{mu,ele}_fitted_yields.root"
-      echo "        Run the fit first: (fork) ./run_pO_fits.sh --disc $disc              (simfit, DEFAULT)"
-      echo "        and/or:            (fork) ./run_pO_fits.sh both flavfit --disc $disc (mu-only + e-only)"
-      echo "        (both at once: ./run_pO_fits.sh both all --disc $disc; then sync_lxplus.sh download if on lxplus)"
+      # a fit-model variant tag (<disc>_abcdy) is the fork's QCD_MODE=abcdy on <disc>
+      local fdisc="${disc%_abcdy}" fenv=""
+      [ "$fdisc" != "$disc" ] && fenv="QCD_MODE=abcdy "
+      echo "        Run the fit first: (fork) ${fenv}./run_pO_fits.sh --disc $fdisc              (simfit, DEFAULT)"
+      echo "        and/or:            (fork) ${fenv}./run_pO_fits.sh both flavfit --disc $fdisc (mu-only + e-only)"
+      echo "        (both at once: ${fenv}./run_pO_fits.sh both all --disc $fdisc; then sync_lxplus.sh download if on lxplus)"
       exit 1
     fi
     echo "[SKIP]  disc=$disc: no fit outputs (neither simfit nor flavfit)"
@@ -224,6 +262,23 @@ run_one() {
       (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"postfit_incl.C+\"); postfit_incl_fit(\"$disc\",\"simfit_$c\");") || exit 1
       require_file "$HERE/../plotting/plots/flavfit/postfit_incl/$disc/postfit_${c}_W.png" "postfit_incl_fit(simfit_$c) produced no plot"
     done
+    # ---- the POSTFIT r per rapidity bin, mu vs e (2026-10-20): mu-only | mu+e |
+    # e-only, r_e/r_mu, the multijet each group would need for r_e = r_mu, and --
+    # for a fit-model variant -- its base tag's fits overlaid (the other model).
+    # Needs both flavour fits.
+    if [ "$FLAVS" = "mu ele" ]; then
+      REF="$(ref_tag "$disc")"
+      (cd "$HERE/../plotting" && root -l -b -q "r_per_bin.C+(\"$disc\",\"$REF\")") || exit 1
+      for bn in lab fb; do
+        require_file "$HERE/../plotting/plots/flavfit/r/$disc/r_Wm_$bn.png" "r_per_bin produced no plot"
+        require_file "$HERE/../plotting/plots/flavfit/r/$disc/qcd_needed_Wm_$bn.png" "r_per_bin produced no qcd_needed plot"
+      done
+      if [ -n "$REF" ] && [ -f "$FORK_TEST/pO_fit_out$(disc_suffix "$REF")/simfit_ele/summary/simfit_ele_W_yields.csv" ]; then
+        require_file "$HERE/../plotting/plots/flavfit/r/$disc/r_model_Wm_lab.png" "r_per_bin produced no model plot vs $REF"
+      fi
+    else
+      echo "[note] disc=$disc: r_per_bin needs both flavour fits (have: $FLAVS) -> skipped"
+    fi
   else
     echo "[note] disc=$disc: no flavfit outputs (simfit_{mu,ele}/) -> mu-vs-e overlays skipped"
   fi
@@ -240,29 +295,23 @@ run_one() {
     echo "    ../plotting/plots/flavfit/{charge_asym,FBratio}/$disc/  (mu-only vs e-only overlays + chi2 CSV)"
     echo "    ../plotting/plots/flavfit/xsec/$disc/                   (sigma + d(sigma)/d(eta) + contour overlays, per-fit contours)"
     echo "    ../plotting/plots/flavfit/postfit_incl/$disc/           (each flavour fit's y-inclusive postfit stacks)"
+    echo "    ../plotting/plots/flavfit/r/$disc/                      (postfit r per bin, mu vs e, multijet needed for r_e = r_mu)"
   fi
 }
 
-DISC_ARG="${1:-met}"
+DISC_ARG="${1:-leppt}"
 case "$DISC_ARG" in
-  all|met|leppt_mt40) ;;
-  leppt)
-    echo "[ERROR] disc 'leppt' (plain W selection, no m_T cut) was dropped as a"
-    echo "        discriminant 2026-08-16 and retired 2026-09-21: mtandmet.C no"
-    echo "        longer writes combine_input_W_leppt.root or plots[/Elec]/leppt/."
-    echo "        Use leppt_mt40 (primary) or met (backup)."
-    exit 1
-    ;;
+  all|leppt|met|leppt_mt40|leppt_mt40_abcdy|met_mt40|met_mt40_abcdy) ;;
   *)
-    echo "usage: $0 [met|leppt_mt40|all]"
+    echo "usage: $0 [leppt|met|leppt_mt40|all|leppt_mt40_abcdy|met_mt40|met_mt40_abcdy]"
     exit 1
     ;;
 esac
 
 main() {
   case "$DISC_ARG" in
-    all)            for d in met leppt_mt40; do run_one "$d" skip; done ;;
-    met|leppt_mt40) run_one "$DISC_ARG" strict ;;
+    all)            for d in leppt met leppt_mt40; do run_one "$d" skip; done ;;
+    leppt|met|leppt_mt40|leppt_mt40_abcdy|met_mt40|met_mt40_abcdy) run_one "$DISC_ARG" strict ;;
   esac
   echo "[observables] all requested variants processed."
 }

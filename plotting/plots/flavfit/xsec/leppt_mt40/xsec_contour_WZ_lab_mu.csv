@@ -1,18 +1,18 @@
 # (sigma_W, sigma_Z) from the simfit_mu POIs via h_cov_poi; disc=leppt_mt40 binning=lab
 quantity,value_nb,err_total_nb,err_stat_nb,err_syst_nb
-sigma_Wp,57.18676,2.13149,1.22640,1.74333
-sigma_Wm,46.82950,1.82064,1.11727,1.43751
-sigma_W,104.01625,3.57716,1.66497,3.16606
-sigma_Z,9.41298,0.56818,0.49230,0.28367
+sigma_Wp,56.99683,2.13106,1.22654,1.74270
+sigma_Wm,46.61694,1.82026,1.11748,1.43687
+sigma_W,103.61378,3.57630,1.66515,3.16500
+sigma_Z,9.38510,0.56776,0.49186,0.28360
 
 # 3x3 covariance (nb^2), order [Wp, Wm, Z] -- total then stat
 matrix,row,Wp,Wm,Z
-total,Wp,4.543255,2.469026,0.436715
-total,Wm,2.469026,3.314734,0.354198
-total,Z,0.436715,0.354198,0.322826
-stat,Wp,1.504046,0.009893,-0.051652
-stat,Wm,0.009893,1.248300,-0.046421
-stat,Z,-0.051652,-0.046421,0.242359
+total,Wp,4.541412,2.467592,0.436799
+total,Wm,2.467592,3.313358,0.354357
+total,Z,0.436799,0.354357,0.322352
+stat,Wp,1.504395,0.009786,-0.051361
+stat,Wm,0.009786,1.248773,-0.046093
+stat,Z,-0.051361,-0.046093,0.241924
 
 # theory (r = 1: POWHEG + EPPS21nlo_CT18Anlo_O16 central)
 theory,sigma_W,85.92821
@@ -24,9 +24,9 @@ theory,sigma_Z_member_min,8.49523
 theory,sigma_Z_member_max,8.88112
 
 # profiled contour (run_pO_fits.sh --contour)
-contour,status,rejected_stale
+contour,status,drawn
 contour,file,/Users/zhenghuang/HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40/simfit_mu/summary/../contour/contour_lab/higgsCombine_contour_lab.MultiDimFit.mH120.root
-contour,stat_status,rejected_stale
+contour,stat_status,drawn
 contour,stat_file,/Users/zhenghuang/HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt_mt40/simfit_mu/summary/../contour/contour_lab/higgsCombine_contourstat_lab.MultiDimFit.mH120.root
-contour,scan_min_sigma_W,108.28460
-contour,scan_min_sigma_Z,9.41332
+contour,scan_min_sigma_W,103.61885
+contour,scan_min_sigma_Z,9.38534

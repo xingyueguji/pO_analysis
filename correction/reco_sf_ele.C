@@ -7,7 +7,7 @@
 // 0.929 per W electron, 0.865 per Z->ee pair), which this macro keeps as its
 // comparison (RecoEGM). On 2026-09-30 only, its inclusive result WAS the
 // applied factor: skim/electron_sf.h reads recosf_noid_incl0 from
-// rootfile/reco_sf_ele/reco_sf_ele_result.root and applies that one number to
+// electron_sf_check/reco_sf/rootfile/reco_sf_ele_result.root and applies that one number to
 // every electron under kEleRecoSource = kRecoTnP (one constant switches back).
 // The chain, each SF relative to the step before it:
 //
@@ -46,7 +46,13 @@
 //           is the collection the analysis selects from, so the SF applies to
 //           exactly what the analysis uses.
 //   pair  = every (tag, probe) with 60 <= m < 120; m from the tag electron and
-//           the probe PHOTON, for pass and fail alike (same m definition).
+//           the probe SUPERCLUSTER, for pass and fail alike (same m definition):
+//           the probe four-vector is EGM's (CMSSW SuperClusterToCandidate, used
+//           by the EGM TnPTreeProducer): |p| = the SC energy (phoSCE), direction
+//           from (0,0,0) to the SC position (phoSCEta, phoSCPhi), electron mass
+//           (RecoProbeP4). Since 2026-10-20 (user request: "as EGM does"); until
+//           then it was the photon object's (phoEt, phoEta, phoPhi, massless) --
+//           those outputs are kept in backups/pre_scmass/correction/.
 //   eps   = the pass fraction of the Z signal. DATA: a simultaneous binned ML
 //           fit of the pass and fail m spectra: signal = the DY-MC pass / fail
 //           templates convolved with ONE Gaussian (mass scale + resolution,
@@ -71,12 +77,14 @@
 // (raw fail - the fitted fail background inside the window), MC in the same
 // window.
 //
-// RUN: ./run_reco_sf.sh [skim|fit|all]  (logs: logs/reco_sf_ele_*.log = THE record)
-//   root -l -b -q 'reco_sf_ele.C+("skim","Data")'   -> rootfile/reco_sf_ele/skim_Data.root
-//   root -l -b -q 'reco_sf_ele.C+("skim","DY")'     -> rootfile/reco_sf_ele/skim_DY.root
-//   root -l -b -q 'reco_sf_ele.C+("fit")'           -> plots/reco_sf_ele/fit_<variant>_<bin>_{pass,fail}
+// OUTPUTS live in correction/electron_sf_check/reco_sf/{rootfile,plots,logs}/
+// (since 2026-10-20; until then rootfile/reco_sf_ele/, plots/reco_sf_ele/, logs/).
+// RUN: ./run_reco_sf.sh [skim|fit|all]  (logs: <outputs>/logs/reco_sf_ele_*.log = THE record)
+//   root -l -b -q 'reco_sf_ele.C+("skim","Data")'   -> <outputs>/rootfile/skim_Data.root
+//   root -l -b -q 'reco_sf_ele.C+("skim","DY")'     -> <outputs>/rootfile/skim_DY.root
+//   root -l -b -q 'reco_sf_ele.C+("fit")'           -> <outputs>/plots/fit_<variant>_<bin>_{pass,fail}
 //                                                      + reco_sf_vs_{eta,et} + reco_sf_ele.csv
-//                                                      + rootfile/reco_sf_ele/reco_sf_ele_result.root
+//                                                      + <outputs>/rootfile/reco_sf_ele_result.root
 //                                                        (labeled TH1D recosf_<variant>_<scheme><bin>;
 //                                                        read by the electron MC skim under
 //                                                        kEleRecoSource = kRecoTnP only -- then re-skim
@@ -145,8 +153,8 @@ const int    kNM  = 60;           // 1 GeV bins
 const double kSysLo = 70.0, kSysHi = 110.0;
 const char *const kTrigPath    = "HLT_OxyL1SingleEG10_v1";
 const char *const kTrigObjTree = "hltobject/HLT_OxyL1SingleEG10_v";
-const char *const kOutDir      = "rootfile/reco_sf_ele";
-const char *const kPlotDir     = "plots/reco_sf_ele";
+const char *const kOutDir      = "electron_sf_check/reco_sf/rootfile";
+const char *const kPlotDir     = "electron_sf_check/reco_sf/plots";
 
 // probe variants
 enum Var { kNoId = 0, kLooseId, kNVar };
@@ -189,6 +197,15 @@ inline double RecoDRsc(double e1, double p1, double e2, double p2)
 {
   const double dp = TVector2::Phi_mpi_pi(p1 - p2);
   return std::sqrt((e1 - e2) * (e1 - e2) + dp * dp);
+}
+// the probe four-vector as EGM builds it (CMSSW SuperClusterToCandidate::convert):
+// p = E_SC * unit(SC position - (0,0,0)), E = sqrt(m_e^2 + p^2). The forest's
+// phoSCEta / phoSCPhi are the SC position seen from the origin.
+inline TLorentzVector RecoProbeP4(double scE, double scEta, double scPhi)
+{
+  TLorentzVector v;
+  v.SetPtEtaPhiM(scE / std::cosh(scEta), scEta, scPhi, pOSkim::ELE_MASS);
+  return v;
 }
 } // namespace pORecoSF
 
@@ -402,9 +419,7 @@ int RecoSfSkim(const std::string &sampleName, Long64_t nmax)
           if (RecoDRsc(se, sp, phoSCEta->at(u), phoSCPhi->at(u)) < kDupDR) { dup = true; break; }
         if (dup) continue;
         used.push_back(k);
-        TLorentzVector vp;
-        vp.SetPtEtaPhiM(phoEt->at(k), phoEta->at(k), phoPhi->at(k), 0.0);
-        const double m = (vt + vp).M();
+        const double m = (vt + RecoProbeP4(phoSCE->at(k), se, sp)).M();
         if (m < kMLo || m >= kMHi) continue;
         count(5, w);
         if (m >= 80.0 && m < 100.0) count(6, w);
@@ -506,9 +521,11 @@ TH1D *RecoSubHist(const TH1 *h, double lo, double hi, const char *name)
   return o;
 }
 
-// bkg: 0 = exponential, 1 = Chebychev(1). plot = "" -> no plot.
+// bkg: 0 = exponential, 1 = Chebychev(1). plot = "" -> no plot. header = the plot's
+// first header line (correction/tnp_charge_ele.C fits its ID+iso link with this too).
 FitOut RecoFitEps(const TH1 *dP0, const TH1 *dF0, const TH1 *tP0, const TH1 *tF0, double lo, double hi,
-                  bool floatConv, double mu0, double sg0, int bkg, const TString &plot, const TString &title)
+                  bool floatConv, double mu0, double sg0, int bkg, const TString &plot, const TString &title,
+                  const TString &header = "Z#rightarrowee tag-and-probe, electron reco")
 {
   FitOut out;
   std::unique_ptr<TH1D> dP(RecoSubHist(dP0, lo, hi, "fit_dP")), dF(RecoSubHist(dF0, lo, hi, "fit_dF"));
@@ -626,8 +643,7 @@ FitOut RecoFitEps(const TH1 *dP0, const TH1 *dF0, const TH1 *tP0, const TH1 *tF0
           Form("#varepsilon_{data} = %.3f^{+%.3f}_{-%.3f}", out.eps, out.hi, out.lo),
           Form("fit status %d, covQual %d", out.status, out.covQual)};
       SaveNicePlot1D_WithBkg(hd, {hs, hb}, {"Z#rightarrowee (DY template)", "background"},
-                             (plot + "_" + cn[i]).Data(), "m(tag, probe) [GeV]", "pairs / GeV", "",
-                             "Z#rightarrowee tag-and-probe, electron reco",
+                             (plot + "_" + cn[i]).Data(), "m(tag, probe) [GeV]", "pairs / GeV", "", header.Data(),
                              Form("%s probes, %s", cn[i], title.Data()), box, ps, tuner);
     }
   }
@@ -654,7 +670,7 @@ int RecoSfFit()
   struct Row { double sf, lo, hi, syst, egm, cc; bool ok; };
   std::vector<Row> rows[kNVar];
   // the machine-readable result (2026-09-30): one TH1D per (variant, scheme,
-  // bin) with LABELED bins -> rootfile/reco_sf_ele/reco_sf_ele_result.root.
+  // bin) with LABELED bins -> electron_sf_check/reco_sf/rootfile/reco_sf_ele_result.root.
   // under kEleRecoSource = kRecoTnP skim/electron_sf.h applies recosf_noid_incl0
   // (nominal probe, inclusive) as THE electron Reco SF (2026-09-30 only; the pp
   // EGM tables since 2026-10-01); the CSV above stays the human-readable twin.

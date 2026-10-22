@@ -793,9 +793,11 @@ void xsec_fiducial_diag(const char *disc = "met",
 
     const char *flav[2]   = {"mu", "ele"};
     const char *lepSym[2] = {"#mu", "e"};
-    // this repo's Combine inputs: muon in plots/, electron in plots/Elec/
-    const TString inFile[2] = {TString::Format("./plots/combine_input_W%s.root", dsuf.Data()),
-                               TString::Format("./plots/Elec/combine_input_W%s.root", dsuf.Data())};
+    // this repo's Combine inputs: muon in plots/, electron in plots/Elec/ -- of
+    // the tag's discriminant (a fit-model variant reads its discriminant's inputs)
+    const TString isuf = pODisc::InputSuffix(disc);
+    const TString inFile[2] = {TString::Format("./plots/combine_input_W%s.root", isuf.Data()),
+                               TString::Format("./plots/Elec/combine_input_W%s.root", isuf.Data())};
     const char *xlab[3]  = {"W^{+}", "W^{-}", "W"};
     const int klo[3] = {0, 12, 0}, khi[3] = {12, 24, 24};
 

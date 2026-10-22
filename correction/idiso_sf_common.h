@@ -320,8 +320,10 @@ inline int SampleIndex(const std::string &name)
   return -1;
 }
 
-const char *const kRootDir = "rootfile/idiso_sf_ele";   // relative to correction/
-const char *const kPlotDir = "plots/idiso_sf_ele";
+// relative to correction/; since 2026-10-20 under electron_sf_check/idiso_sf/
+// (until then rootfile/idiso_sf_ele, plots/idiso_sf_ele; logs in logs/)
+const char *const kRootDir = "electron_sf_check/idiso_sf/rootfile";
+const char *const kPlotDir = "electron_sf_check/idiso_sf/plots";
 inline std::string SkimFile(const std::string &sample) { return std::string(kRootDir) + "/skim_" + sample + ".root"; }
 
 // ---------------------------------------------------------------- gen match

@@ -60,7 +60,8 @@ void dileptonpeak(bool isElec = 0)
     TFile *f_DYtau = openFile(baseDir + prefix + "_DYtau_MC_hist.root");
     TFile *f_Wptau = openFile(baseDir + prefix + "_Wptau_MC_hist.root");
     TFile *f_Wmtau = openFile(baseDir + prefix + "_Wmtau_MC_hist.root");
-    if (!f || !f_DY || !f_Wp || !f_Wm || !f_DYtau || !f_Wptau || !f_Wmtau) return;
+    TFile *f_TT    = openFile(baseDir + prefix + "_TT_MC_hist.root"); // ttbar background (2026-10-16)
+    if (!f || !f_DY || !f_Wp || !f_Wm || !f_DYtau || !f_Wptau || !f_Wmtau || !f_TT) return;
 
     const std::string outBase = isElec ? "./plots/Elec" : "./plots";
     const std::string outDir  = outBase + "/dilepton";
@@ -103,6 +104,7 @@ void dileptonpeak(bool isElec = 0)
     const double k_DYtau = pONorm::MCScale("DYtau");
     const double k_Wptau = pONorm::MCScale("Wp_tau");
     const double k_Wmtau = pONorm::MCScale("Wm_tau");
+    const double k_TT    = pONorm::MCScale("TT");
     auto kScale = [](TH1D *h, double k) { if (h) h->Scale(k); };
 
         for (const auto &s : specs) {
@@ -113,6 +115,7 @@ void dileptonpeak(bool isElec = 0)
         TH1D *h_DYth  = getRebinned(f_DYtau,s.hname);
         TH1D *h_Wpth  = getRebinned(f_Wptau,s.hname);
         TH1D *h_Wmth  = getRebinned(f_Wmtau,s.hname);
+        TH1D *h_TTh   = getRebinned(f_TT,s.hname);
 
         if (!h_data) { std::cerr << "[WARN] Missing data hist " << s.hname << "\n"; continue; }
 
@@ -121,6 +124,7 @@ void dileptonpeak(bool isElec = 0)
         kScale(h_Wph, k_Wp);     kScale(h_Wmh, k_Wm);
         kScale(h_DYh, k_DY);     kScale(h_DYth, k_DYtau);
         kScale(h_Wpth, k_Wptau); kScale(h_Wmth, k_Wmtau);
+        kScale(h_TTh, k_TT);
 
         // --- combine W+ and W- into a single "W+/W-" template ---
         TH1D *h_W = nullptr;
@@ -153,6 +157,8 @@ void dileptonpeak(bool isElec = 0)
         };
         std::vector<TH1*> bkgs         = { h_W,      h_DYh, h_DYth,   h_Wtau };
         std::vector<std::string> names = { "W+/W-",  "DY",  "DY tau", "W+/W- tau" };
+        // ttbar last, so the four entries above keep their stack colours
+        if (h_TTh) { bkgs.push_back(h_TTh); names.push_back("t#bar{t}"); }
 
         SaveNicePlot1D_WithBkg(
             h_data, bkgs, names,
@@ -167,7 +173,7 @@ void dileptonpeak(bool isElec = 0)
         // --- Combine input ROOT file for Z fit ---
         // Same TDirectory-per-region convention as the W input
         // (plotting/mtandmet.C -> combine_input_W.root): a single "Z_incl"
-        // directory holds the 5 absolute templates. Z is inclusive only (low
+        // directory holds the 6 absolute templates (ttbar since 2026-10-16). Z is inclusive only (low
         // pO statistics). All templates carry their own k_s = A*sigma*L/N_gen
         // (applied above) -- NOT area- or unit-normalized -- matching the W side.
     {
@@ -206,12 +212,14 @@ void dileptonpeak(bool isElec = 0)
             TH1D *h_DYth  = getRebinned(f_DYtau,hname);
             TH1D *h_Wpth  = getRebinned(f_Wptau,hname);
             TH1D *h_Wmth  = getRebinned(f_Wmtau,hname);
+            TH1D *h_TTh   = getRebinned(f_TT,hname);
 
             // Same per-sample normalization as the plots above (physical
             // composition; harmless for the shape-only datacard, correct later).
             kScale(h_Wph, k_Wp);     kScale(h_Wmh, k_Wm);
             kScale(h_DYh, k_DY);     kScale(h_DYth, k_DYtau);
             kScale(h_Wpth, k_Wptau); kScale(h_Wmth, k_Wmtau);
+            kScale(h_TTh, k_TT);
 
             // Combine W+/W- into one template
             TH1D *h_W = nullptr;
@@ -241,6 +249,7 @@ void dileptonpeak(bool isElec = 0)
             write_clone(h_W,    "w");      // W+/W- -> l nu
             write_clone(h_Wtau, "wtau");   // W+/W- -> tau nu
             write_clone(h_DYth, "ztau");   // DY -> tau tau
+            write_clone(h_TTh,  "ttbar");  // ttbar (2026-10-16), frozen MC in the fit
 
             // --- shape systematics (2026-09-07 LHE, 2026-09-14 muon SFs, 2026-09-29
             // electron SFs): <process>_<syst>Up/Down ---
@@ -250,7 +259,7 @@ void dileptonpeak(bool isElec = 0)
             // combined lepton-SF nuisance from skim.C -- muSF in the muon
             // channel, eleSF in the electron one): rebinned + k_s-scaled, W+ + W-
             // summed. A syst is written (and listed in the sidecar the fork's
-            // card generator reads) only when all four processes have both
+            // card generator reads) only when all five processes have both
             // directions.
             std::vector<std::string> systNames(pOLhe::kLheSystNames, pOLhe::kLheSystNames + pOLhe::kNLheSysts);
             if (!isElec)
@@ -272,10 +281,12 @@ void dileptonpeak(bool isElec = 0)
                     TH1D *vDYt = getRebinned(f_DYtau, nm.c_str());
                     TH1D *vWpt = getRebinned(f_Wptau, nm.c_str());
                     TH1D *vWmt = getRebinned(f_Wmtau, nm.c_str());
-                    if (!vDY || !vWp || !vWm || !vDYt || !vWpt || !vWmt) { complete = false; break; }
+                    TH1D *vTT  = getRebinned(f_TT,    nm.c_str());
+                    if (!vDY || !vWp || !vWm || !vDYt || !vWpt || !vWmt || !vTT) { complete = false; break; }
                     kScale(vWp, k_Wp);   kScale(vWm, k_Wm);
                     kScale(vDY, k_DY);   kScale(vDYt, k_DYtau);
                     kScale(vWpt, k_Wptau); kScale(vWmt, k_Wmtau);
+                    kScale(vTT, k_TT);
                     vWp->Add(vWm);   // w    = W+ + W- (both already detached copies)
                     vWpt->Add(vWmt); // wtau = W+tau + W-tau
                     const std::string key = std::string("_") + syst + dir;
@@ -283,6 +294,7 @@ void dileptonpeak(bool isElec = 0)
                     got["ztau" + key]   = vDYt;
                     got["w" + key]      = vWp;
                     got["wtau" + key]   = vWpt;
+                    got["ttbar" + key]  = vTT;
                 }
                 if (!complete)
                 {
@@ -307,7 +319,7 @@ void dileptonpeak(bool isElec = 0)
                    << "# <systematic> <processes carrying <process>_<systematic>Up/Down in Z_incl>\n";
                 if (std::find(systNames.begin(), systNames.end(), std::string("muTrig")) != systNames.end())
                     sf << "#! muTrig corr " << pOSF::kMuTrigCorr << "\n"; // dormant while the combined muSF is shipped; see mtandmet.C
-                for (const std::string &s : systsWritten) sf << s << " signal ztau w wtau\n";
+                for (const std::string &s : systsWritten) sf << s << " signal ztau w wtau ttbar\n";
                 std::cout << "[INFO] shape systematics in " << combineOut << ": " << systsWritten.size()
                           << " listed in " << side << "\n";
             }
@@ -321,6 +333,7 @@ void dileptonpeak(bool isElec = 0)
     f_DYtau->Close();   delete f_DYtau;
     f_Wptau->Close();   delete f_Wptau;
     f_Wmtau->Close();   delete f_Wmtau;
+    f_TT->Close();      delete f_TT;
 
     std::cout << "[INFO] Done. Saved plots under: " << outBase << "\n";
 }

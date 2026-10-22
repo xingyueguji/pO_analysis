@@ -89,6 +89,13 @@ inline constexpr double kSigma_Wp    = 6.376; // sigma(W+ -> l nu)      = <w>_Wp
 inline constexpr double kSigma_Wm    = 5.464; // sigma(W- -> l nu)      = <w>_Wm
 inline constexpr double kSigma_DY    = 1.175; // sigma(DY -> l l, m>50) = <w>_DY
 inline constexpr double kSigma_DYlow = kUnset; // low-mass DY -- SKIPPED (the _low files are left unwired)
+// Inclusive ttbar background (2026-10-16), same convention: the POWHEG weight
+// is unweighted (|w| = 340.72 for every event, 0.26% negative), so
+// <w> = 338.98 pb over the 1172000 events of Aug_20_MC_TT.root = sigma(ttbar),
+// all decay modes, per nucleon-nucleon. Its own scale envelope is +13.3/-12.9%
+// (6-point, inclusive; vs ~+4/-7% for W) -- the normalization uncertainty is a
+// separate lnN in the fit, the LHE Up/Down templates being shape-only.
+inline constexpr double kSigma_TT    = 0.3390; // sigma(ttbar), inclusive = <w>_TT
 
 // Map a count_ngen file-label ("Wp_mu","DYee","DYtau","DYmu_low",...) to its
 // effective cross section. One sigma per process (universality); _low overrides.
@@ -98,6 +105,7 @@ inline double SigmaForLabel(const std::string &label)
   if (label.rfind("Wp", 0) == 0)               return kSigma_Wp;    // Wp_mu / Wp_ele / Wp_tau
   if (label.rfind("Wm", 0) == 0)               return kSigma_Wm;    // Wm_mu / Wm_ele / Wm_tau
   if (label.rfind("DY", 0) == 0)               return kSigma_DY;    // DYmu / DYee / DYtau
+  if (label == "TT")                           return kSigma_TT;    // Aug_20_MC_TT.root (one file, all channels)
   std::cout << "[WARN] pONorm::SigmaForLabel: unknown label '" << label
             << "' -> sigma unset\n";
   return kUnset;

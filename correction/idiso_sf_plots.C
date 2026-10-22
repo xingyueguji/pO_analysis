@@ -9,7 +9,7 @@
 // EGM-cell maps of passing MC electrons (the EGM prediction for our bins).
 // Definitions: idiso_sf_common.h.
 //
-// Writes to plots/idiso_sf_ele/:
+// Writes to electron_sf_check/idiso_sf/plots/:
 //   sf_summary             every measurement on one axis: the Z tag-and-probe and
 //                          the 9 W variants (inclusive / |eta| / pT combined x 3
 //                          sideband windows) with the fitted error bars, the
@@ -25,7 +25,7 @@
 //   fail_qcdshape_<window> the inclusive fail SR (charges summed): data - EWK at
 //                          r = 1 vs the prefit in-fit-ABCD QCD template -- the
 //                          shape the fail W count has to be read off
-// + plots/idiso_sf_ele/idiso_sf_summary.csv (every number drawn) and the record
+// + electron_sf_check/idiso_sf/plots/idiso_sf_summary.csv (every number drawn) and the record
 // on stdout: [FIT] [SF] [EGM] [PULL] [OUT].
 // Markers: sideband window 0.3-1.0 / 0.3-0.6 / 0.6-1.0 = circle / square /
 // diamond (the repo's centred sizes); FILLED = measured, OPEN = a fitted fail r of
@@ -36,7 +36,7 @@
 // the 0 side was flagged, via eps_data > 0.99; the 0.6-1.0 fits sit at 10.)
 //
 // Run from correction/ after the download:
-//   ./run_idiso_sf.sh plots                  (keeps logs/idiso_sf_ele_plots.log)
+//   ./run_idiso_sf.sh plots                  (keeps electron_sf_check/idiso_sf/logs/idiso_sf_ele_plots.log)
 // env FORK_TEST = the fork's test dir (default /Users/zhenghuang/HiggsAnalysis-CombinedLimit/test)
 
 #include "TFile.h"

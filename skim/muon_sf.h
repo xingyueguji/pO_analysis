@@ -175,9 +175,11 @@ inline const char *kJsonCandidates[] = {
     nullptr};
 inline const char *kIDCorrection  = "NUM_TightID_DEN_TrackerMuons";
 inline const char *kIsoCorrection = "NUM_TightPFIso_DEN_TightID"; // relIso < 0.15 | TightID = the W AND the Z cut
+// (since 2026-10-20 under correction/muon_sf_check/trigger/rootfile/; until then
+// correction/rootfile/)
 inline const char *kTrigCandidates[] = {
-    "../correction/rootfile/trig_eff_mb_mu.root",
-    "correction/rootfile/trig_eff_mb_mu.root",
+    "../correction/muon_sf_check/trigger/rootfile/trig_eff_mb_mu.root",
+    "correction/muon_sf_check/trigger/rootfile/trig_eff_mb_mu.root",
     nullptr};
 inline const char *kTrigSel = "mt40"; // trig_eff_mb.C selection variant: nom | mt40
 // Binning of the APPLIED trigger SF (header comment). kTrigInclusive since
@@ -491,7 +493,7 @@ struct Table2D
 
 // ============================================================================
 // Trigger SF per rapidity bin (W: fired && matched) + per-lepton path-fired
-// efficiencies (Z), from correction/rootfile/trig_eff_mb_mu.root
+// efficiencies (Z), from correction/muon_sf_check/trigger/rootfile/trig_eff_mb_mu.root
 // ============================================================================
 struct TrigTable
 {
@@ -574,7 +576,7 @@ public:
     }
     // ---- the trigger study ----
     const char *tp = FindFile(kTrigCandidates);
-    if (!tp) { log << "[SF] ERR trig_eff_mb_mu.root not found (tried ../correction/rootfile, correction/rootfile); run correction/run_trig_eff_mb.sh mu\n"; return false; }
+    if (!tp) { log << "[SF] ERR trig_eff_mb_mu.root not found (tried ../correction/muon_sf_check/trigger/rootfile, correction/muon_sf_check/trigger/rootfile); run correction/run_trig_eff_mb.sh mu\n"; return false; }
     if (!LoadTrig(tp, log)) return false;
     loaded = true;
     Print(log);
@@ -829,7 +831,7 @@ private:
     if (kTrigBinning == kTrigInclusive)
       log << "[SF]           The rapidity table below is MEASURED BUT NOT APPLIED -- it is the record that\n"
           << "[SF]           justifies the inclusive choice. Same numbers as the plots + CSV of the study:\n"
-          << "[SF]           correction/plots/trig_eff_mb_mu/{eff_absy_,eff_y_}" << kTrigSel
+          << "[SF]           correction/muon_sf_check/trigger/plots/{eff_absy_,eff_y_}" << kTrigSel
           << "[_charge], trig_eff_" << kTrigSel << ".csv,\n"
           << "[SF]           and the calibrated likelihood-ratio tests in that macro's 'BINNING DECISION' block.\n";
     log << "[SF]           " << (kTrigBinning == kTrigInclusive ? "per-bin table (NOT applied)" : "THE APPLIED TABLE")
@@ -867,6 +869,10 @@ struct SFTwins
   const TH1 *nom = nullptr;                                           // the nominal (filled with w_gen x SF)
   TH1D *h[kNSources][2] = {{nullptr, nullptr}, {nullptr, nullptr}, {nullptr, nullptr}}; // per source, Up / Down
   TH1D *comb[2] = {nullptr, nullptr};                                 // combined Up / Down
+  // which sources enter the combined twins (2026-10-21): all three for the
+  // muon; the electron leaves out its Reco source when that is shipped as its
+  // own nuisance (electron_sf.h kRecoUnit)
+  bool inComb[kNSources] = {true, true, true};
 };
 
 inline TH1D *CloneEmptyTwin(const TH1 *nom, const std::string &name, const std::string &note)
@@ -884,13 +890,18 @@ inline TH1D *CloneEmptyTwin(const TH1 *nom, const std::string &name, const std::
 // `registry` for FinalizeAndWriteSFTwins() at the end of the job. The names
 // default to the muon's; skim/electron_sf.h passes its own (2026-09-29) --
 // the machinery below is flavour-blind (three independent sources per event).
+// combMask (2026-10-21) = which sources the combined twins add in quadrature;
+// null = all three (the muon, and the electron until then).
 inline SFTwins BookSFTwins(const TH1 *nom, std::vector<SFTwins> &registry,
                            const char *const *srcNames = kMuonSFSourceNames,
                            const char *combName = kMuonSFCombinedName,
-                           const char *combNote = "ID, ISO, trigger shifts added in quadrature per bin")
+                           const char *combNote = "ID, ISO, trigger shifts added in quadrature per bin",
+                           const bool *combMask = nullptr)
 {
   SFTwins t;
   t.nom = nom;
+  if (combMask)
+    for (int s = 0; s < kNSources; ++s) t.inComb[s] = combMask[s];
   for (int s = 0; s < kNSources; ++s)
     for (int d = 0; d < 2; ++d)
       t.h[s][d] = CloneEmptyTwin(nom, std::string(nom->GetName()) + "_" + srcNames[s] + (d == 0 ? "Up" : "Down"),
@@ -917,6 +928,7 @@ inline void FillSFTwins(const SFTwins &t, double x, double wBase, const EventSF 
 //   Down = nominal - sqrt( sum_s (nominal - Down_s)^2 )   (floored at 0 for non-negative bins)
 // = the 1 sigma of the product of three independent factors, one coherent
 // parameter. Bin errors = the nominal's (Combine reads the contents only).
+// Only the sources with t.inComb[s] enter the sum.
 inline void FinalizeSFTwins(SFTwins &t)
 {
   if (!t.nom || !t.comb[0] || !t.comb[1]) return;
@@ -927,6 +939,7 @@ inline void FinalizeSFTwins(SFTwins &t)
     double up2 = 0.0, dn2 = 0.0;
     for (int s = 0; s < kNSources; ++s)
     {
+      if (!t.inComb[s]) continue;
       const double du = t.h[s][0]->GetBinContent(b) - n;
       const double dd = n - t.h[s][1]->GetBinContent(b);
       up2 += du * du;
@@ -976,7 +989,8 @@ struct SFStats
   void Print(std::ostream &log, const char *what,
              const char *const *srcNames = kMuonSFSourceNames,
              const char *combName = kMuonSFCombinedName,
-             const char *const *partLabels = nullptr) const
+             const char *const *partLabels = nullptr,
+             const bool *combMask = nullptr) const // = BookSFTwins' (null = all three)
   {
     static const char *const kMuPartLabels[kNSources] = {"<ID>", "<ISO>", "<TRIG>"};
     if (!partLabels) partLabels = kMuPartLabels;
@@ -986,15 +1000,21 @@ struct SFStats
         << "  (" << partLabels[0] << " " << Form("%.5f", part[0] / sw) << ", " << partLabels[1] << " " << Form("%.5f", part[1] / sw)
         << ", " << partLabels[2] << " " << Form("%.5f", part[2] / sw) << ")\n";
     double up2 = 0.0, dn2 = 0.0;
+    std::string apart;
     for (int s = 0; s < kNSources; ++s)
     {
+      const bool in = !combMask || combMask[s];
       log << "[SF]     " << Form("%-7s", srcNames[s]) << " Up/Down on sum w*SF: "
-          << Form("%+.3f%% / %+.3f%%", 100.0 * (varUp[s] / swsf - 1.0), 100.0 * (varDn[s] / swsf - 1.0)) << "\n";
+          << Form("%+.3f%% / %+.3f%%", 100.0 * (varUp[s] / swsf - 1.0), 100.0 * (varDn[s] / swsf - 1.0))
+          << (in ? "" : "  <- its OWN nuisance in the fit (not in the combined)") << "\n";
+      if (!in) { apart += std::string(apart.empty() ? "" : ", ") + srcNames[s]; continue; }
       up2 += std::pow(varUp[s] / swsf - 1.0, 2);
       dn2 += std::pow(varDn[s] / swsf - 1.0, 2);
     }
-    log << "[SF]     " << Form("%-7s", combName) << " Up/Down (quadrature of the three): "
-        << Form("%+.3f%% / %+.3f%%", 100.0 * std::sqrt(up2), -100.0 * std::sqrt(dn2)) << "  <- the one nuisance in the fit\n";
+    log << "[SF]     " << Form("%-7s", combName) << " Up/Down (quadrature of "
+        << (apart.empty() ? std::string("the three") : "the others; " + apart + " apart") << "): "
+        << Form("%+.3f%% / %+.3f%%", 100.0 * std::sqrt(up2), -100.0 * std::sqrt(dn2)) << "  <- "
+        << (apart.empty() ? "the one nuisance in the fit" : "a nuisance in the fit") << "\n";
   }
 };
 

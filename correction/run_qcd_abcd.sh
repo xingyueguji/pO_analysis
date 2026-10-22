@@ -54,7 +54,11 @@ run_one() {  # $1 = mu | ele
   elapsed=$SECONDS
 
   # Echo the headline numbers so the terminal still tells you what happened.
-  grep -E '^\[CONFIG\]|Transfer factor|=> lnN kappa|=> in-fit ABCD|A40 = B\*C40/D' "$log" 2>/dev/null | sed 's/^/       /' || true
+  grep -E '^\[CONFIG\]|Transfer factor|=> lnN kappa|=> in-fit ABCD|A40 = B\*C40/D|CR-B EWK split|ttbar inside' "$log" 2>/dev/null | sed 's/^/       /' || true
+  # the rapidity-resolved in-fit ABCD (QCD_MODE=abcdy, 2026-10-19): closure + totals
+  grep -E '^=== abcdy|\[closure\] Sum_g|\[sum\] Sum_g A_g|^\[abcdy\]|^  \[ERR\]' "$log" 2>/dev/null | sed 's/^/       /' || true
+  # the met_mt40 SR templates (2026-10-20): flat-T MET totals + the FF model on MET
+  grep -E 'Total iso-pass QCD \(template norm, MET 0-120|check: the \(pT, MET\) plane|SR total \(MET 0-120' "$log" 2>/dev/null | sed 's/^/       /' || true
   printf '[%-4s] %-3s  %ds   log: %s\n' "$status" "$chan" "$elapsed" "$log"
   [ "$status" = "OK" ] || return 1
 }

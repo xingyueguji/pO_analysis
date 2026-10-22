@@ -95,6 +95,25 @@
 // therefore leaves the electron residual lnN, which becomes the anti-iso
 // window variation of the FF-weighted total.
 //
+// RAPIDITY-RESOLVED IN-FIT ABCD (2026-10-19, user decision; QCD_MODE=abcdy in
+// the fork, OPT-IN): the same in-fit counts per rapidity GROUP (abcd_ygroups.h:
+// fwd = y10,y11 | bwd = y0,y1 | cen = y2..y9, lab and fb alike) from the
+// y-binned m_T planes h_iso_mt_<lep><chg>_y<i>[_FB], exported as
+// abcd_counts_<lep><chg>_<lab|fb>_<group> (runGroupABCD, printed LAST, with a
+// closure line: the lab groups' data add up exactly to the inclusive plane).
+// Every pre-existing output object and log line is unchanged.
+//
+// THE met_mt40 COUNTERPART (2026-10-20, user decision: the MET-discriminant fit
+// on exactly the leppt_mt40 events, pT > 25 && m_T > 40, for an apples-to-
+// apples comparison): its in-fit ABCD is THE SAME m_T-plane counting (same CRs,
+// same abcd_counts_*, same groups), only the SR template's variable changes --
+// qcd_met_mt40_<lep><chg> = the anti-iso m_T>40 MET shape x T_MET (runPtCharge
+// with var "met", from h_iso_met_mt40_*) and, for the electron, the same
+// fake-factor model projected on MET, qcd_met_mt40_ff_<lep><chg> + _ffUp/_ffDown
+// (buildFFMetTemplate, from the anti-iso (pT, MET) plane h_pt_met_mt40_antiiso_*;
+// totals exported as A0ffMet/A0ffMetUp/A0ffMetDown, appended last). Plots in
+// plots/qcd_abcd_<lep>/met_mt40_fit/. Only ADDS objects and log blocks.
+//
 // Inputs : ../skim/rootfile/WToMuNu_pO_PFMet_hist.root        (data)
 //          ../skim/rootfile/WToMuNu_pO_PFMet_{Wp,Wm,DY,DYtau,Wptau,Wmtau}_hist.root
 // Output : ./plots/qcd_abcd_mu/{met_fit,leppt_fit}/  (two self-contained views,
@@ -109,6 +128,7 @@
 #include "TH1D.h"
 #include "TH2.h"
 #include "TH2D.h"
+#include "TH3D.h" // the no-m_T cubes (runNoMt, 2026-10-21)
 #include "TBox.h"
 #include "TCanvas.h"
 #include "TGraph.h"
@@ -132,6 +152,8 @@
 #include "../plotting/plotting_helper.C"
 #include "../skim/mc_norm.h"     // pONorm::MCScale -> per-sample k_s = A*sigma*L/N_gen
 #include "../skim/skim_common.h" // pOSkim::kEleIsoAxisLo / kEleAntiIsoLo/Hi: the electron iso axis
+#include "abcd_ygroups.h"        // pOAbcdY: the rapidity groups of QCD_MODE=abcdy (2026-10-19)
+static_assert(pOAbcdY::kNYBins == pOSkim::kNY, "abcd_ygroups.h assumes the 12 rapidity bins of skim_common.h");
 
 namespace
 {
@@ -192,6 +214,11 @@ struct ABCDResult
   // directly. Only meaningful on the mt pass (exported/printed there alone).
   Count C40, dataC40, wC40, zC40;   // QCD-only / raw data / W-rel / DY-rel EWK
   Count zB_dy, zB_dytau;            // DY vs DYtau split of zB (CR-B processes)
+  // ttbar (2026-10-16) sits in the non-W group (zB/zC40/zD, fixed in the
+  // r-scan), but in CR-B it is its OWN frozen column (it must not ride r_Z):
+  // ttB is split out of zB_dy. ttC40/ttD are the ttbar parts of zC40/zD, which
+  // CRC/CRD carry inside one frozen `ewk` -- exported for the record only.
+  Count ttB, ttC40, ttD;
   double Apred40 = 0, Apred40err = 0; // B*C40/D = the abcd-mode template total
   double winSpread40 = 0; // max |dev| of A40 over the anti-iso window variations, %
   double qcdTotPass = 0, qcdTotPassErr = 0; // total iso-pass QCD = template integral
@@ -506,13 +533,21 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
   {
     TH2D *h = (TH2D *)m.f->Get(hname.c_str());
     if (!h) continue;
-    Count c = count2D(h, cfg.isoPassLo, cfg.isoCut, 0.0, cfg.yCut); // region B, raw MC
     const double k = pONorm::MCScale(m.label);
-    c.n *= k;
-    c.e *= k;
-    Count &dst = (m.label == "DYtau") ? res.zB_dytau : res.zB_dy;
-    dst.n += c.n;
-    dst.e = std::sqrt(dst.e * dst.e + c.e * c.e);
+    auto scaled = [k](Count c) { c.n *= k; c.e *= k; return c; };
+    auto addTo = [](Count &dst, const Count &c) {
+      dst.n += c.n;
+      dst.e = std::sqrt(dst.e * dst.e + c.e * c.e);
+    };
+    const Count cB = scaled(count2D(h, cfg.isoPassLo, cfg.isoCut, 0.0, cfg.yCut)); // region B
+    if (m.label == "TT")
+    {
+      addTo(res.ttB, cB);
+      addTo(res.ttC40, scaled(count2D(h, cfg.isoFailLo, cfg.isoFailHi, kSRMtCut, 1e9)));
+      addTo(res.ttD, scaled(count2D(h, cfg.isoFailLo, cfg.isoFailHi, 0.0, cfg.yCut)));
+    }
+    else
+      addTo((m.label == "DYtau") ? res.zB_dytau : res.zB_dy, cB);
   }
 
   // --- QCD template in the iso-pass region = (anti-iso shape) x T ---
@@ -681,20 +716,29 @@ TH1D *runPlaneCharge(TFile *fData, const std::vector<MCFile> &mcW,
 // MET-plane T in both cases -- the ABCD factorization assumes QCD isolation
 // efficiency is independent of the recoil-side variable, so the m_T>40
 // template total is the ABCD prediction for QCD in that region.
+// `var` (2026-10-20) = the template's variable: "pt" (the default, everything
+// above) or "met" = the SAME construction from the (relIso, PF MET) plane at
+// m_T > 40 (h_iso_met_mt40_*, writes qcd_met_mt40_*) -- the QCD template of the
+// met_mt40 fit, i.e. the leppt_mt40 events with PF MET as the discriminant.
+// Same anti-iso events, same T, so its total equals qcd_pt_mt40's up to the
+// overflows (pT > 100 there, MET > 120 here).
 TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
                   const std::string &chg, const ABCDConfig &cfg,
                   const std::string &outDir, const std::string &chgLatex,
                   const std::string &lep, const ABCDResult &metRes,
                   TemplateNorm &norm, const std::string &tag = "",
-                  double *tiltOut = nullptr)  // [tilt %, <pT> lower half, <pT> upper half]
+                  double *tiltOut = nullptr,  // [tilt %, <x> lower half, <x> upper half]
+                  const std::string &var = "pt")
 {
+  const bool isMet = (var == "met");
   const std::string sfx   = tag.empty() ? "" : ("_" + tag);
-  const std::string hname = Form("h_iso_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str());
+  const std::string vt    = var + sfx; // "pt", "pt_mt40", "met_mt40"
+  const std::string hname = Form("h_iso_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str());
   TH2D *data2D = (TH2D *)fData->Get(hname.c_str());
   if (!data2D)
   {
-    std::cerr << "[WARN] missing " << hname << " in data (skim output predates the"
-              << " lepton-pT ABCD plane; re-skim to enable the pT QCD template)\n";
+    std::cerr << "[WARN] missing " << hname << " in data (skim output predates this"
+              << " ABCD plane; re-skim to enable the " << var << " QCD template)\n";
     return nullptr;
   }
   data2D = (TH2D *)data2D->Clone(Form("%s_data", hname.c_str()));
@@ -706,23 +750,24 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   qcd2D->SetDirectory(nullptr);
   if (ewk2D) qcd2D->Add(ewk2D, -1.0);
 
-  const std::string ytit = Form("p_{T}^{%s} [GeV]", lep == "ele" ? "e" : "#mu");
+  const std::string ytit = isMet ? std::string("PF MET [GeV]")
+                                 : std::string(Form("p_{T}^{%s} [GeV]", lep == "ele" ? "e" : "#mu"));
 
-  // --- QCD template in the iso-pass region = (anti-iso pT shape) x T_MET ---
+  // --- QCD template in the iso-pass region = (anti-iso shape) x T_MET ---
   TH1D *tmpl = projY(qcd2D, cfg.isoFailLo, cfg.isoFailHi,
-                     Form("qcd_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
+                     Form("qcd_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()));
   norm = ScaleToIsoPass(tmpl, metRes.T, metRes.Terr);
 
   // --- diagnostics: 2D colz (no y-split line -- normalization is MET-plane) ---
-  draw2D(qcd2D, cfg, outDir + Form("/qcd2D_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
+  draw2D(qcd2D, cfg, outDir + Form("/qcd2D_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()),
          Form("QCD-only (data-EWK), %s", chgLatex.c_str()), ytit.c_str(),
-         /*drawYSplit=*/false, /*srCut=*/-1.0, /*yLo=*/kPtAxisLo);
+         /*drawYSplit=*/false, /*srCut=*/-1.0, /*yLo=*/isMet ? -1.0 : kPtAxisLo);
 
   // --- closure overlay in the iso-pass region: data vs EWK(+QCD) ---
   TH1D *passData = projY(data2D, cfg.isoPassLo, cfg.isoCut,
-                         Form("pass_data_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
+                         Form("pass_data_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()));
   TH1D *passEWK = ewk2D ? projY(ewk2D, cfg.isoPassLo, cfg.isoCut,
-                                Form("pass_ewk_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()))
+                                Form("pass_ewk_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()))
                         : nullptr;
 
   PlotStyle ps;
@@ -731,21 +776,24 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   ps.headerX = 0.64;
   ps.headerY = 0.66;
   ps.titleSize = 0.04;
-  ps.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
-  ps.xRangeHi = kPtAxisHi;
+  if (!isMet)
+  {
+    ps.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
+    ps.xRangeHi = kPtAxisHi;
+  }
 
   if (passEWK)
   {
     SaveDataMCRatio(passData, passEWK,
-                    outDir + Form("/closure_noQCD_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
+                    outDir + Form("/closure_noQCD_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events", Form("iso-pass, %s", chgLatex.c_str()),
                     "no QCD", "", ps, false, "Data", "EWK MC");
 
-    TH1D *model = (TH1D *)passEWK->Clone(Form("model_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
+    TH1D *model = (TH1D *)passEWK->Clone(Form("model_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()));
     model->SetDirectory(nullptr);
     model->Add(tmpl);
     SaveDataMCRatio(passData, model,
-                    outDir + Form("/closure_withQCD_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
+                    outDir + Form("/closure_withQCD_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events", Form("iso-pass, %s", chgLatex.c_str()),
                     "EWK + ABCD QCD", "", ps, false, "Data", "EWK+QCD");
     delete model;
@@ -754,9 +802,9 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
   // --- anti-iso slice stability: low vs high half of the sideband, shape-only ---
   const double mid = 0.5 * (cfg.isoFailLo + cfg.isoFailHi);
   TH1D *sLo = projY(qcd2D, cfg.isoFailLo, mid,
-                    Form("antiiso_lo_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
+                    Form("antiiso_lo_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()));
   TH1D *sHi = projY(qcd2D, mid, cfg.isoFailHi,
-                    Form("antiiso_hi_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()));
+                    Form("antiiso_hi_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()));
   if (sLo && sHi)
   {
     // SYSTEMATIC 2: quantify the shape tilt the plot shows. relIso carries pT in
@@ -773,15 +821,18 @@ TH1D *runPtCharge(TFile *fData, const std::vector<MCFile> &mc,
     ps2.headerX = 0.60;
     ps2.headerY = 0.66;
     ps2.titleSize = 0.04;
-    ps2.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
-    ps2.xRangeHi = kPtAxisHi;
+    if (!isMet)
+    {
+      ps2.xRangeLo = kPtAxisLo; // pT plots start at the selection floor
+      ps2.xRangeHi = kPtAxisHi;
+    }
     // NB both inputs are DATA-derived (EWK-subtracted sideband slices) -- the
     // "data" point style / "MC" fill style are just the helper's cosmetics, so
     // relabel the ratio pad accordingly (low slice / high slice).
     SaveDataMCRatio(sLo, sHi,
-                    outDir + Form("/antiiso_shape_pt%s_%s%s", sfx.c_str(), lep.c_str(), chg.c_str()),
+                    outDir + Form("/antiiso_shape_%s_%s%s", vt.c_str(), lep.c_str(), chg.c_str()),
                     ytit, "Events (a.u.)",
-                    Form("anti-iso pT shape, %s", chgLatex.c_str()),
+                    Form("anti-iso %s shape, %s", isMet ? "MET" : "pT", chgLatex.c_str()),
                     "slice stability check", "shape-normalized", ps2,
                     /*normToData=*/true,
                     Form("QCD, relIso [%.2f,%.2f)", cfg.isoFailLo, mid),
@@ -831,6 +882,13 @@ struct ChargeInfo
   // nominal total (%) = the residual lnN of the FF model. Templates owned here.
   double ffA0 = 0, ffA0Up = 0, ffA0Dn = 0, ffWin = 0;
   TH1D  *ffTmpl = nullptr, *ffTmplUp = nullptr, *ffTmplDn = nullptr;
+  // The SAME fake-factor model projected on PF MET (2026-10-20, the met_mt40
+  // fit): T0 x sum_pT f(pT) C40(pT, MET); totals over MET 0-120 (the fit range)
+  double ffMetA0 = 0, ffMetA0Up = 0, ffMetA0Dn = 0;
+  TH1D  *ffMetTmpl = nullptr, *ffMetTmplUp = nullptr, *ffMetTmplDn = nullptr;
+  // <e^{s(pT-40)/10}>_D at s-hat / the upper / the lower interval edge: the
+  // normalization of f, set by buildFFTemplate and reused for the MET template
+  double ffNorm = 0, ffNormHi = 0, ffNormLo = 0;
 };
 
 // Iso-pass data yield of a lepton-pT plane (the denominator of the QCD fraction).
@@ -1806,6 +1864,7 @@ void buildFFTemplate(TFile *fData, const std::vector<MCFile> &mc, const std::str
   ci.ffTmpl   = make(ci.ffS,   "qcd_pt_mt40_ff_" + tagc,            "(nominal slope)");
   ci.ffTmplUp = make(ci.ffSHi, "qcd_pt_mt40_ff_" + tagc + "_ffUp",   "(slope +1 sigma)");
   ci.ffTmplDn = make(ci.ffSLo, "qcd_pt_mt40_ff_" + tagc + "_ffDown", "(slope -1 sigma)");
+  ci.ffNorm = meanG(ci.ffS); ci.ffNormHi = meanG(ci.ffSHi); ci.ffNormLo = meanG(ci.ffSLo); // for buildFFMetTemplate
   ci.ffA0   = ci.ffTmpl->Integral(1, nb);
   ci.ffA0Up = ci.ffTmplUp->Integral(1, nb);
   ci.ffA0Dn = ci.ffTmplDn->Integral(1, nb);
@@ -1878,6 +1937,146 @@ void buildFFTemplate(TFile *fData, const std::vector<MCFile> &mc, const std::str
   delete qPt;
   delete qA;
   delete qMt;
+}
+
+// ----------------------------------------------------------------------------
+// THE SAME FAKE-FACTOR MODEL ON PF MET (2026-10-20, the met_mt40 fit: the
+// leppt_mt40 events with PF MET as the discriminant; user decision "pT
+// dependent transfer factor for electron" in the MET fit too):
+//     QCD_SR(MET_j) = T0 x sum_i f(pT_i) x C40(pT_i, MET_j)
+// with T0, f (slope s, its 68% edges and the normalization <g>_D) EXACTLY
+// buildFFTemplate's -- the fake factor is a property of the anti-iso events,
+// measured once at m_T < 30 -- and C40(pT, MET) = the anti-iso m_T > 40
+// sideband resolved in pT and MET (h_pt_met_mt40_antiiso_*, data - EWK at
+// r = 1). The pT sum runs over every anti-iso event, those with pT >= 100 at
+// 105 GeV (f is not extrapolated beyond the pT template's range -- the same
+// convention as the normalization <g>_D), the MET bins are clamped at 0 after
+// the sum (not per cell). These pT > 100 events (0.8% of C40) are in the MET
+// fit but not in the lepton-pT one (it drops pT > 100), so the two FF totals
+// differ by a few %. Totals over MET
+// 0-120 (the fit range). Writes qcd_met_mt40_ff_<lep><chg> + _ffUp/_ffDown;
+// mtandmet.C takes them as the electron met_mt40 qcd_abcd and its qcdFF
+// variation, after checking the totals against the exported A0ffMet labels.
+// Must run after buildFFTemplate (it reuses ci.ffNorm*).
+// ----------------------------------------------------------------------------
+void buildFFMetTemplate(TFile *fData, const std::vector<MCFile> &mc, const std::string &chg,
+                        const ABCDConfig & /*cfg: the window is the plane's own*/, const std::string &lep, ChargeInfo &ci,
+                        TFile *fout, const std::string &outDir)
+{
+  const std::string tagc = lep + chg;
+  if (!ci.ffTmpl || ci.ffNorm <= 0.0 || ci.mt.D.n <= 0.0)
+  {
+    std::cerr << "[ERR] buildFFMetTemplate " << tagc << ": no pT fake-factor template (buildFFTemplate)"
+              << " -> NO MET FF template written\n";
+    return;
+  }
+  const std::string hname = Form("h_pt_met_mt40_antiiso_%s", tagc.c_str());
+  TH2D *d = (TH2D *)fData->Get(hname.c_str());
+  if (!d)
+  {
+    std::cerr << "[ERR] buildFFMetTemplate " << tagc << ": missing " << hname
+              << " (skim predates 2026-10-20) -> NO MET FF template written\n";
+    return;
+  }
+  TH2D *q = (TH2D *)d->Clone(Form("%s_ffq", hname.c_str()));
+  q->SetDirectory(nullptr);
+  if (TH2D *e = sumEWK2D(mc, hname.c_str(), Form("%s_ffqe", hname.c_str()))) { q->Add(e, -1.0); delete e; }
+
+  const double T0 = ci.mt.B.n / ci.mt.D.n;
+  const double kPtMin = 25.0;
+  const TAxis *ax = q->GetXaxis();
+  const int nx = q->GetNbinsX(), ny = q->GetNbinsY();
+  // pT >= 100 (incl. the overflow) at 105 GeV: NOT extrapolated further. The
+  // exponential f is measured on 25-70 GeV and the pT template stops at 100;
+  // buildFFTemplate's normalization <g>_D already counts the D-spectrum
+  // overflow at 105, so this is the same model. (A first version used the bin
+  // centres up to 205 GeV: the 0.8% of C40 above 100 GeV then carried f up to
+  // ~50 and inflated the low-MET bins x2-3, where m_T > 40 forces hard leptons.)
+  const double kPtCap = 100.0;
+  auto xEff = [&](int i) -> double {
+    if (i > nx || ax->GetBinLowEdge(i) >= kPtCap - 1e-6) return kPtCap + 5.0;
+    return 0.5 * (std::max(ax->GetBinLowEdge(i), kPtMin) + ax->GetBinUpEdge(i));
+  };
+  auto g = [](double s, double x) { return std::exp(s * (x - 40.0) / 10.0); };
+
+  // the flat-T0 MET projection of the same events (the reference of FF/flat)
+  TH1D *flat = q->ProjectionY(Form("ff_met_flat_%s", tagc.c_str()), 1, nx + 1);
+  flat->SetDirectory(nullptr);
+  flat->Scale(T0);
+  auto make = [&](double s, double norm, const std::string &nm, const char *what) -> TH1D * {
+    TH1D *h = (TH1D *)flat->Clone(nm.c_str());
+    h->SetDirectory(nullptr);
+    h->Reset();
+    h->SetTitle(Form("QCD SR template (%s, met_mt40), FF-weighted %s: T0 x #Sigma_{pT} f(p_{T}) C40(p_{T},MET),"
+                     " s = %.4f;PF MET [GeV];events", tagc.c_str(), what, s));
+    for (int j = 1; j <= ny; ++j)
+    {
+      double v = 0.0, e2 = 0.0;
+      for (int i = 1; i <= nx + 1; ++i)
+      {
+        if (i <= nx && ax->GetBinUpEdge(i) <= kPtMin + 1e-6) continue;
+        const double f = g(s, xEff(i)) / norm;
+        v += f * q->GetBinContent(i, j);
+        e2 += f * f * q->GetBinError(i, j) * q->GetBinError(i, j);
+      }
+      h->SetBinContent(j, std::max(0.0, T0 * v));
+      h->SetBinError(j, T0 * std::sqrt(e2)); // shape stat only (as ScaleToIsoPass)
+    }
+    return h;
+  };
+  ci.ffMetTmpl   = make(ci.ffS,   ci.ffNorm,   "qcd_met_mt40_ff_" + tagc,            "(nominal slope)");
+  ci.ffMetTmplUp = make(ci.ffSHi, ci.ffNormHi, "qcd_met_mt40_ff_" + tagc + "_ffUp",   "(slope +1 sigma)");
+  ci.ffMetTmplDn = make(ci.ffSLo, ci.ffNormLo, "qcd_met_mt40_ff_" + tagc + "_ffDown", "(slope -1 sigma)");
+  ci.ffMetA0   = ci.ffMetTmpl->Integral(1, ny);
+  ci.ffMetA0Up = ci.ffMetTmplUp->Integral(1, ny);
+  ci.ffMetA0Dn = ci.ffMetTmplDn->Integral(1, ny);
+  const double flatIn = flat->Integral(1, ny);
+  // the plane holds exactly the anti-iso m_T > 40 events of the counting plane
+  const double c40all = q->Integral(0, nx + 1, 0, ny + 1);
+
+  std::cout << "\n=== FAKE-FACTOR-WEIGHTED SR TEMPLATE ON PF MET (the electron qcd_abcd of the met_mt40 fit)  "
+            << lep << " " << chg << " ===\n"
+            << Form("  QCD_SR(MET) = T0 x sum_pT f(pT) C40(pT, MET);  T0 = %.4f, s = %.4f [%.4f, %.4f],"
+                    " <.>_D = %.4f (all from the pT template above)\n", T0, ci.ffS, ci.ffSLo, ci.ffSHi, ci.ffNorm)
+            << Form("  check: the (pT, MET) plane's anti-iso m_T>40 QCD = %.2f vs the counting plane's C40 = %.2f"
+                    " (%+.4f%%)\n", c40all, ci.mt.C40.n, ci.mt.C40.n != 0 ? 100.0 * (c40all / ci.mt.C40.n - 1.0) : 0.0)
+            << Form("  SR total (MET 0-120, the fitted range): FF = %.1f   [slope +1 sigma %.1f (%+.1f%%),"
+                    " -1 sigma %.1f (%+.1f%%)];  the pT template (pT 24-100): %.1f\n",
+                    ci.ffMetA0, ci.ffMetA0Up, ci.ffMetA0 > 0 ? 100.0 * (ci.ffMetA0Up / ci.ffMetA0 - 1.0) : 0.0,
+                    ci.ffMetA0Dn, ci.ffMetA0 > 0 ? 100.0 * (ci.ffMetA0Dn / ci.ffMetA0 - 1.0) : 0.0, ci.ffA0)
+            << Form("  flat T0 over the same MET bins = %.1f  ->  FF/flat - 1 = %+.1f%%\n",
+                    flatIn, flatIn > 0 ? 100.0 * (ci.ffMetA0 / flatIn - 1.0) : 0.0);
+  std::cout << "  FF / flat per MET range:";
+  {
+    const double edges[7] = {0.0, 10.0, 20.0, 30.0, 40.0, 60.0, 120.0};
+    for (int k = 0; k < 6; ++k)
+    {
+      const int b1 = flat->GetXaxis()->FindBin(edges[k] + 1e-6), b2 = flat->GetXaxis()->FindBin(edges[k + 1] - 1e-6);
+      const double ffv = ci.ffMetTmpl->Integral(b1, b2), fl = flat->Integral(b1, b2);
+      std::cout << Form("  [%.0f,%.0f) %.2f", edges[k], edges[k + 1], fl > 0 ? ffv / fl : 0.0);
+    }
+  }
+  std::cout << "\n";
+
+  // the reweighting as a plot: FF-weighted vs flat-T0 MET shape of the SR QCD
+  {
+    PlotStyle ps;
+    ps.logy = false;
+    ps.yTitleOffset = 1.55;
+    ps.headerX = 0.60;
+    ps.headerY = 0.66;
+    ps.titleSize = 0.04;
+    SaveDataMCRatio(ci.ffMetTmpl, flat, outDir + "/ff_met_mt40_" + tagc, "PF MET [GeV]", "Events",
+                    Form("SR QCD, %s, m_{T} > 40", tagc.c_str()), "fake-factor weighted vs flat T0",
+                    Form("FF %.1f vs flat %.1f", ci.ffMetA0, flatIn), ps, /*normToData=*/false,
+                    "FF-weighted", "flat T0", "FF / flat");
+  }
+
+  fout->cd();
+  for (TH1D *h : {ci.ffMetTmpl, ci.ffMetTmplUp, ci.ffMetTmplDn})
+    h->Write(h->GetName(), TObject::kOverwrite);
+  delete flat;
+  delete q;
 }
 
 // ----------------------------------------------------------------------------
@@ -2778,9 +2977,15 @@ void printResult(const std::string &plane, const std::string &lep,
     printRow(Form("C40 iso-fail, m_T > %.0f     ", kSRMtCut), r.C40);
     std::cout << "    A40 = B*C40/D (abcd-mode norm)   = "
               << Form("%.1f +/- %.1f", r.Apred40, r.Apred40err) << "\n";
-    std::cout << Form("    CR-B EWK split:  W-rel = %.1f   DY = %.1f   DYtau = %.1f"
+    std::cout << Form("    CR-B EWK split:  W-rel = %.1f   DY = %.1f   DYtau = %.1f   ttbar = %.2f"
                       "   (raw data in B = %.0f)\n",
-                      r.wB.n, r.zB_dy.n, r.zB_dytau.n, r.dataB.n);
+                      r.wB.n, r.zB_dy.n, r.zB_dytau.n, r.ttB.n, r.dataB.n);
+    std::cout << Form("    ttbar inside the frozen CRC/CRD ewk:  C40 %.2f of %.1f (%.2f%% of data)"
+                      "   D %.2f of %.1f (%.2f%% of data)\n",
+                      r.ttC40.n, r.wC40.n + r.zC40.n,
+                      r.dataC40.n > 0 ? 100.0 * r.ttC40.n / r.dataC40.n : 0.0,
+                      r.ttD.n, r.wD.n + r.zD.n,
+                      r.dataD.n > 0 ? 100.0 * r.ttD.n / r.dataD.n : 0.0);
   }
   std::cout << "  --- context (signal region A) ---\n";
   std::cout << "    data(A) = " << Form("%.1f", r.dataA.n)
@@ -2815,7 +3020,322 @@ void printResult(const std::string &plane, const std::string &lep,
   }
   std::cout << r.diag;   // buffered factorisation test + window variation
 }
+
+// ----------------------------------------------------------------------------
+// RAPIDITY-RESOLVED IN-FIT ABCD (QCD_MODE=abcdy, 2026-10-19, user decision).
+// The in-fit ABCD above is rapidity-INCLUSIVE per (flavour, charge): one set
+// of control regions B/C40/D, one transfer factor, and the SR template split
+// over y by the low-MET excess (plotting/mtandmet.C qcdWeights). The abcdy
+// mode does the same ABCD separately per rapidity GROUP (abcd_ygroups.h:
+// fwd = y10,y11 | bwd = y0,y1 | cen = y2..y9, the same bin indices in the lab
+// and the FB binning) from the y-binned twins of the m_T plane that the W
+// skim stores since 2026-10-19 (h_iso_mt_<lep><chg>_y<i>[_FB]): the group's
+// own B_g, C40_g, D_g, counted EXACTLY like runPlaneCharge's in-fit block
+// (same windows, same W vs non-W split, the same B-region DY / DYtau / ttbar
+// split), exported as abcd_counts_<lep><chg>_<lab|fb>_<g> with the inclusive
+// object's label set. Two differences: T_met = 0 (there is no y-binned MET
+// plane), and for the electron the six fake-factor labels carry the group's
+// share of the INCLUSIVE fake-factor model -- A0ff[Up,Down]_g =
+// A0ff[Up,Down] x A_g/A0 (the FF weighting stays inclusive by design), the
+// slope labels copied. plotting/mtandmet.C builds the qcd_abcdy SR template
+// and the per-group CR dirs from these objects. Nothing above reads them.
+// FB groups: the FB bins tile only [-1.7068, 2.4], so the fb groups' counts
+// sum to the WINDOW's share of the inclusive regions (printed).
+// ----------------------------------------------------------------------------
+
+// The group's y-binned planes of ONE file summed (fresh owned TH2D, NOT
+// scaled); nullptr + [ERR] when any bin's histogram is missing.
+TH2D *sumGroupPlane(TFile *f, const std::string &stem, const std::string &suf,
+                    const std::vector<int> &bins, const std::string &outname,
+                    const std::string &who)
+{
+  TH2D *sum = nullptr;
+  for (int iy : bins)
+  {
+    const std::string hn = Form("%s_y%d%s", stem.c_str(), iy, suf.c_str());
+    TH2D *h = (TH2D *)f->Get(hn.c_str());
+    if (!h)
+    {
+      std::cerr << "[ERR] missing " << hn << " in " << who
+                << " -- the y-binned ABCD planes need the 2026-10-19 W skim\n";
+      delete sum;
+      return nullptr;
+    }
+    if (!sum)
+    {
+      sum = (TH2D *)h->Clone(outname.c_str());
+      sum->SetDirectory(nullptr);
+    }
+    else
+      sum->Add(h);
+  }
+  return sum;
+}
+
+// k_s-weighted sum over MC files of the group plane (sumEWK2D's convention:
+// a zeroed clone, then Add(h, k) per file); ok = false if a plane is missing.
+TH2D *sumGroupEWK(const std::vector<MCFile> &mc, const std::string &stem,
+                  const std::string &suf, const std::vector<int> &bins,
+                  const std::string &outname, bool &ok)
+{
+  TH2D *sum = nullptr;
+  for (const MCFile &m : mc)
+  {
+    TH2D *h = sumGroupPlane(m.f, stem, suf, bins, outname + "_" + m.label, m.label);
+    if (!h) { ok = false; continue; }
+    if (!sum)
+    {
+      sum = (TH2D *)h->Clone(outname.c_str());
+      sum->SetDirectory(nullptr);
+      sum->Reset("ICESM");
+    }
+    sum->Add(h, pONorm::MCScale(m.label));
+    delete h;
+  }
+  return sum;
+}
+
+// The in-fit ABCD counts of one rapidity group (lab or fb), the mirror of
+// runPlaneCharge's in-fit block on the summed y-binned planes. Fills the
+// in-fit fields of `res` (B, C40, D, the raw data, the W / non-W EWK parts,
+// the B-region DY / DYtau / ttbar split, T = B/D, Apred40 = B*C40/D).
+bool countGroupABCD(TFile *fData, const std::vector<MCFile> &mcW,
+                    const std::vector<MCFile> &mcZ, const ABCDConfig &cfg,
+                    const std::string &lep, const std::string &chg,
+                    const std::string &suf, const std::vector<int> &bins,
+                    const std::string &tag, ABCDResult &res)
+{
+  const std::string stem = Form("h_iso_mt_%s%s", lep.c_str(), chg.c_str());
+  bool ok = true;
+  TH2D *data2D = sumGroupPlane(fData, stem, suf, bins, stem + "_" + tag + "_data", "data");
+  TH2D *w2D = sumGroupEWK(mcW, stem, suf, bins, stem + "_" + tag + "_w", ok);
+  TH2D *z2D = sumGroupEWK(mcZ, stem, suf, bins, stem + "_" + tag + "_z", ok);
+  if (!data2D || !w2D || !z2D || !ok)
+  {
+    delete data2D; delete w2D; delete z2D;
+    return false;
+  }
+  TH2D *qcd2D = (TH2D *)data2D->Clone((stem + "_" + tag + "_qcd").c_str());
+  qcd2D->SetDirectory(nullptr);
+  {
+    TH2D *ewk2D = (TH2D *)w2D->Clone((stem + "_" + tag + "_ewk").c_str());
+    ewk2D->SetDirectory(nullptr);
+    ewk2D->Add(z2D);
+    qcd2D->Add(ewk2D, -1.0);
+    delete ewk2D;
+  }
+  const double pLo = cfg.isoPassLo, pHi = cfg.isoCut, fLo = cfg.isoFailLo, fHi = cfg.isoFailHi;
+  res.B = count2D(qcd2D, pLo, pHi, 0.0, cfg.yCut);
+  res.D = count2D(qcd2D, fLo, fHi, 0.0, cfg.yCut);
+  res.C40 = count2D(qcd2D, fLo, fHi, kSRMtCut, 1e9);
+  res.dataB = count2D(data2D, pLo, pHi, 0.0, cfg.yCut);
+  res.wB = count2D(w2D, pLo, pHi, 0.0, cfg.yCut);
+  res.zB = count2D(z2D, pLo, pHi, 0.0, cfg.yCut);
+  res.dataD = count2D(data2D, fLo, fHi, 0.0, cfg.yCut);
+  res.wD = count2D(w2D, fLo, fHi, 0.0, cfg.yCut);
+  res.zD = count2D(z2D, fLo, fHi, 0.0, cfg.yCut);
+  res.dataC40 = count2D(data2D, fLo, fHi, kSRMtCut, 1e9);
+  res.wC40 = count2D(w2D, fLo, fHi, kSRMtCut, 1e9);
+  res.zC40 = count2D(z2D, fLo, fHi, kSRMtCut, 1e9);
+  res.T = (res.D.n != 0.0) ? res.B.n / res.D.n : 0.0;
+  res.Terr = (res.B.n != 0.0 && res.D.n != 0.0)
+                 ? std::fabs(res.T) * std::sqrt(relErr(res.B) * relErr(res.B) +
+                                                relErr(res.D) * relErr(res.D))
+                 : 0.0;
+  res.Apred40 = (res.D.n != 0.0) ? res.B.n * res.C40.n / res.D.n : 0.0;
+  res.Apred40err = (res.B.n && res.C40.n && res.D.n)
+                       ? std::fabs(res.Apred40) *
+                             std::sqrt(relErr(res.B) * relErr(res.B) +
+                                       relErr(res.C40) * relErr(res.C40) +
+                                       relErr(res.D) * relErr(res.D))
+                       : 0.0;
+  // the B-region non-W split (DY / DYtau ride r_Z in CR-B, ttbar is frozen)
+  // and the ttbar parts of C40 / D, per file as in runPlaneCharge
+  for (const MCFile &m : mcZ)
+  {
+    TH2D *h = sumGroupPlane(m.f, stem, suf, bins, stem + "_" + tag + "_split_" + m.label, m.label);
+    if (!h) { ok = false; continue; }
+    const double k = pONorm::MCScale(m.label);
+    auto scaled = [k](Count c) { c.n *= k; c.e *= k; return c; };
+    auto addTo = [](Count &dst, const Count &c) {
+      dst.n += c.n;
+      dst.e = std::sqrt(dst.e * dst.e + c.e * c.e);
+    };
+    const Count cB = scaled(count2D(h, pLo, pHi, 0.0, cfg.yCut));
+    if (m.label == "TT")
+    {
+      addTo(res.ttB, cB);
+      addTo(res.ttC40, scaled(count2D(h, fLo, fHi, kSRMtCut, 1e9)));
+      addTo(res.ttD, scaled(count2D(h, fLo, fHi, 0.0, cfg.yCut)));
+    }
+    else
+      addTo((m.label == "DYtau") ? res.zB_dytau : res.zB_dy, cB);
+    delete h;
+  }
+  delete data2D; delete w2D; delete z2D; delete qcd2D;
+  return ok;
+}
+
+// All groups x both binnings x both charges: count, print, export. Printed
+// AFTER everything else (the rest of the log is unchanged by this block).
+void runGroupABCD(TFile *fData, const std::vector<MCFile> &mcW, const std::vector<MCFile> &mcZ,
+                  const ABCDConfig &cfg, const std::string &lep,
+                  const ChargeInfo &infoPlus, const ChargeInfo &infoMinus, TFile *fout)
+{
+  std::cout << "\n######## RAPIDITY-RESOLVED IN-FIT ABCD (QCD_MODE=abcdy) -- " << lep << " ########\n"
+            << "  groups (abcd_ygroups.h, same bin indices lab and fb):";
+  for (int g = 0; g < pOAbcdY::kNGroups; ++g)
+  {
+    std::cout << " " << pOAbcdY::kGroupName[g] << " = {";
+    const std::vector<int> b = pOAbcdY::BinsOf(g);
+    for (size_t i = 0; i < b.size(); ++i) std::cout << (i ? "," : "") << "y" << b[i];
+    std::cout << "}";
+  }
+  std::cout << Form("\n  regions as the inclusive in-fit ABCD: B iso-pass m_T<%.0f, C40 anti-iso m_T>%.0f,"
+                    " D anti-iso m_T<%.0f; QCD-only = data - EWK(r = 1)\n",
+                    cfg.yCut, kSRMtCut, cfg.yCut);
+  const char *bins[2] = {"lab", "fb"};
+  int nWritten = 0, nFail = 0;
+  for (int ic = 0; ic < 2; ++ic)
+  {
+    const ChargeInfo &ci = (ic == 0) ? infoPlus : infoMinus;
+    const char *chg = (ic == 0) ? "Plus" : "Minus";
+    const ABCDResult &inc = ci.mt;
+    const double A0 = inc.Apred40;
+    for (int ib = 0; ib < 2; ++ib)
+    {
+      const std::string suf = (ib == 0) ? "" : "_FB";
+      std::cout << "\n=== abcdy " << lep << " " << chg << ", " << bins[ib] << " binning ===\n";
+      std::cout << "  group bins   | QCD-only:   B0        C40        D0     | T_g = B/D        R_g = C40/D"
+                   "      | A_g = B*C40/D      A_g/A0  T_g/T   R_g/R  | CR-B EWK: W      DY   DYtau  ttbar\n";
+      double sumDataB = 0, sumDataC = 0, sumDataD = 0, sumA = 0, sumAe2 = 0;
+      bool allOk = true;
+      ABCDResult gr[pOAbcdY::kNGroups];
+      for (int g = 0; g < pOAbcdY::kNGroups; ++g)
+      {
+        const std::vector<int> gb = pOAbcdY::BinsOf(g);
+        const std::string tag = std::string(bins[ib]) + "_" + pOAbcdY::kGroupName[g];
+        if (!countGroupABCD(fData, mcW, mcZ, cfg, lep, chg, suf, gb, tag, gr[g]))
+        {
+          allOk = false;
+          continue;
+        }
+        const ABCDResult &r = gr[g];
+        const double R = (r.D.n != 0.0) ? r.C40.n / r.D.n : 0.0;
+        const double Re = (r.C40.n != 0.0 && r.D.n != 0.0)
+                              ? std::fabs(R) * std::sqrt(relErr(r.C40) * relErr(r.C40) + relErr(r.D) * relErr(r.D))
+                              : 0.0;
+        const double R0 = (inc.D.n != 0.0) ? inc.C40.n / inc.D.n : 0.0;
+        std::cout << Form("  %-4s y%d-y%-2d | %9.1f %9.1f %9.1f | %.4f+-%.4f  %.4f+-%.4f | %7.1f+-%6.1f  %6.3f  %6.3f  %6.3f |"
+                          "  %8.1f %6.1f %6.2f %5.2f\n",
+                          pOAbcdY::kGroupName[g], gb.front(), gb.back(), r.B.n, r.C40.n, r.D.n, r.T, r.Terr,
+                          R, Re, r.Apred40, r.Apred40err, A0 > 0 ? r.Apred40 / A0 : 0.0,
+                          inc.T > 0 ? r.T / inc.T : 0.0, R0 > 0 ? R / R0 : 0.0, r.wB.n, r.zB_dy.n,
+                          r.zB_dytau.n, r.ttB.n);
+        if (r.B.n <= 0.0 || r.C40.n <= 0.0 || r.D.n <= 0.0)
+          std::cout << "  [WARN] " << pOAbcdY::kGroupName[g]
+                    << ": a QCD-only count <= 0 -> no ABCD prediction for this group"
+                       " (mtandmet.C will not write the abcdy objects)\n";
+        sumDataB += r.dataB.n; sumDataC += r.dataC40.n; sumDataD += r.dataD.n;
+        sumA += r.Apred40; sumAe2 += r.Apred40err * r.Apred40err;
+      }
+      if (!allOk)
+      {
+        std::cout << "  [ERR] missing y-binned planes -> no abcdy counts for " << lep << " " << chg << " "
+                  << bins[ib] << " (re-skim the W channels)\n";
+        ++nFail;
+        continue;
+      }
+      // closure: the lab groups tile |y| < 2.4 = the inclusive plane, so their
+      // DATA counts (integer, weight 1) must add up exactly; the fb groups
+      // tile the FB window [-1.7068, 2.4] -> their share of the inclusive
+      const bool exact = (sumDataB == inc.dataB.n && sumDataC == inc.dataC40.n && sumDataD == inc.dataD.n);
+      std::cout << Form("  [closure] Sum_g data vs the inclusive plane: B %.0f / %.0f  C40 %.0f / %.0f  D %.0f / %.0f  ",
+                        sumDataB, inc.dataB.n, sumDataC, inc.dataC40.n, sumDataD, inc.dataD.n);
+      if (ib == 0)
+        std::cout << (exact ? "EXACT" : "MISMATCH  <-- the y-binned planes do not tile the inclusive one") << "\n";
+      else
+        std::cout << Form("(FB window share: B %.3f, C40 %.3f, D %.3f)\n",
+                          inc.dataB.n > 0 ? sumDataB / inc.dataB.n : 0.0,
+                          inc.dataC40.n > 0 ? sumDataC / inc.dataC40.n : 0.0,
+                          inc.dataD.n > 0 ? sumDataD / inc.dataD.n : 0.0);
+      std::cout << Form("  [sum] Sum_g A_g = %.1f +- %.1f = %.3f x the inclusive A0 = B0*C40/D0 = %.1f +- %.1f\n",
+                        sumA, std::sqrt(sumAe2), A0 > 0 ? sumA / A0 : 0.0, A0, inc.Apred40err);
+      if (cfg.useFF && A0 > 0)
+        std::cout << Form("  [FF] electron SR template = the inclusive fake-factor model scaled per group: "
+                          "Sum_g A_g x A0ff/A0 = %.1f (A0ff = %.1f, x%.4f)\n",
+                          sumA * ci.ffA0 / A0, ci.ffA0, ci.ffA0 / A0);
+
+      // export, the inclusive object's label set (see the header comment)
+      for (int g = 0; g < pOAbcdY::kNGroups; ++g)
+      {
+        const ABCDResult &r = gr[g];
+        const double bCheck = r.dataB.n - r.wB.n - r.zB_dy.n - r.zB_dytau.n - r.ttB.n;
+        if (std::fabs(bCheck - r.B.n) > 0.1)
+          std::cerr << Form("[WARN] abcdy %s %s %s: B0 self-check off (%.2f vs %.2f)\n", lep.c_str(), chg,
+                            pOAbcdY::kGroupName[g], bCheck, r.B.n);
+        const std::string nm = Form("abcd_counts_%s%s_%s_%s", lep.c_str(), chg, bins[ib], pOAbcdY::kGroupName[g]);
+        const std::vector<int> gb = pOAbcdY::BinsOf(g);
+        const int nCnt = (cfg.useFF ? 21 : 15) + 3;
+        TH1D *hc = new TH1D(nm.c_str(),
+                            Form("abcdy group counts (%s%s, %s bins y%d-y%d): m_T plane, B/D at m_T<%.0f,"
+                                 " C40 at m_T>%.0f, anti-iso [%.3f,%.2f); T_met = 0 (no y-binned MET plane)%s",
+                                 lep.c_str(), chg, bins[ib], gb.front(), gb.back(), cfg.yCut, kSRMtCut,
+                                 cfg.isoFailLo, cfg.isoFailHi,
+                                 cfg.useFF ? "; A0ff* = the inclusive FF totals x A_g/A0" : ""),
+                            nCnt, 0.0, (double)nCnt);
+        hc->SetDirectory(nullptr);
+        int b = 0;
+        auto setb = [&](const char *lab, double v, double e) {
+          ++b;
+          hc->GetXaxis()->SetBinLabel(b, lab);
+          hc->SetBinContent(b, v);
+          hc->SetBinError(b, e);
+        };
+        setb("dataB", r.dataB.n, r.dataB.e);
+        setb("qcdB0", r.B.n, r.B.e);
+        setb("wB", r.wB.n, r.wB.e);
+        setb("zB", r.zB_dy.n, r.zB_dy.e);
+        setb("ztauB", r.zB_dytau.n, r.zB_dytau.e);
+        setb("dataC40", r.dataC40.n, r.dataC40.e);
+        setb("qcdC0", r.C40.n, r.C40.e);
+        setb("wC40", r.wC40.n, r.wC40.e);
+        setb("zC40", r.zC40.n, r.zC40.e);
+        setb("dataD", r.dataD.n, r.dataD.e);
+        setb("qcdD0", r.D.n, r.D.e);
+        setb("wD", r.wD.n, r.wD.e);
+        setb("zD", r.zD.n, r.zD.e);
+        setb("T_met", 0.0, 0.0);
+        setb("T_mt", r.T, r.Terr);
+        if (cfg.useFF)
+        {
+          const double f = (A0 > 0.0) ? r.Apred40 / A0 : 0.0;
+          setb("A0ff", ci.ffA0 * f, 0.0);
+          setb("A0ffUp", ci.ffA0Up * f, 0.0);
+          setb("A0ffDown", ci.ffA0Dn * f, 0.0);
+          setb("ffSlope", ci.ffS, 0.0);
+          setb("ffSlopeLo", ci.ffSLo, 0.0);
+          setb("ffSlopeHi", ci.ffSHi, 0.0);
+        }
+        setb("ttB", r.ttB.n, r.ttB.e);
+        setb("ttC40", r.ttC40.n, r.ttC40.e);
+        setb("ttD", r.ttD.n, r.ttD.e);
+        fout->cd();
+        hc->Write(hc->GetName(), TObject::kOverwrite);
+        delete hc;
+        ++nWritten;
+      }
+    }
+  }
+  std::cout << "\n[abcdy] wrote " << nWritten << " abcd_counts_" << lep << "<chg>_<lab|fb>_<group> objects"
+            << (nFail ? Form("  (%d charge x binning sets FAILED -- see [ERR] above)", nFail) : "") << "\n";
+}
 } // namespace
+
+// ============================================================================
+// THE NO-m_T LEPTON-pT FIT (scheme C): runNoMt and its diagnostics live in
+// qcd_abcd_nomt.h (per-bin multijet level since 2026-10-21b).
+#include "qcd_abcd_nomt.h"
 
 void qcd_abcd(bool isElec = false)
 {
@@ -2868,10 +3388,14 @@ void qcd_abcd(bool isElec = false)
       {"DYtau",     "DYtau"},
       {"Wp_tau",    "Wptau"},
       {"Wm_tau",    "Wmtau"},
+      {"TT",        "TT"},     // ttbar background (2026-10-16): non-W, one file for both flavours
   };
   // W-related and DY-related are kept apart: only the W part scales with the
   // signal strength, which the r-sensitivity diagnostic in the channel report
   // needs. `mc` (their union) is what the pT plane and the closure plots use.
+  // "DY-related" (mcZ) really means every NON-W sample: since 2026-10-16 it
+  // also holds ttbar, which is fixed in the r-scan like DY but gets its own
+  // CR-B column (ttB) instead of riding r_Z -- see the B-region split.
   std::vector<MCFile> mc, mcW, mcZ;
   for (const Spec &s : spec)
   {
@@ -2899,12 +3423,18 @@ void qcd_abcd(bool isElec = false)
   //                 template plots (qcd2D_pt_mt40_* etc.), the sideband
   //                 shape checks and the fake-factor diagnostic (ff_*).
   // The rootfile is untouched by the layout (names are load-bearing).
+  //   met_mt40_fit/ (2026-10-20) -- the QCD template of the met_mt40 fit (the
+  //                 leppt_mt40 selection, PF MET as the discriminant): the
+  //                 anti-iso MET shape at m_T > 40 and its closure. Its
+  //                 normalization is the leppt_fit view's in-fit ABCD.
   const std::string outBase = "./plots/qcd_abcd_" + lep;
   const std::string outMet  = outBase + "/met_fit";
   const std::string outPt   = outBase + "/leppt_fit";
+  const std::string outMetMt40 = outBase + "/met_mt40_fit";
   const std::string outFile = "./rootfile/qcd_abcd_" + lep + ".root";
   gSystem->mkdir(outMet.c_str(), kTRUE);
   gSystem->mkdir(outPt.c_str(), kTRUE);
+  gSystem->mkdir(outMetMt40.c_str(), kTRUE);
   gSystem->mkdir("./rootfile", kTRUE);
 
   std::cout << "\n[CONFIG] channel=" << lep << "  iso-pass=[" << cfg.isoPassLo << "," << cfg.isoCut << ")"
@@ -3016,6 +3546,37 @@ void qcd_abcd(bool isElec = false)
     }
   }
 
+  // --- PF MET at m_T > 40 (2026-10-20): the QCD template of the met_mt40 fit
+  // = the leppt_mt40 events with PF MET as the discriminant. The anti-iso MET
+  // shape of the SAME anti-iso m_T > 40 events x the SAME MET-plane T as
+  // qcd_pt_mt40 (the display template; the muon in-fit base after mtandmet.C
+  // renormalizes it to A0, the electron one is buildFFMetTemplate's) ---
+  for (const auto &cq : charges)
+  {
+    const ABCDResult &mres = (cq.first == "Plus") ? metResPlus : metResMinus;
+    if (mres.T == 0.0) continue;
+    TemplateNorm mtn;
+    double tilt3[3] = {0.0, 0.0, 0.0};
+    TH1D *tmpl = runPtCharge(fData, mc, cq.first, cfg, outMetMt40, cq.second, lep, mres, mtn, "mt40", tilt3, "met");
+    if (!tmpl) continue;
+    const ChargeInfo &ci = (cq.first == "Plus") ? infoPlus : infoMinus;
+    const double dat = isoPassData(fData, Form("h_iso_met_mt40_%s%s", lep.c_str(), cq.first.c_str()),
+                                   cfg.isoPassLo, cfg.isoCut);
+    std::cout << "\n=== ABCD QCD PF-MET template  " << lep << " " << cq.first
+              << "  [m_T > 40: the met_mt40 fit] ===\n"
+              << "  (anti-iso MET shape x MET-plane T = " << Form("%.4f +/- %.4f", mres.T, mres.Terr) << ")\n"
+              << Form("  Total iso-pass QCD (template norm, MET 0-120 + the clamp) = %.1f +/- %.1f"
+                      "   [the pT template of the same events: %.1f]\n", mtn.total, mtn.err, ci.ptTot40)
+              << Form("  iso-pass data at m_T > 40 = %.0f (the pT plane: %.0f -- the same events)\n", dat, ci.data40)
+              << Form("  anti-iso MET-shape tilt: <MET> = %.2f (relIso [%.2f,%.2f)) vs %.2f (relIso [%.2f,%.2f)) GeV"
+                      "  ->  %+.1f%%\n",
+                      tilt3[1], cfg.isoFailLo, 0.5 * (cfg.isoFailLo + cfg.isoFailHi),
+                      tilt3[2], 0.5 * (cfg.isoFailLo + cfg.isoFailHi), cfg.isoFailHi, tilt3[0]);
+    fout->cd();
+    tmpl->Write(tmpl->GetName(), TObject::kOverwrite);
+    delete tmpl;
+  }
+
   // --- per-pT-bin fake factor: the flat-T check (both flavours) and, for the
   // electron (cfg.useFF), the FF-weighted SR template built from its slope ---
   runFFCheck(fData, mc, mcW, "Plus", cfg, outPt, lepP, lep, infoPlus, fout);
@@ -3024,6 +3585,9 @@ void qcd_abcd(bool isElec = false)
   {
     buildFFTemplate(fData, mc, "Plus", cfg, lep, infoPlus, fout);
     buildFFTemplate(fData, mc, "Minus", cfg, lep, infoMinus, fout);
+    // the same fake-factor model projected on PF MET (met_mt40, 2026-10-20)
+    buildFFMetTemplate(fData, mc, "Plus", cfg, lep, infoPlus, fout, outMetMt40);
+    buildFFMetTemplate(fData, mc, "Minus", cfg, lep, infoMinus, fout, outMetMt40);
   }
 
   // --- in-fit ABCD prediction check: horizontal/vertical SR stacks (r = 1) ---
@@ -3045,7 +3609,7 @@ void qcd_abcd(bool isElec = false)
     const ChargeInfo &ci = (ic == 0) ? infoPlus : infoMinus;
     const char *chg = (ic == 0) ? "Plus" : "Minus";
     const ABCDResult &r = ci.mt;
-    const double bCheck = r.dataB.n - r.wB.n - r.zB_dy.n - r.zB_dytau.n;
+    const double bCheck = r.dataB.n - r.wB.n - r.zB_dy.n - r.zB_dytau.n - r.ttB.n;
     if (std::fabs(bCheck - r.B.n) > 0.1)
       std::cerr << Form("[WARN] abcd_counts_%s%s: B0 self-check off (%.2f vs %.2f)"
                         " -- exported pieces do not reassemble the QCD count\n",
@@ -3053,7 +3617,10 @@ void qcd_abcd(bool isElec = false)
     // cfg.useFF adds 6 labeled bins (the FF template's totals and slope) --
     // appended, so every label reader stays valid and the muon object is
     // byte-identical to the pre-2026-09-29 one
-    const int nCnt = cfg.useFF ? 21 : 15;
+    // + 3 ttbar bins (2026-10-16), appended LAST for the same reason
+    // + 3 bins of the FF model on PF MET (cfg.useFF, 2026-10-20, the met_mt40
+    //   fit), again LAST: the totals of qcd_met_mt40_ff_* (mtandmet.C staleness check)
+    const int nCnt = (cfg.useFF ? 21 : 15) + 3 + (cfg.useFF ? 3 : 0);
     TH1D *hc = new TH1D(Form("abcd_counts_%s%s", lep.c_str(), chg),
                         Form("in-fit ABCD counts (%s%s): m_T plane, B/D at m_T<%.0f,"
                              " C40 at m_T>%.0f, anti-iso [%.3f,%.2f)",
@@ -3095,13 +3662,34 @@ void qcd_abcd(bool isElec = false)
       setb("ffSlopeLo", ci.ffSLo, 0.0);
       setb("ffSlopeHi", ci.ffSHi, 0.0);
     }
+    // ttbar: ttB = its own frozen CR-B column (NOT inside zB, which rides
+    // r_Z); ttC40/ttD = the ttbar parts already contained in zC40/zD
+    setb("ttB", r.ttB.n, r.ttB.e);
+    setb("ttC40", r.ttC40.n, r.ttC40.e);
+    setb("ttD", r.ttD.n, r.ttD.e);
+    if (cfg.useFF)
+    {
+      setb("A0ffMet", ci.ffMetA0, 0.0);
+      setb("A0ffMetUp", ci.ffMetA0Up, 0.0);
+      setb("A0ffMetDown", ci.ffMetA0Dn, 0.0);
+    }
     fout->cd();
     hc->Write(hc->GetName(), TObject::kOverwrite);
     delete hc;
   }
 
+  // ---- the same counts per RAPIDITY GROUP (QCD_MODE=abcdy, 2026-10-19) ------
+  // abcd_counts_<lep><chg>_<lab|fb>_<fwd|bwd|cen>, read by plotting/mtandmet.C
+  // for the qcd_abcdy template + the group CR dirs. Runs last and only ADDS
+  // objects and a log block; everything above is unchanged.
+  runGroupABCD(fData, mcW, mcZ, cfg, lep, infoPlus, infoMinus, fout);
+
+  // ---- the no-m_T lepton-pT fit (scheme C, 2026-10-21): its multijet templates,
+  // anchors and residual kappa; runs after everything else and only ADDS objects
+  runNoMt(fData, mcW, mcZ, cfg, lep, fout, outBase + "/nomt_fit");
+
   for (ChargeInfo *ci : {&infoPlus, &infoMinus})
-    for (TH1D *h : {ci->ffTmpl, ci->ffTmplUp, ci->ffTmplDn})
+    for (TH1D *h : {ci->ffTmpl, ci->ffTmplUp, ci->ffTmplDn, ci->ffMetTmpl, ci->ffMetTmplUp, ci->ffMetTmplDn})
       delete h; // (null when not cfg.useFF)
 
   fout->Close();

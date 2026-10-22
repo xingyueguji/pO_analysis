@@ -23,12 +23,14 @@
 #include "lhe_index.h" // ttbar_w member twins of the fit templates (pOLhe::BookTwins/FillTwins)
 #include "muon_sf.h"   // muon efficiency SFs folded into the MC weight + their Up/Down twins (pOSF)
 #include "electron_sf.h" // electron Reco x ID+iso x trigger SFs, same machinery (pOSF, 2026-09-29)
+#include "met_res.h"     // MC MET smeared to the data resolution -> <h>_metRes{Mu,Ele}Up/Down (pOMetRes, 2026-10-20)
 
 #include "TFile.h"
 #include "TTree.h"
 #include "TCanvas.h"
 #include "TH1D.h"
 #include "TH2D.h"
+#include "TH3D.h"
 #include "TMath.h"
 #include "TVector2.h"
 #include "TLegend.h"
@@ -457,6 +459,7 @@ int skim_Wmu(const char *fname, SampleType sample)
   std::vector<TH2D *> lheTwins; // every twin booked below, for the write loop
   pOLhe::Twins t_met_Wp[kNY], t_met_Wm[kNY], t_met_Wp_FB[kNY], t_met_Wm_FB[kNY];
   pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
+  pOLhe::Twins t_leppt_Wp[kNY], t_leppt_Wm[kNY], t_leppt_Wp_FB[kNY], t_leppt_Wm_FB[kNY]; // no-m_T pT fit (2026-10-21)
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
   unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
@@ -481,7 +484,37 @@ int skim_Wmu(const char *fname, SampleType sample)
   std::vector<pOSF::SFTwins> sfTwinSets; // every SF twin set booked below (finalized + written at the end)
   pOSF::SFTwins s_met_Wp[kNY], s_met_Wm[kNY], s_met_Wp_FB[kNY], s_met_Wm_FB[kNY];
   pOSF::SFTwins s_leppt_mt40_Wp[kNY], s_leppt_mt40_Wm[kNY], s_leppt_mt40_Wp_FB[kNY], s_leppt_mt40_Wm_FB[kNY];
+  pOSF::SFTwins s_met_mt40_Wp[kNY], s_met_mt40_Wm[kNY], s_met_mt40_Wp_FB[kNY], s_met_mt40_Wm_FB[kNY];
+  pOSF::SFTwins s_leppt_Wp[kNY], s_leppt_Wm[kNY], s_leppt_Wp_FB[kNY], s_leppt_Wm_FB[kNY]; // no-m_T pT fit (2026-10-21)
   pOSF::SFStats sfStats;
+
+  // -------- MET-resolution variation (MC only; met_res.h, 2026-10-20) --------
+  // +1 sigma = the MC MET smeared to the data resolution measured on the Z
+  // recoil (correction/recoil_res.C); twins <h>_metResMuUp/Down of h_met_*,
+  // h_met_mt40_* and h_leppt_mt40_*. Missing input is FATAL; PO_MET_RES=off
+  // skips the twins on purpose and says so.
+  pOMetRes::MetRes metRes;
+  const bool applyMetRes = isMC && pOMetRes::Enabled();
+  if (applyMetRes && !metRes.Load(false, std::cout))
+  {
+    std::cerr << "[FATAL] skim_Wmu: MET-resolution input missing (run correction/run_recoil_res.sh)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applyMetRes) std::cout << "[WARN] skim_Wmu: PO_MET_RES=off -> no MET-resolution twins\n";
+  std::vector<pOMetRes::Twin> metResTwins;
+  pOMetRes::Twin r_met_Wp[kNY], r_met_Wm[kNY], r_met_Wp_FB[kNY], r_met_Wm_FB[kNY];
+  pOMetRes::Twin r_met_mt40_Wp[kNY], r_met_mt40_Wm[kNY], r_met_mt40_Wp_FB[kNY], r_met_mt40_Wm_FB[kNY];
+  pOMetRes::Twin r_leppt_mt40_Wp[kNY], r_leppt_mt40_Wm[kNY], r_leppt_mt40_Wp_FB[kNY], r_leppt_mt40_Wm_FB[kNY];
+  pOMetRes::Stats metResStats;
+  // The no-m_T fit templates (2026-10-21): lepton pT split at m_T = kNoMtSplit,
+  // [part 0 = m_T < 30 | 1 = m_T >= 30][charge 0 = W+ | 1 = W-][0 = lab | 1 = FB][y],
+  // with all three twin families (the MET-resolution Up = the event classified
+  // by its SMEARED m_T, i.e. the migration across m_T = 30)
+  TH1D *h_leppt_split[2][2][2][kNY] = {};
+  pOLhe::Twins t_leppt_split[2][2][2][kNY];
+  pOSF::SFTwins s_leppt_split[2][2][2][kNY];
+  pOMetRes::Twin r_leppt_split[2][2][2][kNY];
 
   // -------- PF tree (for MET) --------
   Int_t nPF = 0;
@@ -497,6 +530,23 @@ int skim_Wmu(const char *fname, SampleType sample)
   tPF->SetBranchAddress("pfId", &pfId);
   tPF->SetBranchAddress("pfPt", &pfPt);
   tPF->SetBranchAddress("pfPhi", &pfPhi);
+
+  // -------- e/gamma-calibrated PF MET (skim_common.h ComputePFMETEGCalib, 2026-10-21) --------
+  // The muon channel reads no electron otherwise, so it binds the electron kinematics too.
+  std::vector<float> *pfEta = nullptr;
+  std::vector<float> *egElePt = nullptr, *egEleRawPt = nullptr, *egEleEta = nullptr, *egElePhi = nullptr;
+  std::vector<float> *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr, *egPhoPhi = nullptr;
+  {
+    const std::string miss = BindEGammaMetBranches(tMu, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta,
+                                                   &egPhoPhi, &egElePt, &egEleEta, &egElePhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] skim_Wmu: no " << miss << " branch in " << fname << " -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
+  MetCalibStats metCalibStats;
 
   // -------- Gen branches (MC only) --------
   std::vector<float> *genPt = nullptr, *genEta = nullptr, *genPhi = nullptr;
@@ -527,6 +577,11 @@ int skim_Wmu(const char *fname, SampleType sample)
   // -------- Output histograms --------
   TH1D *h_met_Wp[kNY], *h_met_Wm[kNY], *h_mt_Wp[kNY], *h_mt_Wm[kNY];
   TH1D *h_met_Wp_FB[kNY], *h_met_Wm_FB[kNY], *h_mt_Wp_FB[kNY], *h_mt_Wm_FB[kNY];
+  // PF MET of the lepton-pT-discriminant selection pT > 25 && m_T > 40
+  // (2026-10-20): the fit templates of the MET-discriminant counterpart of the
+  // leppt_mt40 fit (met_mt40) -- the SAME events, PF MET instead of pT.
+  TH1D *h_met_mt40_Wp[kNY], *h_met_mt40_Wm[kNY], *h_met_mt40_Wp_FB[kNY], *h_met_mt40_Wm_FB[kNY];
+  pOLhe::Twins t_met_mt40_Wp[kNY], t_met_mt40_Wm[kNY], t_met_mt40_Wp_FB[kNY], t_met_mt40_Wm_FB[kNY];
 
   for (int b = 0; b < kNY; ++b)
   {
@@ -551,10 +606,21 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_mt_Wm_FB[b]  = new TH1D(Form("h_mt_Wm_y%d_FB", b),
         Form("W- m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 80, 0, 200);
 
+    h_met_mt40_Wp[b] = new TH1D(Form("h_met_mt40_Wp_y%d", b),
+        Form("W+ PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 60, 0, 120);
+    h_met_mt40_Wm[b] = new TH1D(Form("h_met_mt40_Wm_y%d", b),
+        Form("W- PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 60, 0, 120);
+    h_met_mt40_Wp_FB[b] = new TH1D(Form("h_met_mt40_Wp_y%d_FB", b),
+        Form("W+ PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 60, 0, 120);
+    h_met_mt40_Wm_FB[b] = new TH1D(Form("h_met_mt40_Wm_y%d_FB", b),
+        Form("W- PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 60, 0, 120);
+
     h_met_Wp[b]->Sumw2();    h_met_Wm[b]->Sumw2();
     h_mt_Wp[b]->Sumw2();     h_mt_Wm[b]->Sumw2();
     h_met_Wp_FB[b]->Sumw2(); h_met_Wm_FB[b]->Sumw2();
     h_mt_Wp_FB[b]->Sumw2();  h_mt_Wm_FB[b]->Sumw2();
+    h_met_mt40_Wp[b]->Sumw2();    h_met_mt40_Wm[b]->Sumw2();
+    h_met_mt40_Wp_FB[b]->Sumw2(); h_met_mt40_Wm_FB[b]->Sumw2();
 
     if (hasLhe) // LHE member twins of the MET fit templates (x axis copied from the nominal)
     {
@@ -562,6 +628,10 @@ int skim_Wmu(const char *fname, SampleType sample)
       t_met_Wm[b]    = pOLhe::BookTwins(h_met_Wm[b],    lheTwins);
       t_met_Wp_FB[b] = pOLhe::BookTwins(h_met_Wp_FB[b], lheTwins);
       t_met_Wm_FB[b] = pOLhe::BookTwins(h_met_Wm_FB[b], lheTwins);
+      t_met_mt40_Wp[b]    = pOLhe::BookTwins(h_met_mt40_Wp[b],    lheTwins);
+      t_met_mt40_Wm[b]    = pOLhe::BookTwins(h_met_mt40_Wm[b],    lheTwins);
+      t_met_mt40_Wp_FB[b] = pOLhe::BookTwins(h_met_mt40_Wp_FB[b], lheTwins);
+      t_met_mt40_Wm_FB[b] = pOLhe::BookTwins(h_met_mt40_Wm_FB[b], lheTwins);
     }
   }
 
@@ -635,9 +705,88 @@ int skim_Wmu(const char *fname, SampleType sample)
   TH2D *h_iso_pt_mt40_muMinus = new TH2D("h_iso_pt_mt40_muMinus",
       Form("#mu^{-} ABCD, m_{T}>%.0f;relIso;p_{T}^{#mu} [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   h_iso_pt_mt40_muPlus->Sumw2(); h_iso_pt_mt40_muMinus->Sumw2();
+  // ... and the (relIso, PF MET) plane WITH the m_T > 40 cut (2026-10-20): the
+  // anti-iso MET shape of the QCD template of the met_mt40 fit (the MET twin
+  // of h_iso_pt_mt40 -- same events, same weight).
+  TH2D *h_iso_met_mt40_muPlus  = new TH2D("h_iso_met_mt40_muPlus",
+      Form("#mu^{+} ABCD, m_{T}>%.0f;relIso;PF MET [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_met_mt40_muMinus = new TH2D("h_iso_met_mt40_muMinus",
+      Form("#mu^{-} ABCD, m_{T}>%.0f;relIso;PF MET [GeV]", mtCutForPtDisc), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  h_iso_met_mt40_muPlus->Sumw2(); h_iso_met_mt40_muMinus->Sumw2();
   h_iso_met_muPlus->Sumw2();  h_iso_met_muMinus->Sumw2();
   h_iso_mt_muPlus->Sumw2();   h_iso_mt_muMinus->Sumw2();
   h_iso_pt_muPlus->Sumw2();   h_iso_pt_muMinus->Sumw2();
+
+  // -------- Rapidity-binned twins of the (relIso, m_T) ABCD plane (2026-10-19) --------
+  // h_iso_mt_mu{Plus,Minus}_y<i>[_FB] = the SAME plane as h_iso_mt_mu{Plus,Minus}
+  // (same axes, events and weight) split by the leading muon's rapidity bin,
+  // y = -eta in kYEdges (lab) / kYEdgesFB (FB) = the bins of h_met_*/h_leppt_*.
+  // They give the ABCD regions B (iso-pass, m_T<30), C40 (anti-iso, m_T>40) and
+  // D (anti-iso, m_T<30) PER RAPIDITY BIN, which tests the assumption that the
+  // y-inclusive SR multijet template is distributed in y like the low-MET data
+  // excess (plotting/mtandmet.C qcdWeights) -- correction/qcd_ysplit.C.
+  // Diagnostic only, nothing in the fit reads them. The lab twins sum back to
+  // the inclusive plane exactly (every selected muon has |eta| <= 2.4).
+  TH2D *h_iso_mt_y_muPlus[kNY],   *h_iso_mt_y_muMinus[kNY];
+  TH2D *h_iso_mt_yFB_muPlus[kNY], *h_iso_mt_yFB_muMinus[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_mt_y_muPlus[b]    = new TH2D(Form("h_iso_mt_muPlus_y%d", b),
+        Form("#mu^{+} ABCD, %.2f<y<%.2f;relIso;m_{T} [GeV]", kYEdges[b], kYEdges[b + 1]),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_y_muMinus[b]   = new TH2D(Form("h_iso_mt_muMinus_y%d", b),
+        Form("#mu^{-} ABCD, %.2f<y<%.2f;relIso;m_{T} [GeV]", kYEdges[b], kYEdges[b + 1]),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_yFB_muPlus[b]  = new TH2D(Form("h_iso_mt_muPlus_y%d_FB", b),
+        Form("#mu^{+} ABCD, %.4f<y<%.4f;relIso;m_{T} [GeV]", kYEdgesFB[b], kYEdgesFB[b + 1]),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_yFB_muMinus[b] = new TH2D(Form("h_iso_mt_muMinus_y%d_FB", b),
+        Form("#mu^{-} ABCD, %.4f<y<%.4f;relIso;m_{T} [GeV]", kYEdgesFB[b], kYEdgesFB[b + 1]),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_y_muPlus[b]->Sumw2();   h_iso_mt_y_muMinus[b]->Sumw2();
+    h_iso_mt_yFB_muPlus[b]->Sumw2(); h_iso_mt_yFB_muMinus[b]->Sumw2();
+  }
+
+  // -------- Rapidity-binned (relIso, lepton pT, m_T) cubes (2026-10-21) --------
+  // h_iso_pt_mt_mu{Plus,Minus}_y<i>[_FB]: the same events and weight as the
+  // y-binned (relIso, m_T) twins above, with the lepton pT as a third axis, for
+  // the multijet of the NO-m_T lepton-pT fit (user decision 2026-10-21): per
+  // rapidity bin the anti-iso pT shape at all m_T (the SR template source) and
+  // the pT-dependent transfer factor iso-pass / anti-iso at low m_T
+  // (correction/qcd_nomt_study.C). Coarse relIso and m_T axes whose edges are
+  // every boundary in use (iso cut 0.15, anti-iso window 0.30 / 0.60 / 1.0;
+  // m_T 30 / 40); pT = the fit templates' 2 GeV bins (overflow kept).
+  // The h_iso_pt_mttrk_* twins carry m_T from the CHARGED-only MET
+  // (skim_common.h ComputeChargedPFMET; same events, same weight) -- the
+  // user's question whether the ABCD behaves better with it.
+  const double kCubeIsoMu[] = {0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.80, 1.0};
+  const int    kNCubeIsoMu  = sizeof(kCubeIsoMu) / sizeof(double) - 1;
+  const double kCubeMt[]    = {0, 10, 20, 30, 40, 50, 60, 70, 80, 100, 120, 200};
+  const int    kNCubeMt     = sizeof(kCubeMt) / sizeof(double) - 1;
+  double       kCubePt[51];
+  for (int k = 0; k <= 50; ++k) kCubePt[k] = 2.0 * k;
+  TH3D *h_iso_pt_mt_y_muPlus[kNY],   *h_iso_pt_mt_y_muMinus[kNY];
+  TH3D *h_iso_pt_mt_yFB_muPlus[kNY], *h_iso_pt_mt_yFB_muMinus[kNY];
+  TH3D *h_iso_pt_mttrk_y_muPlus[kNY],   *h_iso_pt_mttrk_y_muMinus[kNY];
+  TH3D *h_iso_pt_mttrk_yFB_muPlus[kNY], *h_iso_pt_mttrk_yFB_muMinus[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    TH3D **dst[8] = {&h_iso_pt_mt_y_muPlus[b],    &h_iso_pt_mt_y_muMinus[b],
+                     &h_iso_pt_mt_yFB_muPlus[b],  &h_iso_pt_mt_yFB_muMinus[b],
+                     &h_iso_pt_mttrk_y_muPlus[b], &h_iso_pt_mttrk_y_muMinus[b],
+                     &h_iso_pt_mttrk_yFB_muPlus[b], &h_iso_pt_mttrk_yFB_muMinus[b]};
+    for (int k = 0; k < 8; ++k)
+    {
+      const bool    fb  = (k % 4 >= 2);
+      const bool    trk = (k >= 4);
+      const double *ye  = fb ? kYEdgesFB : kYEdges;
+      *dst[k] = new TH3D(Form("h_iso_pt_%s_mu%s_y%d%s", trk ? "mttrk" : "mt", (k % 2 == 0) ? "Plus" : "Minus", b, fb ? "_FB" : ""),
+                         Form("#mu^{%s} ABCD, %.4f<y<%.4f;relIso;p_{T}^{#mu} [GeV];m_{T}%s [GeV]",
+                              (k % 2 == 0) ? "+" : "-", ye[b], ye[b + 1], trk ? " (charged-only MET)" : ""),
+                         kNCubeIsoMu, kCubeIsoMu, 50, kCubePt, kNCubeMt, kCubeMt);
+      (*dst[k])->Sumw2();
+    }
+  }
 
   // -------- (lepton pT, m_T) joint 2Ds for the pT x mT cut scan --------
   // For correction/ptmt_scan.C (2026-07-30): scanning a (pT, mT) cut PAIR
@@ -669,6 +818,17 @@ int skim_Wmu(const char *fname, SampleType sample)
       "#mu^{-}, anti-iso [0.30,1.0);p_{T}^{#mu} [GeV];m_{T} [GeV]", 100, 0, 100, 80, 0, 200);
   h_pt_mt_muPlus->Sumw2();         h_pt_mt_muMinus->Sumw2();
   h_pt_mt_antiiso_muPlus->Sumw2(); h_pt_mt_antiiso_muMinus->Sumw2();
+  // (lepton pT, PF MET) of the ANTI-ISO sideband at pT > 25 && m_T > 40
+  // (2026-10-20): the pT-resolved C40 of the met_mt40 QCD template, so the
+  // fake factor F(pT) (correction/qcd_abcd.C buildFFTemplate, electrons) can
+  // reweight it event class by event class before the MET projection. Filled
+  // for both flavours (the muon one is a cross-check: its F(pT) is flat).
+  // pT 2 GeV bins to 200 (the [24,26) bin holds 25-26), MET = the template's.
+  TH2D *h_pt_met_mt40_antiiso_muPlus  = new TH2D("h_pt_met_mt40_antiiso_muPlus",
+      Form("#mu^{+}, anti-iso [0.30,1.0), m_{T}>%.0f;p_{T}^{#mu} [GeV];PF MET [GeV]", mtCutForPtDisc), 100, 0, 200, 60, 0, 120);
+  TH2D *h_pt_met_mt40_antiiso_muMinus = new TH2D("h_pt_met_mt40_antiiso_muMinus",
+      Form("#mu^{-}, anti-iso [0.30,1.0), m_{T}>%.0f;p_{T}^{#mu} [GeV];PF MET [GeV]", mtCutForPtDisc), 100, 0, 200, 60, 0, 120);
+  h_pt_met_mt40_antiiso_muPlus->Sumw2(); h_pt_met_mt40_antiiso_muMinus->Sumw2();
 
   // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
   // pT twins of the h_met_*/h_mt_* rapidity-binned histos, for the lepton-pT
@@ -719,6 +879,11 @@ int skim_Wmu(const char *fname, SampleType sample)
       t_leppt_mt40_Wm[b]    = pOLhe::BookTwins(h_leppt_mt40_Wm[b],    lheTwins);
       t_leppt_mt40_Wp_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wp_FB[b], lheTwins);
       t_leppt_mt40_Wm_FB[b] = pOLhe::BookTwins(h_leppt_mt40_Wm_FB[b], lheTwins);
+      // ... and of the no-m_T lepton-pT fit templates h_leppt_* (2026-10-21)
+      t_leppt_Wp[b]    = pOLhe::BookTwins(h_leppt_Wp[b],    lheTwins);
+      t_leppt_Wm[b]    = pOLhe::BookTwins(h_leppt_Wm[b],    lheTwins);
+      t_leppt_Wp_FB[b] = pOLhe::BookTwins(h_leppt_Wp_FB[b], lheTwins);
+      t_leppt_Wm_FB[b] = pOLhe::BookTwins(h_leppt_Wm_FB[b], lheTwins);
     }
   }
 
@@ -753,10 +918,62 @@ int skim_Wmu(const char *fname, SampleType sample)
       s_leppt_mt40_Wm[b]    = pOSF::BookSFTwins(h_leppt_mt40_Wm[b],    sfTwinSets);
       s_leppt_mt40_Wp_FB[b] = pOSF::BookSFTwins(h_leppt_mt40_Wp_FB[b], sfTwinSets);
       s_leppt_mt40_Wm_FB[b] = pOSF::BookSFTwins(h_leppt_mt40_Wm_FB[b], sfTwinSets);
+      s_met_mt40_Wp[b]      = pOSF::BookSFTwins(h_met_mt40_Wp[b],      sfTwinSets);
+      s_met_mt40_Wm[b]      = pOSF::BookSFTwins(h_met_mt40_Wm[b],      sfTwinSets);
+      s_met_mt40_Wp_FB[b]   = pOSF::BookSFTwins(h_met_mt40_Wp_FB[b],   sfTwinSets);
+      s_met_mt40_Wm_FB[b]   = pOSF::BookSFTwins(h_met_mt40_Wm_FB[b],   sfTwinSets);
+      s_leppt_Wp[b]         = pOSF::BookSFTwins(h_leppt_Wp[b],         sfTwinSets); // no-m_T pT fit (2026-10-21)
+      s_leppt_Wm[b]         = pOSF::BookSFTwins(h_leppt_Wm[b],         sfTwinSets);
+      s_leppt_Wp_FB[b]      = pOSF::BookSFTwins(h_leppt_Wp_FB[b],      sfTwinSets);
+      s_leppt_Wm_FB[b]      = pOSF::BookSFTwins(h_leppt_Wm_FB[b],      sfTwinSets);
     }
+
+  // -------- MET-resolution twins of the fit templates (MC only; met_res.h) --------
+  if (applyMetRes)
+  {
+    const std::string mrs = metRes.name;
+    for (int b = 0; b < kNY; ++b)
+    {
+      r_met_Wp[b]         = pOMetRes::Book(h_met_Wp[b],         mrs, metResTwins);
+      r_met_Wm[b]         = pOMetRes::Book(h_met_Wm[b],         mrs, metResTwins);
+      r_met_Wp_FB[b]      = pOMetRes::Book(h_met_Wp_FB[b],      mrs, metResTwins);
+      r_met_Wm_FB[b]      = pOMetRes::Book(h_met_Wm_FB[b],      mrs, metResTwins);
+      r_met_mt40_Wp[b]    = pOMetRes::Book(h_met_mt40_Wp[b],    mrs, metResTwins);
+      r_met_mt40_Wm[b]    = pOMetRes::Book(h_met_mt40_Wm[b],    mrs, metResTwins);
+      r_met_mt40_Wp_FB[b] = pOMetRes::Book(h_met_mt40_Wp_FB[b], mrs, metResTwins);
+      r_met_mt40_Wm_FB[b] = pOMetRes::Book(h_met_mt40_Wm_FB[b], mrs, metResTwins);
+      r_leppt_mt40_Wp[b]    = pOMetRes::Book(h_leppt_mt40_Wp[b],    mrs, metResTwins);
+      r_leppt_mt40_Wm[b]    = pOMetRes::Book(h_leppt_mt40_Wm[b],    mrs, metResTwins);
+      r_leppt_mt40_Wp_FB[b] = pOMetRes::Book(h_leppt_mt40_Wp_FB[b], mrs, metResTwins);
+      r_leppt_mt40_Wm_FB[b] = pOMetRes::Book(h_leppt_mt40_Wm_FB[b], mrs, metResTwins);
+    }
+  }
+
+  // -------- The no-m_T fit templates split at m_T = kNoMtSplit (2026-10-21) --------
+  // h_leppt_mt{lo,hi}_W{p,m}_y<i>[_FB]: the h_leppt_* events (pT > 25, all m_T)
+  // with m_T < 30 / >= 30 -- the two signal channels of scheme C (lo + hi =
+  // h_leppt_* exactly), 2 GeV bins like h_leppt_*, + LHE / SF / MET-res twins.
+  for (int part = 0; part < 2; ++part)
+    for (int ic = 0; ic < 2; ++ic)
+      for (int bb = 0; bb < 2; ++bb)
+        for (int b = 0; b < kNY; ++b)
+        {
+          const double *ye = bb ? kYEdgesFB : kYEdges;
+          TH1D *h = new TH1D(Form("h_leppt_%s_W%s_y%d%s", part ? "mthi" : "mtlo", ic ? "m" : "p", b, bb ? "_FB" : ""),
+                             Form("W%s lepton p_{T}, m_{T}%s%.0f;p_{T}^{#mu} [GeV];Events (%.4f<y<%.4f)",
+                                  ic ? "-" : "+", part ? ">=" : "<", kNoMtSplit, ye[b], ye[b + 1]),
+                             50, 0, 100);
+          h->Sumw2();
+          h_leppt_split[part][ic][bb][b] = h;
+          if (hasLhe)      t_leppt_split[part][ic][bb][b] = pOLhe::BookTwins(h, lheTwins);
+          if (applySF)     s_leppt_split[part][ic][bb][b] = pOSF::BookSFTwins(h, sfTwinSets);
+          if (applyMetRes) r_leppt_split[part][ic][bb][b] = pOMetRes::Book(h, metRes.name, metResTwins);
+        }
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
+  ChargeCutflow byCharge; // N[5..8] split by the leading muon's charge (+ m_T / MET info lines)
+  const char   *byChargeLep = "muon";
   const Long64_t nEntries = tMu->GetEntries();
   std::cout << "Entries: " << nEntries << "\n";
 
@@ -821,6 +1038,7 @@ int skim_Wmu(const char *fname, SampleType sample)
                                               has_muIDTight, muIDTight,
                                               has_muIsPF,    muIsPF);
     if (iLead < 0) continue;
+    if (hasPF25) byCharge.Fill(0, muCharge->at(iLead), muEta->at(iLead));
 
     if (isMC)
     {
@@ -843,6 +1061,7 @@ int skim_Wmu(const char *fname, SampleType sample)
     if (std::abs(muEta->at(iLead)) > muEtaMax) continue;
     const bool passPtNominal = (muPt->at(iLead) > muPt25);
     if (passPtNominal) N[6]++;
+    if (passPtNominal) byCharge.Fill(1, muCharge->at(iLead), muEta->at(iLead));
 
     const double isoLead = RelIsoPF(iLead, muPt, muPFChIso, muPFNeuIso, muPFPhoIso, muPFPUIso);
     const int    isoBin  = FindIsoBin(isoLead);
@@ -850,6 +1069,7 @@ int skim_Wmu(const char *fname, SampleType sample)
     const bool   passIsoNominal  = (isoLead < isoMax);
 
     if (passIsoNominal && passPtNominal) N[7]++;
+    if (passIsoNominal && passPtNominal) byCharge.Fill(2, muCharge->at(iLead), muEta->at(iLead));
 
     const bool passMatch = PassLeadingLeptonTrigMatch(
         trigMatchDR, iLead, muEta, muPhi,
@@ -858,6 +1078,7 @@ int skim_Wmu(const char *fname, SampleType sample)
         warnedNoTrigMatchInfo, "muon");
     if (!passMatch) continue;
     if (passIsoNominal && passPtNominal) N[8]++;
+    if (passIsoNominal && passPtNominal) byCharge.Fill(3, muCharge->at(iLead), muEta->at(iLead));
 
     // -------- Muon efficiency SFs (MC; data: 1) --------
     // One factor per event for the leading muon: ID x [passIso ? ISO : 1] x
@@ -872,9 +1093,17 @@ int skim_Wmu(const char *fname, SampleType sample)
     if (lheOk) pOLhe::ScaleMemberWeights(mw, esf.nom);
 
     // -------- Fill final distributions (after step 8) --------
-    TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+    TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, egElePt, egEleRawPt, egEleEta, egElePhi, egPhoEt,
+                                        egPhoRawEt, egPhoEta, egPhoPhi, &metCalibStats);
     const double met = metv.Mod();
     const double mt  = TransverseMass(muPt->at(iLead), muPhi->at(iLead), metv);
+    // m_T from the charged-only MET (the h_iso_pt_mttrk_* cubes only)
+    const double mtTrk = TransverseMass(muPt->at(iLead), muPhi->at(iLead), ComputeChargedPFMET(pfId, pfPt, pfPhi));
+    if (passIsoNominal && passPtNominal)
+    { // the per-charge cutflow's information lines (not skim cuts)
+      if (mt > 40.0)  byCharge.Fill(4, muCharge->at(iLead), muEta->at(iLead));
+      if (met >= 30.0) byCharge.Fill(5, muCharge->at(iLead), muEta->at(iLead));
+    }
 
     if (isQCDSideband && passPtNominal)
     {
@@ -887,6 +1116,9 @@ int skim_Wmu(const char *fname, SampleType sample)
     // The h_iso_* ABCD planes keep the NOMINAL pT > 25 selection; only the
     // (pT, mT) scan planes h_pt_mt[_antiiso]_* go down to kPtScanFloor.
     const bool passMtCut = (mt > mtCutForPtDisc); // lepton-pT-discriminant m_T cut
+    // rapidity bins of the y-binned ABCD twins (same y = -eta as the fit templates)
+    const int ybinAB    = FindYBin(-muEta->at(iLead), kYEdges,   kNY);
+    const int ybinAB_FB = FindYBin(-muEta->at(iLead), kYEdgesFB, kNY);
     if (muCharge->at(iLead) > 0)
     {
       if (passPtNominal)
@@ -895,6 +1127,15 @@ int skim_Wmu(const char *fname, SampleType sample)
         h_iso_mt_muPlus ->Fill(isoLead, mt,  w);
         h_iso_pt_muPlus ->Fill(isoLead, muPt->at(iLead), w);
         if (passMtCut) h_iso_pt_mt40_muPlus->Fill(isoLead, muPt->at(iLead), w);
+        if (passMtCut) h_iso_met_mt40_muPlus->Fill(isoLead, met, w);
+        if (passMtCut && isoLead >= antiIsoLo && isoLead < antiIsoHi)
+          h_pt_met_mt40_antiiso_muPlus->Fill(muPt->at(iLead), met, w);
+        if (ybinAB    >= 0) h_iso_mt_y_muPlus  [ybinAB]   ->Fill(isoLead, mt, w);
+        if (ybinAB_FB >= 0) h_iso_mt_yFB_muPlus[ybinAB_FB]->Fill(isoLead, mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mt_y_muPlus  [ybinAB]   ->Fill(isoLead, muPt->at(iLead), mt, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mt_yFB_muPlus[ybinAB_FB]->Fill(isoLead, muPt->at(iLead), mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mttrk_y_muPlus  [ybinAB]   ->Fill(isoLead, muPt->at(iLead), mtTrk, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mttrk_yFB_muPlus[ybinAB_FB]->Fill(isoLead, muPt->at(iLead), mtTrk, w);
       }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_muPlus->Fill(muPt->at(iLead), mt, w);
@@ -907,6 +1148,15 @@ int skim_Wmu(const char *fname, SampleType sample)
         h_iso_mt_muMinus ->Fill(isoLead, mt,  w);
         h_iso_pt_muMinus ->Fill(isoLead, muPt->at(iLead), w);
         if (passMtCut) h_iso_pt_mt40_muMinus->Fill(isoLead, muPt->at(iLead), w);
+        if (passMtCut) h_iso_met_mt40_muMinus->Fill(isoLead, met, w);
+        if (passMtCut && isoLead >= antiIsoLo && isoLead < antiIsoHi)
+          h_pt_met_mt40_antiiso_muMinus->Fill(muPt->at(iLead), met, w);
+        if (ybinAB    >= 0) h_iso_mt_y_muMinus  [ybinAB]   ->Fill(isoLead, mt, w);
+        if (ybinAB_FB >= 0) h_iso_mt_yFB_muMinus[ybinAB_FB]->Fill(isoLead, mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mt_y_muMinus  [ybinAB]   ->Fill(isoLead, muPt->at(iLead), mt, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mt_yFB_muMinus[ybinAB_FB]->Fill(isoLead, muPt->at(iLead), mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mttrk_y_muMinus  [ybinAB]   ->Fill(isoLead, muPt->at(iLead), mtTrk, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mttrk_yFB_muMinus[ybinAB_FB]->Fill(isoLead, muPt->at(iLead), mtTrk, w);
       }
       if (isoLead >= antiIsoLo && isoLead < antiIsoHi)
         h_pt_mt_antiiso_muMinus->Fill(muPt->at(iLead), mt, w);
@@ -951,12 +1201,16 @@ int skim_Wmu(const char *fname, SampleType sample)
         h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wp[ybin], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wp[ybin], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wp[ybin], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wp[ybin], lpt, wGen, esf);
       }
       else if (isWm)
       {
         h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wm[ybin], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wm[ybin], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wm[ybin], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wm[ybin], lpt, wGen, esf);
       }
       if (passMtCut)
       {
@@ -965,12 +1219,18 @@ int skim_Wmu(const char *fname, SampleType sample)
           h_leppt_mt40_Wp[ybin]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp[ybin], lpt, wGen, esf);
+          h_met_mt40_Wp[ybin]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wp[ybin], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wp[ybin], met, wGen, esf);
         }
         else if (isWm)
         {
           h_leppt_mt40_Wm[ybin]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm[ybin], lpt, wGen, esf);
+          h_met_mt40_Wm[ybin]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wm[ybin], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wm[ybin], met, wGen, esf);
         }
       }
     }
@@ -981,12 +1241,16 @@ int skim_Wmu(const char *fname, SampleType sample)
         h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wp_FB[ybin_FB], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wp_FB[ybin_FB], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wp_FB[ybin_FB], lpt, wGen, esf);
       }
       else if (isWm)
       {
         h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wm_FB[ybin_FB], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wm_FB[ybin_FB], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wm_FB[ybin_FB], lpt, wGen, esf);
       }
       if (passMtCut)
       {
@@ -995,12 +1259,67 @@ int skim_Wmu(const char *fname, SampleType sample)
           h_leppt_mt40_Wp_FB[ybin_FB]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp_FB[ybin_FB], lpt, wGen, esf);
+          h_met_mt40_Wp_FB[ybin_FB]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wp_FB[ybin_FB], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wp_FB[ybin_FB], met, wGen, esf);
         }
         else if (isWm)
         {
           h_leppt_mt40_Wm_FB[ybin_FB]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm_FB[ybin_FB], lpt, wGen, esf);
+          h_met_mt40_Wm_FB[ybin_FB]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wm_FB[ybin_FB], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wm_FB[ybin_FB], met, wGen, esf);
+        }
+      }
+    }
+
+    // the no-m_T fit templates, split at m_T = kNoMtSplit (2026-10-21)
+    if (isWp || isWm)
+    {
+      const int part = (mt < kNoMtSplit) ? 0 : 1, ic = isWp ? 0 : 1;
+      for (int bb = 0; bb < 2; ++bb)
+      {
+        const int yb = bb ? ybin_FB : ybin;
+        if (yb < 0) continue;
+        h_leppt_split[part][ic][bb][yb]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_split[part][ic][bb][yb], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_split[part][ic][bb][yb], lpt, wGen, esf);
+      }
+    }
+
+    // MET-resolution twins: the same event with its MET smeared (deterministic
+    // per entry) and m_T recomputed, so it can migrate across the m_T > 40 cut
+    // (and, for the no-m_T templates, across m_T = 30)
+    if (applyMetRes && (isWp || isWm))
+    {
+      const TVector2 metvS = metRes.Smear(metv, ie);
+      const double   metS  = metvS.Mod();
+      const double   mtS   = TransverseMass(lpt, muPhi->at(iLead), metvS);
+      const bool     pass40S = (mtS > mtCutForPtDisc);
+      metResStats.Add(w, passMtCut, pass40S, met, metS);
+      {
+        const int partS = (mtS < kNoMtSplit) ? 0 : 1, ic = isWp ? 0 : 1;
+        if (ybin >= 0)    pOMetRes::Fill(r_leppt_split[partS][ic][0][ybin],    lpt, w);
+        if (ybin_FB >= 0) pOMetRes::Fill(r_leppt_split[partS][ic][1][ybin_FB], lpt, w);
+      }
+      if (ybin >= 0)
+      {
+        pOMetRes::Fill(isWp ? r_met_Wp[ybin] : r_met_Wm[ybin], metS, w);
+        if (pass40S)
+        {
+          pOMetRes::Fill(isWp ? r_met_mt40_Wp[ybin]   : r_met_mt40_Wm[ybin],   metS, w);
+          pOMetRes::Fill(isWp ? r_leppt_mt40_Wp[ybin] : r_leppt_mt40_Wm[ybin], lpt,  w);
+        }
+      }
+      if (ybin_FB >= 0)
+      {
+        pOMetRes::Fill(isWp ? r_met_Wp_FB[ybin_FB] : r_met_Wm_FB[ybin_FB], metS, w);
+        if (pass40S)
+        {
+          pOMetRes::Fill(isWp ? r_met_mt40_Wp_FB[ybin_FB]   : r_met_mt40_Wm_FB[ybin_FB],   metS, w);
+          pOMetRes::Fill(isWp ? r_leppt_mt40_Wp_FB[ybin_FB] : r_leppt_mt40_Wm_FB[ybin_FB], lpt,  w);
         }
       }
     }
@@ -1008,7 +1327,9 @@ int skim_Wmu(const char *fname, SampleType sample)
 
   // -------- Cutflow + outputs --------
   PrintCutflow(std::cout, N);
-  WriteCutflowTxt(outPrefix, isMC, N);
+  PrintChargeCutflow(std::cout, byCharge, byChargeLep);
+  WriteCutflowTxt(outPrefix, isMC, N, &byCharge, byChargeLep);
+  metCalibStats.Print(std::cout, (outPrefix + ", events after step 8").c_str()); // the MET record of this job
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
               << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
@@ -1037,6 +1358,18 @@ int skim_Wmu(const char *fname, SampleType sample)
     h_leppt_mt40_Wp_FB[i]->Write("", 2);
     h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
+  for (int i = 0; i < kNY; ++i) // the met_mt40 fit templates (2026-10-20)
+  {
+    h_met_mt40_Wp[i]->Write("", 2);
+    h_met_mt40_Wm[i]->Write("", 2);
+    h_met_mt40_Wp_FB[i]->Write("", 2);
+    h_met_mt40_Wm_FB[i]->Write("", 2);
+  }
+  // the no-m_T fit templates split at m_T = 30 (2026-10-21)
+  for (int part = 0; part < 2; ++part)
+    for (int ic = 0; ic < 2; ++ic)
+      for (int bb = 0; bb < 2; ++bb)
+        for (int i = 0; i < kNY; ++i) h_leppt_split[part][ic][bb][i]->Write("", 2);
   // LHE member twins of the fit templates (MC only; the vector is empty for data)
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
   // Muon-SF twins (MC only): the per-source <h>_muID/muIso/muTrigUp|Down and the
@@ -1048,6 +1381,14 @@ int skim_Wmu(const char *fname, SampleType sample)
     const int nSF = pOSF::FinalizeAndWriteSFTwins(sfTwinSets);
     std::cout << "[INFO] muon-SF twins written: " << nSF << " (" << sfTwinSets.size()
               << " fit templates x [3 sources + combined " << pOSF::kMuonSFCombinedName << "] x Up/Down)\n";
+  }
+  // MET-resolution twins (MC only): Up = smeared, Down = the mirror
+  if (applyMetRes)
+  {
+    metResStats.Print(std::cout, "skim_Wmu");
+    const int nMR = pOMetRes::FinalizeAndWrite(metResTwins, metRes.name);
+    std::cout << "[INFO] MET-resolution twins written: " << nMR << " (" << metResTwins.size()
+              << " fit templates x Up/Down, " << metRes.name << ")\n";
   }
   for (int b = 0; b < NISO; ++b)
   {
@@ -1063,6 +1404,31 @@ int skim_Wmu(const char *fname, SampleType sample)
   h_iso_pt_muMinus ->Write("", TObject::kOverwrite);
   h_iso_pt_mt40_muPlus ->Write("", TObject::kOverwrite);
   h_iso_pt_mt40_muMinus->Write("", TObject::kOverwrite);
+  // the met_mt40 QCD template inputs (2026-10-20)
+  h_iso_met_mt40_muPlus ->Write("", TObject::kOverwrite);
+  h_iso_met_mt40_muMinus->Write("", TObject::kOverwrite);
+  h_pt_met_mt40_antiiso_muPlus ->Write("", TObject::kOverwrite);
+  h_pt_met_mt40_antiiso_muMinus->Write("", TObject::kOverwrite);
+  // rapidity-binned twins of the (relIso, m_T) plane (correction/qcd_ysplit.C)
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_mt_y_muPlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_y_muMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_yFB_muPlus [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_yFB_muMinus[b]->Write("", TObject::kOverwrite);
+  }
+  // rapidity-binned (relIso, pT, m_T) cubes (correction/qcd_nomt_study.C, 2026-10-21)
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_pt_mt_y_muPlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_y_muMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_yFB_muPlus [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_yFB_muMinus[b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_y_muPlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_y_muMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_yFB_muPlus [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_yFB_muMinus[b]->Write("", TObject::kOverwrite);
+  }
   // pT x mT scan inputs (correction/ptmt_scan.C)
   h_pt_mt_muPlus         ->Write("", TObject::kOverwrite);
   h_pt_mt_muMinus        ->Write("", TObject::kOverwrite);
@@ -1317,13 +1683,15 @@ int skim_Wel(const char *fname, SampleType sample)
   std::vector<TH2D *> lheTwins; // every twin booked below, for the write loop
   pOLhe::Twins t_met_Wp[kNY], t_met_Wm[kNY], t_met_Wp_FB[kNY], t_met_Wm_FB[kNY];
   pOLhe::Twins t_leppt_mt40_Wp[kNY], t_leppt_mt40_Wm[kNY], t_leppt_mt40_Wp_FB[kNY], t_leppt_mt40_Wm_FB[kNY];
+  pOLhe::Twins t_leppt_Wp[kNY], t_leppt_Wm[kNY], t_leppt_Wp_FB[kNY], t_leppt_Wm_FB[kNY]; // no-m_T pT fit (2026-10-21)
   bool               warnedLheOnce = false;
   unsigned long long nLheSkipped   = 0;
   unsigned long long nLheCapped    = 0; // pOLhe::kMaxMemberRatio guard fired (variations neutralized)
 
   // -------- Electron efficiency scale factors (MC only; electron_sf.h) --------
-  // RECO (pOSF::kEleRecoSource: the EGM Reco20to75/RecoAbove75 tables since
-  // 2026-10-01, as on 2026-09-29; on 2026-09-30 one inclusive number from the
+  // RECO (pOSF::kEleRecoSource: since 2026-10-21 NO Reco SF, factor 1 +- 10%
+  // as its own nuisance eleReco; the EGM Reco20to75/RecoAbove75 tables
+  // 2026-10-01..20, as on 2026-09-29; on 2026-09-30 one inclusive number from the
   // pO tag-and-probe, correction/reco_sf_ele.C) x ID+ISO (EGM wp90iso, iso-passing electrons
   // only) x the inclusive trigger SF of correction/trig_eff_mb.C, on the
   // leading electron. Folded into `w` after step 8, before any fill;
@@ -1342,11 +1710,35 @@ int skim_Wel(const char *fname, SampleType sample)
   std::vector<pOSF::SFTwins> sfTwinSets; // every SF twin set booked below (finalized + written at the end)
   pOSF::SFTwins s_met_Wp[kNY], s_met_Wm[kNY], s_met_Wp_FB[kNY], s_met_Wm_FB[kNY];
   pOSF::SFTwins s_leppt_mt40_Wp[kNY], s_leppt_mt40_Wm[kNY], s_leppt_mt40_Wp_FB[kNY], s_leppt_mt40_Wm_FB[kNY];
+  pOSF::SFTwins s_met_mt40_Wp[kNY], s_met_mt40_Wm[kNY], s_met_mt40_Wp_FB[kNY], s_met_mt40_Wm_FB[kNY];
+  pOSF::SFTwins s_leppt_Wp[kNY], s_leppt_Wm[kNY], s_leppt_Wp_FB[kNY], s_leppt_Wm_FB[kNY]; // no-m_T pT fit (2026-10-21)
   pOSF::SFStats sfStats;
   auto bookSF = [&](const TH1 *h) {
     return pOSF::BookSFTwins(h, sfTwinSets, pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName,
-                             pOSF::kEleSFCombinedNote);
+                             pOSF::kEleSFCombinedNote, pOSF::kEleSFCombMask);
   };
+
+  // -------- MET-resolution variation (MC only; met_res.h, 2026-10-20) --------
+  // Same as skim_Wmu, with the Z->ee recoil width (twins <h>_metResEleUp/Down).
+  pOMetRes::MetRes metRes;
+  const bool applyMetRes = isMC && pOMetRes::Enabled();
+  if (applyMetRes && !metRes.Load(true, std::cout))
+  {
+    std::cerr << "[FATAL] skim_Wel: MET-resolution input missing (run correction/run_recoil_res.sh)\n";
+    f->Close();
+    return 2;
+  }
+  if (isMC && !applyMetRes) std::cout << "[WARN] skim_Wel: PO_MET_RES=off -> no MET-resolution twins\n";
+  std::vector<pOMetRes::Twin> metResTwins;
+  pOMetRes::Twin r_met_Wp[kNY], r_met_Wm[kNY], r_met_Wp_FB[kNY], r_met_Wm_FB[kNY];
+  pOMetRes::Twin r_met_mt40_Wp[kNY], r_met_mt40_Wm[kNY], r_met_mt40_Wp_FB[kNY], r_met_mt40_Wm_FB[kNY];
+  pOMetRes::Twin r_leppt_mt40_Wp[kNY], r_leppt_mt40_Wm[kNY], r_leppt_mt40_Wp_FB[kNY], r_leppt_mt40_Wm_FB[kNY];
+  pOMetRes::Stats metResStats;
+  // the no-m_T fit templates split at m_T = kNoMtSplit (2026-10-21; see skim_Wmu)
+  TH1D *h_leppt_split[2][2][2][kNY] = {};
+  pOLhe::Twins t_leppt_split[2][2][2][kNY];
+  pOSF::SFTwins s_leppt_split[2][2][2][kNY];
+  pOMetRes::Twin r_leppt_split[2][2][2][kNY];
 
   // -------- PF tree (MET) --------
   Int_t nPF = 0;
@@ -1362,6 +1754,21 @@ int skim_Wel(const char *fname, SampleType sample)
   tPF->SetBranchAddress("pfId", &pfId);
   tPF->SetBranchAddress("pfPt", &pfPt);
   tPF->SetBranchAddress("pfPhi", &pfPhi);
+
+  // -------- e/gamma-calibrated PF MET (skim_common.h ComputePFMETEGCalib, 2026-10-21) --------
+  // elePt/eleEta/elePhi are bound above (not again here); the rest is bound now.
+  std::vector<float> *pfEta = nullptr, *eleRawPt = nullptr;
+  std::vector<float> *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr, *egPhoPhi = nullptr;
+  {
+    const std::string miss = BindEGammaMetBranches(tEle, tPF, &pfId, &pfEta, &eleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] skim_Wel: no " << miss << " branch in " << fname << " -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
+  MetCalibStats metCalibStats;
 
   // -------- Gen (MC) --------
   std::vector<float> *genPt = nullptr, *genEta = nullptr, *genPhi = nullptr;
@@ -1394,6 +1801,9 @@ int skim_Wel(const char *fname, SampleType sample)
   // -------- Output histograms --------
   TH1D *h_met_Wp[kNY], *h_met_Wm[kNY], *h_mt_Wp[kNY], *h_mt_Wm[kNY];
   TH1D *h_met_Wp_FB[kNY], *h_met_Wm_FB[kNY], *h_mt_Wp_FB[kNY], *h_mt_Wm_FB[kNY];
+  // PF MET at pT > 25 && m_T > 40 = the met_mt40 fit templates (2026-10-20; see skim_Wmu)
+  TH1D *h_met_mt40_Wp[kNY], *h_met_mt40_Wm[kNY], *h_met_mt40_Wp_FB[kNY], *h_met_mt40_Wm_FB[kNY];
+  pOLhe::Twins t_met_mt40_Wp[kNY], t_met_mt40_Wm[kNY], t_met_mt40_Wp_FB[kNY], t_met_mt40_Wm_FB[kNY];
 
   for (int b = 0; b < kNY; ++b)
   {
@@ -1418,10 +1828,21 @@ int skim_Wel(const char *fname, SampleType sample)
     h_mt_Wm_FB[b]  = new TH1D(Form("h_mt_Wm_y%d_FB", b),
         Form("W- m_{T};m_{T} [GeV];Events (%.2f<y<%.2f)", y1FB, y2FB), 80, 0, 200);
 
+    h_met_mt40_Wp[b] = new TH1D(Form("h_met_mt40_Wp_y%d", b),
+        Form("W+ PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 60, 0, 120);
+    h_met_mt40_Wm[b] = new TH1D(Form("h_met_mt40_Wm_y%d", b),
+        Form("W- PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1, y2), 60, 0, 120);
+    h_met_mt40_Wp_FB[b] = new TH1D(Form("h_met_mt40_Wp_y%d_FB", b),
+        Form("W+ PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 60, 0, 120);
+    h_met_mt40_Wm_FB[b] = new TH1D(Form("h_met_mt40_Wm_y%d_FB", b),
+        Form("W- PF MET, m_{T}>%.0f;MET [GeV];Events (%.2f<y<%.2f)", mtCutForPtDisc, y1FB, y2FB), 60, 0, 120);
+
     h_met_Wp[b]->Sumw2();    h_met_Wm[b]->Sumw2();
     h_mt_Wp[b]->Sumw2();     h_mt_Wm[b]->Sumw2();
     h_met_Wp_FB[b]->Sumw2(); h_met_Wm_FB[b]->Sumw2();
     h_mt_Wp_FB[b]->Sumw2();  h_mt_Wm_FB[b]->Sumw2();
+    h_met_mt40_Wp[b]->Sumw2();    h_met_mt40_Wm[b]->Sumw2();
+    h_met_mt40_Wp_FB[b]->Sumw2(); h_met_mt40_Wm_FB[b]->Sumw2();
 
     if (hasLhe) // LHE member twins of the MET fit templates (x axis copied from the nominal)
     {
@@ -1429,6 +1850,10 @@ int skim_Wel(const char *fname, SampleType sample)
       t_met_Wm[b]    = pOLhe::BookTwins(h_met_Wm[b],    lheTwins);
       t_met_Wp_FB[b] = pOLhe::BookTwins(h_met_Wp_FB[b], lheTwins);
       t_met_Wm_FB[b] = pOLhe::BookTwins(h_met_Wm_FB[b], lheTwins);
+      t_met_mt40_Wp[b]    = pOLhe::BookTwins(h_met_mt40_Wp[b],    lheTwins);
+      t_met_mt40_Wm[b]    = pOLhe::BookTwins(h_met_mt40_Wm[b],    lheTwins);
+      t_met_mt40_Wp_FB[b] = pOLhe::BookTwins(h_met_mt40_Wp_FB[b], lheTwins);
+      t_met_mt40_Wm_FB[b] = pOLhe::BookTwins(h_met_mt40_Wm_FB[b], lheTwins);
     }
     if (applySF) // electron-SF twins of the MET fit templates
     {
@@ -1436,6 +1861,10 @@ int skim_Wel(const char *fname, SampleType sample)
       s_met_Wm[b]    = bookSF(h_met_Wm[b]);
       s_met_Wp_FB[b] = bookSF(h_met_Wp_FB[b]);
       s_met_Wm_FB[b] = bookSF(h_met_Wm_FB[b]);
+      s_met_mt40_Wp[b]    = bookSF(h_met_mt40_Wp[b]);
+      s_met_mt40_Wm[b]    = bookSF(h_met_mt40_Wm[b]);
+      s_met_mt40_Wp_FB[b] = bookSF(h_met_mt40_Wp_FB[b]);
+      s_met_mt40_Wm_FB[b] = bookSF(h_met_mt40_Wm_FB[b]);
     }
   }
 
@@ -1506,9 +1935,75 @@ int skim_Wel(const char *fname, SampleType sample)
   TH2D *h_iso_pt_mt40_eleMinus = new TH2D("h_iso_pt_mt40_eleMinus",
       Form("e^{-} ABCD, m_{T}>%.0f;%s;p_{T}^{e} [GeV]", mtCutForPtDisc, kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 50, 0, 100);
   h_iso_pt_mt40_elePlus->Sumw2(); h_iso_pt_mt40_eleMinus->Sumw2();
+  // the (iso axis, PF MET) plane at m_T > 40 = the anti-iso MET shape of the
+  // met_mt40 QCD template (2026-10-20; the MET twin of h_iso_pt_mt40)
+  TH2D *h_iso_met_mt40_elePlus  = new TH2D("h_iso_met_mt40_elePlus",
+      Form("e^{+} ABCD, m_{T}>%.0f;%s;PF MET [GeV]", mtCutForPtDisc, kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  TH2D *h_iso_met_mt40_eleMinus = new TH2D("h_iso_met_mt40_eleMinus",
+      Form("e^{-} ABCD, m_{T}>%.0f;%s;PF MET [GeV]", mtCutForPtDisc, kIsoAxT), kNIsoAB, kIsoLoAB, kIsoHiAB, 60, 0, 120);
+  h_iso_met_mt40_elePlus->Sumw2(); h_iso_met_mt40_eleMinus->Sumw2();
   h_iso_met_elePlus->Sumw2();  h_iso_met_eleMinus->Sumw2();
   h_iso_mt_elePlus->Sumw2();   h_iso_mt_eleMinus->Sumw2();
   h_iso_pt_elePlus->Sumw2();   h_iso_pt_eleMinus->Sumw2();
+
+  // -------- Rapidity-binned twins of the (iso axis, m_T) ABCD plane (2026-10-19) --------
+  // Electron twins of the skim_Wmu h_iso_mt_mu*_y<i>[_FB] (see the comment there):
+  // the SAME plane as h_iso_mt_ele{Plus,Minus} split by the leading electron's
+  // rapidity bin, y = -eleEta (the track eta, like the fit templates; NOT
+  // eleSCEta) in kYEdges / kYEdgesFB. Diagnostic for correction/qcd_ysplit.C;
+  // the lab twins sum back to the inclusive plane exactly (|eleEta| < 2.4).
+  TH2D *h_iso_mt_y_elePlus[kNY],   *h_iso_mt_y_eleMinus[kNY];
+  TH2D *h_iso_mt_yFB_elePlus[kNY], *h_iso_mt_yFB_eleMinus[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_mt_y_elePlus[b]    = new TH2D(Form("h_iso_mt_elePlus_y%d", b),
+        Form("e^{+} ABCD, %.2f<y<%.2f;%s;m_{T} [GeV]", kYEdges[b], kYEdges[b + 1], kIsoAxT),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_y_eleMinus[b]   = new TH2D(Form("h_iso_mt_eleMinus_y%d", b),
+        Form("e^{-} ABCD, %.2f<y<%.2f;%s;m_{T} [GeV]", kYEdges[b], kYEdges[b + 1], kIsoAxT),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_yFB_elePlus[b]  = new TH2D(Form("h_iso_mt_elePlus_y%d_FB", b),
+        Form("e^{+} ABCD, %.4f<y<%.4f;%s;m_{T} [GeV]", kYEdgesFB[b], kYEdgesFB[b + 1], kIsoAxT),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_yFB_eleMinus[b] = new TH2D(Form("h_iso_mt_eleMinus_y%d_FB", b),
+        Form("e^{-} ABCD, %.4f<y<%.4f;%s;m_{T} [GeV]", kYEdgesFB[b], kYEdgesFB[b + 1], kIsoAxT),
+        kNIsoAB, kIsoLoAB, kIsoHiAB, 80, 0, 200);
+    h_iso_mt_y_elePlus[b]->Sumw2();   h_iso_mt_y_eleMinus[b]->Sumw2();
+    h_iso_mt_yFB_elePlus[b]->Sumw2(); h_iso_mt_yFB_eleMinus[b]->Sumw2();
+  }
+
+  // -------- Rapidity-binned (iso axis, lepton pT, m_T) cubes (2026-10-21) --------
+  // Electron twins of the skim_Wmu h_iso_pt_mt_mu*_y<i>[_FB] (see the comment
+  // there), on the iso axis: iso-pass = [-0.3, 0), gap = [0, 0.3), anti-iso
+  // sideband = [0.3, 1.0) with its sub-windows at 0.6.
+  const double kCubeIsoEle[] = {-0.3, 0.0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.80, 1.0};
+  const int    kNCubeIsoEle  = sizeof(kCubeIsoEle) / sizeof(double) - 1;
+  const double kCubeMt[]     = {0, 10, 20, 30, 40, 50, 60, 70, 80, 100, 120, 200};
+  const int    kNCubeMt      = sizeof(kCubeMt) / sizeof(double) - 1;
+  double       kCubePt[51];
+  for (int k = 0; k <= 50; ++k) kCubePt[k] = 2.0 * k;
+  TH3D *h_iso_pt_mt_y_elePlus[kNY],   *h_iso_pt_mt_y_eleMinus[kNY];
+  TH3D *h_iso_pt_mt_yFB_elePlus[kNY], *h_iso_pt_mt_yFB_eleMinus[kNY];
+  TH3D *h_iso_pt_mttrk_y_elePlus[kNY],   *h_iso_pt_mttrk_y_eleMinus[kNY]; // charged-only MET m_T (see skim_Wmu)
+  TH3D *h_iso_pt_mttrk_yFB_elePlus[kNY], *h_iso_pt_mttrk_yFB_eleMinus[kNY];
+  for (int b = 0; b < kNY; ++b)
+  {
+    TH3D **dst[8] = {&h_iso_pt_mt_y_elePlus[b],    &h_iso_pt_mt_y_eleMinus[b],
+                     &h_iso_pt_mt_yFB_elePlus[b],  &h_iso_pt_mt_yFB_eleMinus[b],
+                     &h_iso_pt_mttrk_y_elePlus[b], &h_iso_pt_mttrk_y_eleMinus[b],
+                     &h_iso_pt_mttrk_yFB_elePlus[b], &h_iso_pt_mttrk_yFB_eleMinus[b]};
+    for (int k = 0; k < 8; ++k)
+    {
+      const bool    fb  = (k % 4 >= 2);
+      const bool    trk = (k >= 4);
+      const double *ye  = fb ? kYEdgesFB : kYEdges;
+      *dst[k] = new TH3D(Form("h_iso_pt_%s_ele%s_y%d%s", trk ? "mttrk" : "mt", (k % 2 == 0) ? "Plus" : "Minus", b, fb ? "_FB" : ""),
+                         Form("e^{%s} ABCD, %.4f<y<%.4f;%s;p_{T}^{e} [GeV];m_{T}%s [GeV]",
+                              (k % 2 == 0) ? "+" : "-", ye[b], ye[b + 1], kIsoAxT, trk ? " (charged-only MET)" : ""),
+                         kNCubeIsoEle, kCubeIsoEle, 50, kCubePt, kNCubeMt, kCubeMt);
+      (*dst[k])->Sumw2();
+    }
+  }
 
   // -------- (lepton pT, m_T) joint 2Ds for the pT x mT cut scan --------
   // Electron twins of the skim_Wmu pT x mT scan inputs (see the comment there;
@@ -1528,6 +2023,16 @@ int skim_Wel(const char *fname, SampleType sample)
       Form("e^{-}, anti-iso [%.2f,%.1f);p_{T}^{e} [GeV];m_{T} [GeV]", antiIsoLo, antiIsoHi), 100, 0, 100, 80, 0, 200);
   h_pt_mt_elePlus->Sumw2();         h_pt_mt_eleMinus->Sumw2();
   h_pt_mt_antiiso_elePlus->Sumw2(); h_pt_mt_antiiso_eleMinus->Sumw2();
+  // (pT, PF MET) of the anti-iso sideband at pT > 25 && m_T > 40 (2026-10-20):
+  // the pT-resolved C40 the fake factor reweights into the met_mt40 electron
+  // QCD template (see skim_Wmu). pT 2 GeV to 200, MET = the template's binning.
+  TH2D *h_pt_met_mt40_antiiso_elePlus  = new TH2D("h_pt_met_mt40_antiiso_elePlus",
+      Form("e^{+}, anti-iso [%.2f,%.1f), m_{T}>%.0f;p_{T}^{e} [GeV];PF MET [GeV]", antiIsoLo, antiIsoHi, mtCutForPtDisc),
+      100, 0, 200, 60, 0, 120);
+  TH2D *h_pt_met_mt40_antiiso_eleMinus = new TH2D("h_pt_met_mt40_antiiso_eleMinus",
+      Form("e^{-}, anti-iso [%.2f,%.1f), m_{T}>%.0f;p_{T}^{e} [GeV];PF MET [GeV]", antiIsoLo, antiIsoHi, mtCutForPtDisc),
+      100, 0, 200, 60, 0, 120);
+  h_pt_met_mt40_antiiso_elePlus->Sumw2(); h_pt_met_mt40_antiiso_eleMinus->Sumw2();
 
   // -------- Leading-lepton pT: per-charge, per-y (lab + FB) --------
   // Electron twins of the skim_Wmu h_leppt_* histos: pT versions of the
@@ -1579,7 +2084,60 @@ int skim_Wel(const char *fname, SampleType sample)
       s_leppt_mt40_Wp_FB[b] = bookSF(h_leppt_mt40_Wp_FB[b]);
       s_leppt_mt40_Wm_FB[b] = bookSF(h_leppt_mt40_Wm_FB[b]);
     }
+    if (hasLhe) // ... and both twin families of the no-m_T lepton-pT fit templates (2026-10-21)
+    {
+      t_leppt_Wp[b]    = pOLhe::BookTwins(h_leppt_Wp[b],    lheTwins);
+      t_leppt_Wm[b]    = pOLhe::BookTwins(h_leppt_Wm[b],    lheTwins);
+      t_leppt_Wp_FB[b] = pOLhe::BookTwins(h_leppt_Wp_FB[b], lheTwins);
+      t_leppt_Wm_FB[b] = pOLhe::BookTwins(h_leppt_Wm_FB[b], lheTwins);
+    }
+    if (applySF)
+    {
+      s_leppt_Wp[b]    = bookSF(h_leppt_Wp[b]);
+      s_leppt_Wm[b]    = bookSF(h_leppt_Wm[b]);
+      s_leppt_Wp_FB[b] = bookSF(h_leppt_Wp_FB[b]);
+      s_leppt_Wm_FB[b] = bookSF(h_leppt_Wm_FB[b]);
+    }
   }
+
+  // -------- MET-resolution twins of the fit templates (MC only; met_res.h) --------
+  if (applyMetRes)
+  {
+    const std::string mrs = metRes.name;
+    for (int b = 0; b < kNY; ++b)
+    {
+      r_met_Wp[b]         = pOMetRes::Book(h_met_Wp[b],         mrs, metResTwins);
+      r_met_Wm[b]         = pOMetRes::Book(h_met_Wm[b],         mrs, metResTwins);
+      r_met_Wp_FB[b]      = pOMetRes::Book(h_met_Wp_FB[b],      mrs, metResTwins);
+      r_met_Wm_FB[b]      = pOMetRes::Book(h_met_Wm_FB[b],      mrs, metResTwins);
+      r_met_mt40_Wp[b]    = pOMetRes::Book(h_met_mt40_Wp[b],    mrs, metResTwins);
+      r_met_mt40_Wm[b]    = pOMetRes::Book(h_met_mt40_Wm[b],    mrs, metResTwins);
+      r_met_mt40_Wp_FB[b] = pOMetRes::Book(h_met_mt40_Wp_FB[b], mrs, metResTwins);
+      r_met_mt40_Wm_FB[b] = pOMetRes::Book(h_met_mt40_Wm_FB[b], mrs, metResTwins);
+      r_leppt_mt40_Wp[b]    = pOMetRes::Book(h_leppt_mt40_Wp[b],    mrs, metResTwins);
+      r_leppt_mt40_Wm[b]    = pOMetRes::Book(h_leppt_mt40_Wm[b],    mrs, metResTwins);
+      r_leppt_mt40_Wp_FB[b] = pOMetRes::Book(h_leppt_mt40_Wp_FB[b], mrs, metResTwins);
+      r_leppt_mt40_Wm_FB[b] = pOMetRes::Book(h_leppt_mt40_Wm_FB[b], mrs, metResTwins);
+    }
+  }
+
+  // -------- The no-m_T fit templates split at m_T = kNoMtSplit (2026-10-21; see skim_Wmu) --------
+  for (int part = 0; part < 2; ++part)
+    for (int ic = 0; ic < 2; ++ic)
+      for (int bb = 0; bb < 2; ++bb)
+        for (int b = 0; b < kNY; ++b)
+        {
+          const double *ye = bb ? kYEdgesFB : kYEdges;
+          TH1D *h = new TH1D(Form("h_leppt_%s_W%s_y%d%s", part ? "mthi" : "mtlo", ic ? "m" : "p", b, bb ? "_FB" : ""),
+                             Form("W%s lepton p_{T}, m_{T}%s%.0f;p_{T}^{e} [GeV];Events (%.4f<y<%.4f)",
+                                  ic ? "-" : "+", part ? ">=" : "<", kNoMtSplit, ye[b], ye[b + 1]),
+                             50, 0, 100);
+          h->Sumw2();
+          h_leppt_split[part][ic][bb][b] = h;
+          if (hasLhe)      t_leppt_split[part][ic][bb][b] = pOLhe::BookTwins(h, lheTwins);
+          if (applySF)     s_leppt_split[part][ic][bb][b] = bookSF(h);
+          if (applyMetRes) r_leppt_split[part][ic][bb][b] = pOMetRes::Book(h, metRes.name, metResTwins);
+        }
 
   // -------- Leading-lepton kinematics (full W selection) --------
   // Electron twin of the skim_Wmu h_lep* histos (correction/dataMC_kinematics.C):
@@ -1596,6 +2154,8 @@ int skim_Wel(const char *fname, SampleType sample)
 
   // -------- Cutflow loop --------
   unsigned long long N[9] = {0};
+  ChargeCutflow byCharge; // N[5..8] split by the leading electron's charge (+ m_T / MET info lines)
+  const char   *byChargeLep = "electron";
   const Long64_t nEntries = tEle->GetEntries();
   std::cout << "Entries: " << nEntries << "\n";
 
@@ -1669,6 +2229,7 @@ int skim_Wel(const char *fname, SampleType sample)
 
     const int iLead = FindLeadingElectron_TightPF(nEle, elePt, eleEta, elePhi, &eleIDNoGap);
     if (iLead < 0) continue;
+    if (hasPF25) byCharge.Fill(0, eleCharge->at(iLead), eleEta->at(iLead));
 
     if (isMC)
     {
@@ -1689,6 +2250,7 @@ int skim_Wel(const char *fname, SampleType sample)
     if (std::abs(eleEta->at(iLead)) > eleEtaMax) continue;
     const bool passPtNominal = (elePt->at(iLead) > elePt25);
     if (passPtNominal) N[6]++;
+    if (passPtNominal) byCharge.Fill(1, eleCharge->at(iLead), eleEta->at(iLead));
 
     // (7) Leading electron isolation: eleMVAIsoWP90 && relIso < 0.3 (BuildEleIsoPass;
     // 2026-09-29, was the continuous relIso < 0.095). relIso (Delta-beta, the SAME
@@ -1699,6 +2261,7 @@ int skim_Wel(const char *fname, SampleType sample)
     const bool   isQCDSideband   = (isoBin >= 0) && !passIsoNominal; // relIso bins of iso-FAILING electrons
 
     if (passIsoNominal && passPtNominal) N[7]++;
+    if (passIsoNominal && passPtNominal) byCharge.Fill(2, eleCharge->at(iLead), eleEta->at(iLead));
 
     const bool passMatch = PassLeadingLeptonTrigMatch(
         trigMatchDR, iLead, eleEta, elePhi,
@@ -1707,6 +2270,7 @@ int skim_Wel(const char *fname, SampleType sample)
         warnedNoTrigMatchInfo, "electron");
     if (!passMatch) continue;
     if (passIsoNominal && passPtNominal) N[8]++;
+    if (passIsoNominal && passPtNominal) byCharge.Fill(3, eleCharge->at(iLead), eleEta->at(iLead));
 
     // -------- Electron efficiency SFs (MC; data: 1) --------
     // One factor per event for the leading electron: RECO x [passIso ? IDISO : 1]
@@ -1722,9 +2286,17 @@ int skim_Wel(const char *fname, SampleType sample)
     if (lheOk) pOLhe::ScaleMemberWeights(mw, esf.nom);
 
     // -------- Fill final distributions (after step 8) --------
-    TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+    TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, elePt, eleRawPt, eleEta, elePhi, egPhoEt, egPhoRawEt,
+                                        egPhoEta, egPhoPhi, &metCalibStats);
     const double met = metv.Mod();
     const double mt  = TransverseMass(elePt->at(iLead), elePhi->at(iLead), metv);
+    // m_T from the charged-only MET (the h_iso_pt_mttrk_* cubes only)
+    const double mtTrk = TransverseMass(elePt->at(iLead), elePhi->at(iLead), ComputeChargedPFMET(pfId, pfPt, pfPhi));
+    if (passIsoNominal && passPtNominal)
+    { // the per-charge cutflow's information lines (not skim cuts)
+      if (mt > 40.0)  byCharge.Fill(4, eleCharge->at(iLead), eleEta->at(iLead));
+      if (met >= 30.0) byCharge.Fill(5, eleCharge->at(iLead), eleEta->at(iLead));
+    }
 
     if (isQCDSideband && passPtNominal)
     {
@@ -1742,6 +2314,9 @@ int skim_Wel(const char *fname, SampleType sample)
     // anti-iso sideband: relIso window, iso-FAILING (an iso-passing electron
     // has relIso < 0.3 = antiIsoLo, so the window alone already excludes it)
     const bool   inAntiIso = !passIsoNominal && isoLead >= antiIsoLo && isoLead < antiIsoHi;
+    // rapidity bins of the y-binned ABCD twins (same y = -eleEta as the fit templates)
+    const int ybinAB    = FindYBin(-eleEta->at(iLead), kYEdges,   kNY);
+    const int ybinAB_FB = FindYBin(-eleEta->at(iLead), kYEdgesFB, kNY);
     if (eleCharge->at(iLead) > 0)
     {
       if (passPtNominal)
@@ -1750,6 +2325,14 @@ int skim_Wel(const char *fname, SampleType sample)
         h_iso_mt_elePlus ->Fill(isoAx, mt,  w);
         h_iso_pt_elePlus ->Fill(isoAx, elePt->at(iLead), w);
         if (passMtCut) h_iso_pt_mt40_elePlus->Fill(isoAx, elePt->at(iLead), w);
+        if (passMtCut) h_iso_met_mt40_elePlus->Fill(isoAx, met, w);
+        if (passMtCut && inAntiIso) h_pt_met_mt40_antiiso_elePlus->Fill(elePt->at(iLead), met, w);
+        if (ybinAB    >= 0) h_iso_mt_y_elePlus  [ybinAB]   ->Fill(isoAx, mt, w);
+        if (ybinAB_FB >= 0) h_iso_mt_yFB_elePlus[ybinAB_FB]->Fill(isoAx, mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mt_y_elePlus  [ybinAB]   ->Fill(isoAx, elePt->at(iLead), mt, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mt_yFB_elePlus[ybinAB_FB]->Fill(isoAx, elePt->at(iLead), mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mttrk_y_elePlus  [ybinAB]   ->Fill(isoAx, elePt->at(iLead), mtTrk, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mttrk_yFB_elePlus[ybinAB_FB]->Fill(isoAx, elePt->at(iLead), mtTrk, w);
       }
       if (inAntiIso)
         h_pt_mt_antiiso_elePlus->Fill(elePt->at(iLead), mt, w);
@@ -1762,6 +2345,14 @@ int skim_Wel(const char *fname, SampleType sample)
         h_iso_mt_eleMinus ->Fill(isoAx, mt,  w);
         h_iso_pt_eleMinus ->Fill(isoAx, elePt->at(iLead), w);
         if (passMtCut) h_iso_pt_mt40_eleMinus->Fill(isoAx, elePt->at(iLead), w);
+        if (passMtCut) h_iso_met_mt40_eleMinus->Fill(isoAx, met, w);
+        if (passMtCut && inAntiIso) h_pt_met_mt40_antiiso_eleMinus->Fill(elePt->at(iLead), met, w);
+        if (ybinAB    >= 0) h_iso_mt_y_eleMinus  [ybinAB]   ->Fill(isoAx, mt, w);
+        if (ybinAB_FB >= 0) h_iso_mt_yFB_eleMinus[ybinAB_FB]->Fill(isoAx, mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mt_y_eleMinus  [ybinAB]   ->Fill(isoAx, elePt->at(iLead), mt, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mt_yFB_eleMinus[ybinAB_FB]->Fill(isoAx, elePt->at(iLead), mt, w);
+        if (ybinAB    >= 0) h_iso_pt_mttrk_y_eleMinus  [ybinAB]   ->Fill(isoAx, elePt->at(iLead), mtTrk, w);
+        if (ybinAB_FB >= 0) h_iso_pt_mttrk_yFB_eleMinus[ybinAB_FB]->Fill(isoAx, elePt->at(iLead), mtTrk, w);
       }
       if (inAntiIso)
         h_pt_mt_antiiso_eleMinus->Fill(elePt->at(iLead), mt, w);
@@ -1806,12 +2397,16 @@ int skim_Wel(const char *fname, SampleType sample)
         h_met_Wp[ybin]->Fill(met, w); h_mt_Wp[ybin]->Fill(mt, w); h_leppt_Wp[ybin]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wp[ybin], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wp[ybin], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wp[ybin], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wp[ybin], lpt, wGen, esf);
       }
       else if (isWm)
       {
         h_met_Wm[ybin]->Fill(met, w); h_mt_Wm[ybin]->Fill(mt, w); h_leppt_Wm[ybin]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wm[ybin], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wm[ybin], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wm[ybin], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wm[ybin], lpt, wGen, esf);
       }
       if (passMtCut)
       {
@@ -1820,12 +2415,18 @@ int skim_Wel(const char *fname, SampleType sample)
           h_leppt_mt40_Wp[ybin]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp[ybin], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp[ybin], lpt, wGen, esf);
+          h_met_mt40_Wp[ybin]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wp[ybin], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wp[ybin], met, wGen, esf);
         }
         else if (isWm)
         {
           h_leppt_mt40_Wm[ybin]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm[ybin], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm[ybin], lpt, wGen, esf);
+          h_met_mt40_Wm[ybin]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wm[ybin], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wm[ybin], met, wGen, esf);
         }
       }
     }
@@ -1836,12 +2437,16 @@ int skim_Wel(const char *fname, SampleType sample)
         h_met_Wp_FB[ybin_FB]->Fill(met, w); h_mt_Wp_FB[ybin_FB]->Fill(mt, w); h_leppt_Wp_FB[ybin_FB]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wp_FB[ybin_FB], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wp_FB[ybin_FB], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wp_FB[ybin_FB], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wp_FB[ybin_FB], lpt, wGen, esf);
       }
       else if (isWm)
       {
         h_met_Wm_FB[ybin_FB]->Fill(met, w); h_mt_Wm_FB[ybin_FB]->Fill(mt, w); h_leppt_Wm_FB[ybin_FB]->Fill(lpt, w);
         if (lheOk)   pOLhe::FillTwins(t_met_Wm_FB[ybin_FB], met, mw);
         if (applySF) pOSF::FillSFTwins(s_met_Wm_FB[ybin_FB], met, wGen, esf);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_Wm_FB[ybin_FB], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_Wm_FB[ybin_FB], lpt, wGen, esf);
       }
       if (passMtCut)
       {
@@ -1850,12 +2455,65 @@ int skim_Wel(const char *fname, SampleType sample)
           h_leppt_mt40_Wp_FB[ybin_FB]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wp_FB[ybin_FB], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wp_FB[ybin_FB], lpt, wGen, esf);
+          h_met_mt40_Wp_FB[ybin_FB]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wp_FB[ybin_FB], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wp_FB[ybin_FB], met, wGen, esf);
         }
         else if (isWm)
         {
           h_leppt_mt40_Wm_FB[ybin_FB]->Fill(lpt, w);
           if (lheOk)   pOLhe::FillTwins(t_leppt_mt40_Wm_FB[ybin_FB], lpt, mw);
           if (applySF) pOSF::FillSFTwins(s_leppt_mt40_Wm_FB[ybin_FB], lpt, wGen, esf);
+          h_met_mt40_Wm_FB[ybin_FB]->Fill(met, w);
+          if (lheOk)   pOLhe::FillTwins(t_met_mt40_Wm_FB[ybin_FB], met, mw);
+          if (applySF) pOSF::FillSFTwins(s_met_mt40_Wm_FB[ybin_FB], met, wGen, esf);
+        }
+      }
+    }
+
+    // the no-m_T fit templates, split at m_T = kNoMtSplit (2026-10-21)
+    if (isWp || isWm)
+    {
+      const int part = (mt < kNoMtSplit) ? 0 : 1, ic = isWp ? 0 : 1;
+      for (int bb = 0; bb < 2; ++bb)
+      {
+        const int yb = bb ? ybin_FB : ybin;
+        if (yb < 0) continue;
+        h_leppt_split[part][ic][bb][yb]->Fill(lpt, w);
+        if (lheOk)   pOLhe::FillTwins(t_leppt_split[part][ic][bb][yb], lpt, mw);
+        if (applySF) pOSF::FillSFTwins(s_leppt_split[part][ic][bb][yb], lpt, wGen, esf);
+      }
+    }
+
+    // MET-resolution twins (see skim_Wmu): smeared MET, m_T recomputed
+    if (applyMetRes && (isWp || isWm))
+    {
+      const TVector2 metvS = metRes.Smear(metv, ie);
+      const double   metS  = metvS.Mod();
+      const double   mtS   = TransverseMass(lpt, elePhi->at(iLead), metvS);
+      const bool     pass40S = (mtS > mtCutForPtDisc);
+      metResStats.Add(w, passMtCut, pass40S, met, metS);
+      {
+        const int partS = (mtS < kNoMtSplit) ? 0 : 1, ic = isWp ? 0 : 1;
+        if (ybin >= 0)    pOMetRes::Fill(r_leppt_split[partS][ic][0][ybin],    lpt, w);
+        if (ybin_FB >= 0) pOMetRes::Fill(r_leppt_split[partS][ic][1][ybin_FB], lpt, w);
+      }
+      if (ybin >= 0)
+      {
+        pOMetRes::Fill(isWp ? r_met_Wp[ybin] : r_met_Wm[ybin], metS, w);
+        if (pass40S)
+        {
+          pOMetRes::Fill(isWp ? r_met_mt40_Wp[ybin]   : r_met_mt40_Wm[ybin],   metS, w);
+          pOMetRes::Fill(isWp ? r_leppt_mt40_Wp[ybin] : r_leppt_mt40_Wm[ybin], lpt,  w);
+        }
+      }
+      if (ybin_FB >= 0)
+      {
+        pOMetRes::Fill(isWp ? r_met_Wp_FB[ybin_FB] : r_met_Wm_FB[ybin_FB], metS, w);
+        if (pass40S)
+        {
+          pOMetRes::Fill(isWp ? r_met_mt40_Wp_FB[ybin_FB]   : r_met_mt40_Wm_FB[ybin_FB],   metS, w);
+          pOMetRes::Fill(isWp ? r_leppt_mt40_Wp_FB[ybin_FB] : r_leppt_mt40_Wm_FB[ybin_FB], lpt,  w);
         }
       }
     }
@@ -1863,7 +2521,9 @@ int skim_Wel(const char *fname, SampleType sample)
 
   // -------- Cutflow + outputs --------
   PrintCutflow(std::cout, N);
-  WriteCutflowTxt(outPrefix, isMC, N);
+  PrintChargeCutflow(std::cout, byCharge, byChargeLep);
+  WriteCutflowTxt(outPrefix, isMC, N, &byCharge, byChargeLep);
+  metCalibStats.Print(std::cout, (outPrefix + ", events after step 8").c_str()); // the MET record of this job
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size() << " ("
               << pOLhe::kNMembers[0] << "+" << pOLhe::kNMembers[1] << "+" << pOLhe::kNMembers[2]
@@ -1892,6 +2552,18 @@ int skim_Wel(const char *fname, SampleType sample)
     h_leppt_mt40_Wp_FB[i]->Write("", 2);
     h_leppt_mt40_Wm_FB[i]->Write("", 2);
   }
+  for (int i = 0; i < kNY; ++i) // the met_mt40 fit templates (2026-10-20)
+  {
+    h_met_mt40_Wp[i]->Write("", 2);
+    h_met_mt40_Wm[i]->Write("", 2);
+    h_met_mt40_Wp_FB[i]->Write("", 2);
+    h_met_mt40_Wm_FB[i]->Write("", 2);
+  }
+  // the no-m_T fit templates split at m_T = 30 (2026-10-21)
+  for (int part = 0; part < 2; ++part)
+    for (int ic = 0; ic < 2; ++ic)
+      for (int bb = 0; bb < 2; ++bb)
+        for (int i = 0; i < kNY; ++i) h_leppt_split[part][ic][bb][i]->Write("", 2);
   // LHE member twins of the fit templates (MC only; the vector is empty for data)
   for (TH2D *h : lheTwins) h->Write("", TObject::kOverwrite);
   // Electron-SF twins (MC only): the per-source <h>_eleReco/eleIDIso/eleTrigUp|Down
@@ -1899,11 +2571,20 @@ int skim_Wel(const char *fname, SampleType sample)
   if (applySF)
   {
     sfStats.Print(std::cout, "skim_Wel nominal W selection (pT>25, iso-pass, matched)",
-                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels);
+                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels,
+                  pOSF::kEleSFCombMask);
     eleSF.PrintCounters(std::cout, "skim_Wel");
     const int nSF = pOSF::FinalizeAndWriteSFTwins(sfTwinSets);
     std::cout << "[INFO] electron-SF twins written: " << nSF << " (" << sfTwinSets.size()
               << " fit templates x [3 sources + combined " << pOSF::kEleSFCombinedName << "] x Up/Down)\n";
+  }
+  // MET-resolution twins (MC only): Up = smeared, Down = the mirror
+  if (applyMetRes)
+  {
+    metResStats.Print(std::cout, "skim_Wel");
+    const int nMR = pOMetRes::FinalizeAndWrite(metResTwins, metRes.name);
+    std::cout << "[INFO] MET-resolution twins written: " << nMR << " (" << metResTwins.size()
+              << " fit templates x Up/Down, " << metRes.name << ")\n";
   }
   for (int b = 0; b < NISO; ++b)
   {
@@ -1919,6 +2600,31 @@ int skim_Wel(const char *fname, SampleType sample)
   h_iso_pt_eleMinus ->Write("", TObject::kOverwrite);
   h_iso_pt_mt40_elePlus ->Write("", TObject::kOverwrite);
   h_iso_pt_mt40_eleMinus->Write("", TObject::kOverwrite);
+  // the met_mt40 QCD template inputs (2026-10-20)
+  h_iso_met_mt40_elePlus ->Write("", TObject::kOverwrite);
+  h_iso_met_mt40_eleMinus->Write("", TObject::kOverwrite);
+  h_pt_met_mt40_antiiso_elePlus ->Write("", TObject::kOverwrite);
+  h_pt_met_mt40_antiiso_eleMinus->Write("", TObject::kOverwrite);
+  // rapidity-binned twins of the (iso axis, m_T) plane (correction/qcd_ysplit.C)
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_mt_y_elePlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_y_eleMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_yFB_elePlus [b]->Write("", TObject::kOverwrite);
+    h_iso_mt_yFB_eleMinus[b]->Write("", TObject::kOverwrite);
+  }
+  // rapidity-binned (iso axis, pT, m_T) cubes (correction/qcd_nomt_study.C, 2026-10-21)
+  for (int b = 0; b < kNY; ++b)
+  {
+    h_iso_pt_mt_y_elePlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_y_eleMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_yFB_elePlus [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mt_yFB_eleMinus[b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_y_elePlus   [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_y_eleMinus  [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_yFB_elePlus [b]->Write("", TObject::kOverwrite);
+    h_iso_pt_mttrk_yFB_eleMinus[b]->Write("", TObject::kOverwrite);
+  }
   // pT x mT scan inputs (correction/ptmt_scan.C)
   h_pt_mt_elePlus         ->Write("", TObject::kOverwrite);
   h_pt_mt_eleMinus        ->Write("", TObject::kOverwrite);
@@ -2037,6 +2743,25 @@ int skim_Zmm(const char *fname, SampleType sample)
   if (has_muIsGlobal) { tMu->SetBranchStatus("muIsGlobal", 1); tMu->SetBranchAddress("muIsGlobal", &muIsGlobal); }
   if (has_muIsPF)     { tMu->SetBranchStatus("muIsPF",     1); tMu->SetBranchAddress("muIsPF",     &muIsPF);     }
   if (has_muIDTight)  { tMu->SetBranchStatus("muIDTight",  1); tMu->SetBranchAddress("muIDTight",  &muIDTight);  }
+
+  // -------- e/gamma-calibrated PF MET for the recoil (skim_common.h ComputePFMETEGCalib, 2026-10-21) --------
+  // Bound AFTER tMu's SetBranchStatus("*", 0) above (it would switch them off again).
+  // The muon channel reads no electron otherwise, so it binds the electron kinematics too.
+  std::vector<float> *pfEta = nullptr;
+  std::vector<float> *egElePt = nullptr, *egEleRawPt = nullptr, *egEleEta = nullptr, *egElePhi = nullptr;
+  std::vector<float> *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr, *egPhoPhi = nullptr;
+  if (haveRecoil)
+  {
+    const std::string miss = BindEGammaMetBranches(tMu, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta,
+                                                   &egPhoPhi, &egElePt, &egEleEta, &egElePhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] skim_Zmm: no " << miss << " branch in " << fname << " -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
+  MetCalibStats metCalibStats;
 
   // -------- Event branches --------
   Float_t vz    = 999.f;
@@ -2357,7 +3082,8 @@ int skim_Zmm(const char *fname, SampleType sample)
             // u_par is along q_T (should peak near -q_T), u_perp is transverse.
             if (haveRecoil)
             {
-              const TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+              const TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, egElePt, egEleRawPt, egEleEta, egElePhi,
+                                                        egPhoEt, egPhoRawEt, egPhoEta, egPhoPhi, &metCalibStats);
               const double qT = ll.Pt();
               if (qT > 0.0)
               {
@@ -2390,6 +3116,7 @@ int skim_Zmm(const char *fname, SampleType sample)
 
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
+  metCalibStats.Print(std::cout, (outPrefix + ", Z-peak pairs (recoil)").c_str()); // the MET record of this job
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
               << "; events without usable ttbar_w: " << nLheSkipped
@@ -2503,6 +3230,23 @@ int skim_Zee(const char *fname, SampleType sample)
   tEle->SetBranchAddress("eleEta",    &eleEta);
   tEle->SetBranchAddress("elePhi",    &elePhi);
   tEle->SetBranchAddress("eleCharge", &eleCharge);
+
+  // -------- e/gamma-calibrated PF MET for the recoil (skim_common.h ComputePFMETEGCalib, 2026-10-21) --------
+  // Bound AFTER tEle's SetBranchStatus("*", 0) above; elePt/eleEta/elePhi are
+  // bound just above (not again here).
+  std::vector<float> *pfEta = nullptr, *eleRawPt = nullptr;
+  std::vector<float> *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr, *egPhoPhi = nullptr;
+  if (haveRecoil)
+  {
+    const std::string miss = BindEGammaMetBranches(tEle, tPF, &pfId, &pfEta, &eleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] skim_Zee: no " << miss << " branch in " << fname << " -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
+  MetCalibStats metCalibStats;
 
   // -------- ECAL-gap veto input (2026-09-14): supercluster eta, both legs --------
   std::vector<float> *eleSCEta = nullptr;
@@ -2690,7 +3434,8 @@ int skim_Zee(const char *fname, SampleType sample)
   hMass->Sumw2(); hMass_extended->Sumw2(); hMass_vipul->Sumw2();
   if (hasLhe) t_mass = pOLhe::BookTwins(hMass, lheTwins); // LHE member twins of the Z-peak template
   if (applySF) s_mass = pOSF::BookSFTwins(hMass, sfTwinSets, pOSF::kEleSFSourceNames, // electron-SF twins
-                                          pOSF::kEleSFCombinedName, pOSF::kEleSFCombinedNote);
+                                          pOSF::kEleSFCombinedName, pOSF::kEleSFCombinedNote,
+                                          pOSF::kEleSFCombMask);
 
   // -------- Kinematics of the dielectron (Z) system and its electrons --------
   // Filled for iso-selected OS pairs inside the Z peak [60,120] GeV (below).
@@ -2839,7 +3584,8 @@ int skim_Zee(const char *fname, SampleType sample)
             // u_par is along q_T (should peak near -q_T), u_perp is transverse.
             if (haveRecoil)
             {
-              const TVector2 metv = ComputePFMET(pfId, pfPt, pfPhi);
+              const TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, elePt, eleRawPt, eleEta, elePhi, egPhoEt,
+                                                        egPhoRawEt, egPhoEta, egPhoPhi, &metCalibStats);
               const double qT = ll.Pt();
               if (qT > 0.0)
               {
@@ -2872,6 +3618,7 @@ int skim_Zee(const char *fname, SampleType sample)
 
   std::cout << "Passed event preselection: " << nPassEvent << "\n";
   std::cout << "Found selected OS pair: "    << nPassPair  << "\n";
+  metCalibStats.Print(std::cout, (outPrefix + ", Z-peak pairs (recoil)").c_str()); // the MET record of this job
   if (hasLhe)
     std::cout << "[INFO] LHE member twins booked: " << lheTwins.size()
               << "; events without usable ttbar_w: " << nLheSkipped
@@ -2880,7 +3627,8 @@ int skim_Zee(const char *fname, SampleType sample)
   if (applySF) // the <SF> record of this job
   {
     sfStats.Print(std::cout, "skim_Zee selected pairs (Z peak, both legs iso-pass)",
-                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels);
+                  pOSF::kEleSFSourceNames, pOSF::kEleSFCombinedName, pOSF::kEleSFPartLabels,
+                  pOSF::kEleSFCombMask);
     eleSF.PrintCounters(std::cout, "skim_Zee");
     std::cout << "[INFO] electron-SF twin sets booked: " << sfTwinSets.size()
               << " (hMass: 3 sources + combined " << pOSF::kEleSFCombinedName << ", x Up/Down)\n";

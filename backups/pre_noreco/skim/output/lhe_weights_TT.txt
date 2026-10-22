@@ -1,0 +1,295 @@
+# hiEvtAnalyzer/HiTree::ttbar_w = the LHE reweighting block, rescaled so ttbar_w[0] == HiTree::weight
+# (HiEvtAnalyzer.cc: ttbar_w[i] = weight/originalXWGTUP * LHEEventProduct::weights()[i]).
+#
+# REFERENCE SCRIPTS -- every file:line below points into the repo copy
+#   skim/reference/genproductions_a1a26254/   (README.md there)
+# copied 2026-09-02 from the CMS genproductions archive used for this production:
+#   /Users/zhenghuang/Downloads/genproductions_scripts-a1a2625485abc436ed10809327323d5d5daefc5e.zip
+#   bin/Powheg/make_rwl.py                         writes pwg-rwl.dat = the <initrwgt> header POWHEG reads at generation -> idx 0-109
+#                                                  ("EPPS21" in Period branch, L481: scale grid L43-54 + hessian group L487-530 + replica group L532-537;
+#                                                  groups written in sorted-key order L548, one weight per member L559)
+#   bin/Powheg/runcmsgrid_powheg.sh                appends the EPPS21 nPDF weights AFTER generation -> idx 110-216 (L252-266: one pwhg_main rerun
+#                                                  with rwl_add 1 per nPDFerrSet = 1..107, weight id 9000+iset, weightgroup 'EPPS21_variation')
+#   bin/Powheg/run_pwg_condor.py                   L324-326: for an EPPS21_* ion, defaultPDF = 14600 (CT18ANLO) and period = "Run3_"+ion;
+#                                                  L648-667: the card must have lhans1 == lhans2 == 14600
+#   bin/Powheg/Templates/runGetSource_template.sh  L55 calls make_rwl.py; L110-116 apply the EPPS21 patches + fetch the EPPS21NLOR_16 R grid
+#   bin/Powheg/patches/EPPS21/*.patch, EPPS21.f    the nuclear PDF: LHAPDF proton PDF x EPPS21 R(nPDFerrSet) on the ia>=16 beam (lhapdf6if_nPDF.patch
+#                                                  L38-40, L80-95), isospin-averaged (L63-67); pdfcalls_nPDF.patch passes ia1/ia2 per beam
+#   MetaData/npdflist_O_5f_run3.dat                the Run3_O branch's LHAPDF-grid nPDF list -- NOT used by this production, kept for contrast
+# Mechanism: f_O = R_EPPS21(nPDFerrSet) x f_p^LHAPDF. `lhapdf=X` weights (idx 9-109) swap f_p on BOTH beams with R at set 1;
+# `nPDFerrSet` weights (idx 110-216) vary R with f_p fixed at CT18ANLO central. Hence idx 44 and idx 110 are both exactly the nominal.
+# Data checks of the map: exact ==nominal at 0/44/110, monotonic alpha_s scans (11-18, 23-28, 30-34, 103-106), 38==39, 107==9,
+# scale-grid algebra (idx 1,2,3,6 single-scale), nuclear/baseline character change at 158/159.
+#
+# PROVENANCE BY BLOCK  (idx range | produced by | why it is in the list)
+#   idx   0-  0  [nominal (reference)]  nominal: id 1001 muR=muF=1 (== HiTree::weight)
+#              where: bin/Powheg/make_rwl.py L43-54: the (1d0,1d0) corner of the scale loop, `lhapdf=CentralPDF` (14600)
+#              why:   the nominal configuration re-evaluated by the reweighter; the reference every other weight is compared to (== HiTree::weight up to float rounding)
+#   idx   1-  8  [QCD scale variation]  QCD scale grid ids 1002-1009, (muR,muF) in {1,2,0.5}^2 minus (1,1)
+#              where: bin/Powheg/make_rwl.py L43-54: `for m_rensc in m_factor: for m_facsc in m_factor`, m_factor = [1, 2, 0.5]
+#              why:   the QCD scale uncertainty: renormalization and factorization scales varied by 2 and 1/2; the envelope is the scale systematic (7-point convention drops the (2,1/2) and (1/2,2) corners = idx 5 and 7)
+#   idx   9- 43  [PDF-set comparison central]  35 proton-PDF centrals (NNPDF3.x/4.0 + alpha_s, CT18*, MSHT20, PDF4LHC21, HERAPDF, ABMP16)
+#              where: bin/Powheg/make_rwl.py L490-524: the 35 n=1 entries of the `PDF_variation1 , hessian` group of the `"EPPS21" in Period` branch (L481)
+#              why:   the CMS Run-3 standard list of alternative proton PDFs and alpha_s(M_Z) values, reduced to their central members: for comparing/choosing the proton PDF and quantifying the alpha_s dependence -- a comparison set, NOT an uncertainty band (mostly NNLO sets in an NLO calculation, hence the +2..5% offsets)
+#   idx  44- 44  [nominal proton PDF central]  CT18ANLO member 0 (== the nominal LHAPDF set, both beams)
+#              where: bin/Powheg/make_rwl.py L526: `[4400, 14600, 'CT18ANLO', 59]` member 0 (comment L525: "Reference proton PDF of EPPS21nlo nuclear PDF")
+#              why:   the central member of the nominal proton PDF (CT18ANLO = the baseline EPPS21 is fitted on); reproduces the nominal exactly
+#   idx  45-102  [proton-PDF uncertainty (CT18ANLO eig.)]  CT18ANLO eigenvectors 1-58 on both beams, R central (29 pairs, 90% CL)
+#              where: bin/Powheg/make_rwl.py L526: `[4400, 14600, 'CT18ANLO', 59]` members 1-58
+#              why:   the proton-PDF uncertainty: the 29 Hessian eigenvector pairs of CT18ANLO (90% CL), applied to the LHAPDF set of both beams while the nuclear R-factor stays at its central set
+#   idx 103-106  [proton alpha_s variation]  CT18ANLO alpha_s 0.116 / 0.117 / 0.119 / 0.120
+#              where: bin/Powheg/make_rwl.py L527-530: `[4500..4503, 14666/14667/14669/14670, 'CT18ANLO_as_0116..0120', 1]`
+#              why:   the alpha_s(M_Z) uncertainty of the nominal proton PDF: CT18ANLO refits at 0.116/0.117/0.119/0.120 (nominal 0.118)
+#   idx 107-109  [PDF-set comparison central (replica)]  replica-group centrals: NNPDF31 mc, NNPDF40 pdfas, NNPDF40 pch
+#              where: bin/Powheg/make_rwl.py L535-537: the 3 n=1 entries of the `PDF_variation2 , replica` group (written after the hessian group by `sorted(pdf_sets.items())`, L548)
+#              why:   the same comparison list, Monte-Carlo-replica representations of the NNPDF fits (central members only); 107 duplicates idx 9 because the replica mean equals the mc_hessian central
+#   idx 110-110  [nominal nPDF R central]  EPPS21 R-factor set 1 = central (== nominal), id 9001
+#              where: bin/Powheg/runcmsgrid_powheg.sh L254-262: `for iset in {1..107}`, `<weight id='$((9000+iset))'> nPDFerrSet=iset`, iset=1
+#              why:   the central EPPS21 nuclear modification (EPPS21.f pset 1) on the oxygen beam; reproduces the nominal exactly
+#   idx 111-158  [NUCLEAR-PDF uncertainty (EPPS21 R)]  EPPS21 R-factor sets 2-49: nuclear eigen-directions (24 pairs, 90% CL)
+#              where: bin/Powheg/runcmsgrid_powheg.sh L254-262 with iset = 2..49; R applied in patches/EPPS21/lhapdf6if_nPDF.patch L38-40 (evolvePDFhi -> EPPS21.f)
+#              why:   the nuclear-PDF uncertainty: EPPS21 error sets S-+1..S-+24 = the 24 nuclear eigen-directions, plus and minus (90% CL) -- the systematic this analysis needs
+#   idx 159-216  [R baseline dependence (not a PDF var.)]  EPPS21 R-factor sets 50-107: CT18A-baseline directions, R only (29 pairs, 90% CL)
+#              where: bin/Powheg/runcmsgrid_powheg.sh L254-262 with iset = 50..107
+#              why:   how the nuclear modification R responds to the 29 CT18A-baseline eigen-directions; ONLY R changes here, the LHAPDF baseline stays central -- the baseline PDF variation itself is idx 45-102 (combine k with 44+k as the product of the two ratios for the coherent EPPS21 baseline variation)
+#
+# Samples:
+#   TT        events 1172000  used 1172000  vector length 217  Sum(weight) 397284668.7  max|w[0]/weight-1| 5.9e-06  /Users/zhenghuang/pO_2026_Aug_20/Aug_20_MC_TT.root
+#
+# Per-index table. rel = 100*(S_i/S_0 - 1) [%] = relative change of the inclusive cross section;
+# rms = standard deviation over events of the per-event ratio ttbar_w[i]/ttbar_w[0] (ROOT's 'RMS'
+#       convention, i.e. about the mean). NB it is a plain unweighted std. dev., so it is dominated by
+#       the few events whose nominal weight is close to zero (NLO sign flips): for the region-A members
+#       the robust MAD-based spread is ~6x smaller than the std. dev. (0.025 vs 0.157 at idx 5), while
+#       for region B/C members the two agree.
+#  idx     rel_TT    rms_TT   LHE weight (set, member, id, lhapdf)                                  written by (file:line in the reference copy)                  role
+    0     +0.000    0.0000   muR=1 muF=1  (id 1001)                                                bin/Powheg/make_rwl.py:52-54 scale loop                       nominal (reference)   <-- block start: nominal: id 1001 muR=muF=1 (== HiTree::weight)
+    1     -2.504    0.1275   muR=1 muF=2  (id 1002)                                                bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation   <-- block start: QCD scale grid ids 1002-1009, (muR,muF) in {1,2,0.5}^2 minus (1,1)
+    2     +3.162    0.1480   muR=1 muF=0.5  (id 1003)                                              bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    3    -10.063    0.0925   muR=2 muF=1  (id 1004)                                                bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    4    -12.915    0.1298   muR=2 muF=2  (id 1005)                                                bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    5     -6.602    0.1531   muR=2 muF=0.5  (id 1006)                                              bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    6    +10.829    0.1609   muR=0.5 muF=1  (id 1007)                                              bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    7     +9.102    0.2272   muR=0.5 muF=2  (id 1008)                                              bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    8    +13.260    0.2619   muR=0.5 muF=0.5  (id 1009)                                            bin/Powheg/make_rwl.py:52-54 scale loop                       QCD scale variation
+    9     -1.386    0.1907   NNPDF31_nnlo_as_0118_mc_hessian_pdfas m0  (id 2000, lhapdf 325300)    bin/Powheg/make_rwl.py:490                                    PDF-set comparison central   <-- block start: 35 proton-PDF centrals (NNPDF3.x/4.0 + alpha_s, CT18*, MSHT20, PDF4LHC21, HERAPDF, ABMP16)
+   10     -1.371    0.1631   NNPDF31_nnlo_hessian_pdfas m0  (id 2200, lhapdf 306000)               bin/Powheg/make_rwl.py:491                                    PDF-set comparison central
+   11    -14.831    0.2529   NNPDF31_nnlo_as_0108 m0  (id 2201, lhapdf 322500)                     bin/Powheg/make_rwl.py:492                                    PDF-set comparison central
+   12    -12.135    0.2586   NNPDF31_nnlo_as_0110 m0  (id 2202, lhapdf 322700)                     bin/Powheg/make_rwl.py:493                                    PDF-set comparison central
+   13     -9.367    0.2161   NNPDF31_nnlo_as_0112 m0  (id 2203, lhapdf 322900)                     bin/Powheg/make_rwl.py:494                                    PDF-set comparison central
+   14     -6.935    0.1884   NNPDF31_nnlo_as_0114 m0  (id 2204, lhapdf 323100)                     bin/Powheg/make_rwl.py:495                                    PDF-set comparison central
+   15     -2.765    0.1625   NNPDF31_nnlo_as_0117 m0  (id 2205, lhapdf 323300)                     bin/Powheg/make_rwl.py:496                                    PDF-set comparison central
+   16     +0.202    0.1341   NNPDF31_nnlo_as_0119 m0  (id 2206, lhapdf 323500)                     bin/Powheg/make_rwl.py:497                                    PDF-set comparison central
+   17     +4.269    0.1289   NNPDF31_nnlo_as_0122 m0  (id 2207, lhapdf 323700)                     bin/Powheg/make_rwl.py:498                                    PDF-set comparison central
+   18     +7.297    0.1176   NNPDF31_nnlo_as_0124 m0  (id 2208, lhapdf 323900)                     bin/Powheg/make_rwl.py:499                                    PDF-set comparison central
+   19     +3.656    0.2537   NNPDF31_nlo_hessian_pdfas m0  (id 2300, lhapdf 305800)                bin/Powheg/make_rwl.py:500                                    PDF-set comparison central
+   20     +0.066    0.1738   NNPDF30_nnlo_as_0118_hessian m0  (id 2500, lhapdf 303200)             bin/Powheg/make_rwl.py:501                                    PDF-set comparison central
+   21     +5.802    0.2282   NNPDF30_nlo_nf_5_pdfas m0  (id 2501, lhapdf 292200)                   bin/Powheg/make_rwl.py:502                                    PDF-set comparison central
+   22     -3.700    0.1281   NNPDF40_nnlo_hessian_pdfas m0  (id 2600, lhapdf 331600)               bin/Powheg/make_rwl.py:503                                    PDF-set comparison central
+   23     -7.037    0.1242   NNPDF40_nnlo_as_01160 m0  (id 2700, lhapdf 332700)                    bin/Powheg/make_rwl.py:504                                    PDF-set comparison central
+   24     -5.410    0.1207   NNPDF40_nnlo_as_01170 m0  (id 2701, lhapdf 332900)                    bin/Powheg/make_rwl.py:505                                    PDF-set comparison central
+   25     -4.561    0.1234   NNPDF40_nnlo_as_01175 m0  (id 2702, lhapdf 333100)                    bin/Powheg/make_rwl.py:506                                    PDF-set comparison central
+   26     -2.932    0.1347   NNPDF40_nnlo_as_01185 m0  (id 2703, lhapdf 333300)                    bin/Powheg/make_rwl.py:507                                    PDF-set comparison central
+   27     -2.158    0.1375   NNPDF40_nnlo_as_01190 m0  (id 2704, lhapdf 333500)                    bin/Powheg/make_rwl.py:508                                    PDF-set comparison central
+   28     -0.502    0.1489   NNPDF40_nnlo_as_01200 m0  (id 2705, lhapdf 333700)                    bin/Powheg/make_rwl.py:509                                    PDF-set comparison central
+   29     -0.904    0.0687   NNPDF40_nlo_pch_as_01180 m0  (id 2800, lhapdf 332300)                 bin/Powheg/make_rwl.py:510                                    PDF-set comparison central
+   30     +0.563    0.0447   CT18NNLO m0  (id 4000, lhapdf 14000)                                  bin/Powheg/make_rwl.py:511                                    PDF-set comparison central
+   31     +0.427    0.0245   CT18NNLO_as_0116 m0  (id 4100, lhapdf 14066)                          bin/Powheg/make_rwl.py:512                                    PDF-set comparison central
+   32     +0.469    0.0318   CT18NNLO_as_0117 m0  (id 4101, lhapdf 14067)                          bin/Powheg/make_rwl.py:513                                    PDF-set comparison central
+   33     +0.688    0.0613   CT18NNLO_as_0119 m0  (id 4102, lhapdf 14069)                          bin/Powheg/make_rwl.py:514                                    PDF-set comparison central
+   34     +0.821    0.0799   CT18NNLO_as_0120 m0  (id 4103, lhapdf 14070)                          bin/Powheg/make_rwl.py:515                                    PDF-set comparison central
+   35     -2.117    0.1107   CT18ZNNLO m0  (id 4200, lhapdf 14100)                                 bin/Powheg/make_rwl.py:516                                    PDF-set comparison central
+   36     -0.599    0.0400   CT18ANNLO m0  (id 4300, lhapdf 14200)                                 bin/Powheg/make_rwl.py:517                                    PDF-set comparison central
+   37     -0.236    0.0942   CT18XNNLO m0  (id 4301, lhapdf 14300)                                 bin/Powheg/make_rwl.py:518                                    PDF-set comparison central
+   38     -0.262    0.0924   MSHT20nnlo_as118 m0  (id 5000, lhapdf 27400)                          bin/Powheg/make_rwl.py:519                                    PDF-set comparison central
+   39     -0.262    0.0924   MSHT20nnlo_as_smallrange m0  (id 5100, lhapdf 27500)                  bin/Powheg/make_rwl.py:520                                    PDF-set comparison central
+   40     -0.281    0.0878   MSHT20nnlo_as_largerange m0  (id 5101, lhapdf 27550)                  bin/Powheg/make_rwl.py:521                                    PDF-set comparison central
+   41     -0.214    0.1519   PDF4LHC21_40_pdfas m0  (id 6000, lhapdf 93300)                        bin/Powheg/make_rwl.py:522                                    PDF-set comparison central
+   42     -4.314    0.0907   HERAPDF20_NNLO_EIG m0  (id 7000, lhapdf 61200)                        bin/Powheg/make_rwl.py:523                                    PDF-set comparison central
+   43     -3.208    0.0551   ABMP16als118_5_nnlo m0  (id 8000, lhapdf 42780)                       bin/Powheg/make_rwl.py:524                                    PDF-set comparison central
+   44     +0.000    0.0000   CT18ANLO m0  (id 4400, lhapdf 14600)                                  bin/Powheg/make_rwl.py:526                                    nominal proton PDF central   <-- block start: CT18ANLO member 0 (== the nominal LHAPDF set, both beams)
+   45     -0.195    0.0042   CT18ANLO m1  (id 4401, lhapdf 14601)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)   <-- block start: CT18ANLO eigenvectors 1-58 on both beams, R central (29 pairs, 90% CL)
+   46     +0.265    0.0075   CT18ANLO m2  (id 4402, lhapdf 14602)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   47     +0.468    0.0079   CT18ANLO m3  (id 4403, lhapdf 14603)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   48     -0.903    0.0152   CT18ANLO m4  (id 4404, lhapdf 14604)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   49     -0.039    0.0077   CT18ANLO m5  (id 4405, lhapdf 14605)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   50     -0.229    0.0085   CT18ANLO m6  (id 4406, lhapdf 14606)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   51     +0.488    0.0136   CT18ANLO m7  (id 4407, lhapdf 14607)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   52     -0.281    0.0118   CT18ANLO m8  (id 4408, lhapdf 14608)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   53     -1.266    0.0271   CT18ANLO m9  (id 4409, lhapdf 14609)                                  bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   54     +0.759    0.0133   CT18ANLO m10  (id 4410, lhapdf 14610)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   55     +0.424    0.0127   CT18ANLO m11  (id 4411, lhapdf 14611)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   56     +0.125    0.0126   CT18ANLO m12  (id 4412, lhapdf 14612)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   57     +0.231    0.0114   CT18ANLO m13  (id 4413, lhapdf 14613)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   58     -0.021    0.0104   CT18ANLO m14  (id 4414, lhapdf 14614)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   59     +0.063    0.0104   CT18ANLO m15  (id 4415, lhapdf 14615)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   60     +0.198    0.0083   CT18ANLO m16  (id 4416, lhapdf 14616)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   61     +0.930    0.0156   CT18ANLO m17  (id 4417, lhapdf 14617)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   62     -0.396    0.0089   CT18ANLO m18  (id 4418, lhapdf 14618)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   63     +0.271    0.0179   CT18ANLO m19  (id 4419, lhapdf 14619)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   64     +0.054    0.0121   CT18ANLO m20  (id 4420, lhapdf 14620)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   65     +1.822    0.0313   CT18ANLO m21  (id 4421, lhapdf 14621)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   66     -1.615    0.0239   CT18ANLO m22  (id 4422, lhapdf 14622)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   67     +0.537    0.0142   CT18ANLO m23  (id 4423, lhapdf 14623)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   68     -0.264    0.0299   CT18ANLO m24  (id 4424, lhapdf 14624)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   69     +1.166    0.0150   CT18ANLO m25  (id 4425, lhapdf 14625)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   70     -1.534    0.0189   CT18ANLO m26  (id 4426, lhapdf 14626)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   71     +0.290    0.0094   CT18ANLO m27  (id 4427, lhapdf 14627)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   72     -0.177    0.0092   CT18ANLO m28  (id 4428, lhapdf 14628)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   73     +1.139    0.0132   CT18ANLO m29  (id 4429, lhapdf 14629)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   74     -1.042    0.0090   CT18ANLO m30  (id 4430, lhapdf 14630)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   75     +1.186    0.0219   CT18ANLO m31  (id 4431, lhapdf 14631)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   76     -1.013    0.0172   CT18ANLO m32  (id 4432, lhapdf 14632)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   77     -0.312    0.0245   CT18ANLO m33  (id 4433, lhapdf 14633)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   78     -0.400    0.0180   CT18ANLO m34  (id 4434, lhapdf 14634)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   79     -1.489    0.0217   CT18ANLO m35  (id 4435, lhapdf 14635)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   80     +1.314    0.0150   CT18ANLO m36  (id 4436, lhapdf 14636)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   81     +0.239    0.0211   CT18ANLO m37  (id 4437, lhapdf 14637)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   82     +0.016    0.0151   CT18ANLO m38  (id 4438, lhapdf 14638)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   83     +0.913    0.0213   CT18ANLO m39  (id 4439, lhapdf 14639)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   84     -0.371    0.0123   CT18ANLO m40  (id 4440, lhapdf 14640)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   85     -0.081    0.0144   CT18ANLO m41  (id 4441, lhapdf 14641)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   86     -0.318    0.0129   CT18ANLO m42  (id 4442, lhapdf 14642)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   87     +0.367    0.0123   CT18ANLO m43  (id 4443, lhapdf 14643)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   88     -0.730    0.0154   CT18ANLO m44  (id 4444, lhapdf 14644)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   89     -0.089    0.0090   CT18ANLO m45  (id 4445, lhapdf 14645)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   90     +0.277    0.0078   CT18ANLO m46  (id 4446, lhapdf 14646)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   91     -0.358    0.0184   CT18ANLO m47  (id 4447, lhapdf 14647)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   92     +0.347    0.0102   CT18ANLO m48  (id 4448, lhapdf 14648)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   93     +0.203    0.0105   CT18ANLO m49  (id 4449, lhapdf 14649)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   94     -0.155    0.0130   CT18ANLO m50  (id 4450, lhapdf 14650)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   95     +2.016    0.0195   CT18ANLO m51  (id 4451, lhapdf 14651)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   96     -1.005    0.0086   CT18ANLO m52  (id 4452, lhapdf 14652)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   97     +0.145    0.0157   CT18ANLO m53  (id 4453, lhapdf 14653)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   98     -0.183    0.0219   CT18ANLO m54  (id 4454, lhapdf 14654)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+   99     +0.350    0.0097   CT18ANLO m55  (id 4455, lhapdf 14655)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+  100     -0.490    0.0116   CT18ANLO m56  (id 4456, lhapdf 14656)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+  101     -0.870    0.0024   CT18ANLO m57  (id 4457, lhapdf 14657)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+  102     +0.534    0.0014   CT18ANLO m58  (id 4458, lhapdf 14658)                                 bin/Powheg/make_rwl.py:526                                    proton-PDF uncertainty (CT18ANLO eig.)
+  103     +0.219    0.0145   CT18ANLO_as_0116 m0  (id 4500, lhapdf 14666)                          bin/Powheg/make_rwl.py:527                                    proton alpha_s variation   <-- block start: CT18ANLO alpha_s 0.116 / 0.117 / 0.119 / 0.120
+  104     +0.088    0.0078   CT18ANLO_as_0117 m0  (id 4501, lhapdf 14667)                          bin/Powheg/make_rwl.py:528                                    proton alpha_s variation
+  105     -0.038    0.0091   CT18ANLO_as_0119 m0  (id 4502, lhapdf 14669)                          bin/Powheg/make_rwl.py:529                                    proton alpha_s variation
+  106     -0.035    0.0198   CT18ANLO_as_0120 m0  (id 4503, lhapdf 14670)                          bin/Powheg/make_rwl.py:530                                    proton alpha_s variation
+  107     -1.386    0.1907   NNPDF31_nnlo_as_0118_mc m0  (id 3000, lhapdf 316200)                  bin/Powheg/make_rwl.py:535                                    PDF-set comparison central (replica)   <-- block start: replica-group centrals: NNPDF31 mc, NNPDF40 pdfas, NNPDF40 pch
+  108     -3.621    0.1249   NNPDF40_nnlo_pdfas m0  (id 3200, lhapdf 331300)                       bin/Powheg/make_rwl.py:536                                    PDF-set comparison central (replica)
+  109     -3.463    0.0846   NNPDF40_nnlo_pch_as_01180 m0  (id 3400, lhapdf 332100)                bin/Powheg/make_rwl.py:537                                    PDF-set comparison central (replica)
+  110     +0.000    0.0000   EPPS21 R-factor (O16) nPDFerrSet=1  (id 9001)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       nominal nPDF R central   <-- block start: EPPS21 R-factor set 1 = central (== nominal), id 9001
+  111     +0.228    0.0054   EPPS21 R-factor (O16) nPDFerrSet=2  (id 9002)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)   <-- block start: EPPS21 R-factor sets 2-49: nuclear eigen-directions (24 pairs, 90% CL)
+  112     -0.359    0.0074   EPPS21 R-factor (O16) nPDFerrSet=3  (id 9003)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  113     -1.486    0.0103   EPPS21 R-factor (O16) nPDFerrSet=4  (id 9004)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  114     +1.079    0.0087   EPPS21 R-factor (O16) nPDFerrSet=5  (id 9005)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  115     +1.596    0.0063   EPPS21 R-factor (O16) nPDFerrSet=6  (id 9006)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  116     -1.596    0.0068   EPPS21 R-factor (O16) nPDFerrSet=7  (id 9007)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  117     -0.016    0.0094   EPPS21 R-factor (O16) nPDFerrSet=8  (id 9008)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  118     +0.096    0.0081   EPPS21 R-factor (O16) nPDFerrSet=9  (id 9009)                         bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  119     +0.209    0.0050   EPPS21 R-factor (O16) nPDFerrSet=10  (id 9010)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  120     -0.230    0.0046   EPPS21 R-factor (O16) nPDFerrSet=11  (id 9011)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  121     -0.297    0.0047   EPPS21 R-factor (O16) nPDFerrSet=12  (id 9012)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  122     +0.365    0.0052   EPPS21 R-factor (O16) nPDFerrSet=13  (id 9013)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  123     -0.278    0.0045   EPPS21 R-factor (O16) nPDFerrSet=14  (id 9014)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  124     +0.459    0.0071   EPPS21 R-factor (O16) nPDFerrSet=15  (id 9015)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  125     -0.015    0.0045   EPPS21 R-factor (O16) nPDFerrSet=16  (id 9016)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  126     +0.004    0.0041   EPPS21 R-factor (O16) nPDFerrSet=17  (id 9017)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  127     +0.628    0.0050   EPPS21 R-factor (O16) nPDFerrSet=18  (id 9018)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  128     -0.581    0.0050   EPPS21 R-factor (O16) nPDFerrSet=19  (id 9019)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  129     -0.402    0.0052   EPPS21 R-factor (O16) nPDFerrSet=20  (id 9020)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  130     +0.421    0.0050   EPPS21 R-factor (O16) nPDFerrSet=21  (id 9021)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  131     +0.252    0.0051   EPPS21 R-factor (O16) nPDFerrSet=22  (id 9022)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  132     -0.229    0.0052   EPPS21 R-factor (O16) nPDFerrSet=23  (id 9023)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  133     -0.680    0.0059   EPPS21 R-factor (O16) nPDFerrSet=24  (id 9024)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  134     +0.620    0.0053   EPPS21 R-factor (O16) nPDFerrSet=25  (id 9025)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  135     -0.417    0.0043   EPPS21 R-factor (O16) nPDFerrSet=26  (id 9026)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  136     +0.478    0.0047   EPPS21 R-factor (O16) nPDFerrSet=27  (id 9027)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  137     -0.097    0.0041   EPPS21 R-factor (O16) nPDFerrSet=28  (id 9028)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  138     +0.082    0.0045   EPPS21 R-factor (O16) nPDFerrSet=29  (id 9029)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  139     +0.490    0.0039   EPPS21 R-factor (O16) nPDFerrSet=30  (id 9030)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  140     -0.529    0.0041   EPPS21 R-factor (O16) nPDFerrSet=31  (id 9031)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  141     -0.281    0.0031   EPPS21 R-factor (O16) nPDFerrSet=32  (id 9032)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  142     +0.300    0.0029   EPPS21 R-factor (O16) nPDFerrSet=33  (id 9033)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  143     -0.327    0.0043   EPPS21 R-factor (O16) nPDFerrSet=34  (id 9034)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  144     +0.304    0.0042   EPPS21 R-factor (O16) nPDFerrSet=35  (id 9035)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  145     +1.150    0.0067   EPPS21 R-factor (O16) nPDFerrSet=36  (id 9036)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  146     -1.055    0.0052   EPPS21 R-factor (O16) nPDFerrSet=37  (id 9037)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  147     +1.209    0.0085   EPPS21 R-factor (O16) nPDFerrSet=38  (id 9038)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  148     -1.083    0.0071   EPPS21 R-factor (O16) nPDFerrSet=39  (id 9039)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  149     -0.395    0.0059   EPPS21 R-factor (O16) nPDFerrSet=40  (id 9040)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  150     +0.446    0.0064   EPPS21 R-factor (O16) nPDFerrSet=41  (id 9041)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  151     +0.519    0.0073   EPPS21 R-factor (O16) nPDFerrSet=42  (id 9042)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  152     -0.509    0.0069   EPPS21 R-factor (O16) nPDFerrSet=43  (id 9043)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  153     +1.907    0.0092   EPPS21 R-factor (O16) nPDFerrSet=44  (id 9044)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  154     -2.072    0.0108   EPPS21 R-factor (O16) nPDFerrSet=45  (id 9045)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  155     -0.944    0.0057   EPPS21 R-factor (O16) nPDFerrSet=46  (id 9046)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  156     +1.416    0.0067   EPPS21 R-factor (O16) nPDFerrSet=47  (id 9047)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  157     -0.228    0.0089   EPPS21 R-factor (O16) nPDFerrSet=48  (id 9048)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  158     +0.652    0.0060   EPPS21 R-factor (O16) nPDFerrSet=49  (id 9049)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       NUCLEAR-PDF uncertainty (EPPS21 R)
+  159     -0.023    0.0012   EPPS21 R-factor (O16) nPDFerrSet=50  (id 9050)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)   <-- block start: EPPS21 R-factor sets 50-107: CT18A-baseline directions, R only (29 pairs, 90% CL)
+  160     +0.107    0.0035   EPPS21 R-factor (O16) nPDFerrSet=51  (id 9051)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  161     -0.075    0.0023   EPPS21 R-factor (O16) nPDFerrSet=52  (id 9052)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  162     -0.042    0.0039   EPPS21 R-factor (O16) nPDFerrSet=53  (id 9053)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  163     +0.279    0.0062   EPPS21 R-factor (O16) nPDFerrSet=54  (id 9054)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  164     +0.017    0.0032   EPPS21 R-factor (O16) nPDFerrSet=55  (id 9055)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  165     +0.028    0.0039   EPPS21 R-factor (O16) nPDFerrSet=56  (id 9056)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  166     -0.347    0.0081   EPPS21 R-factor (O16) nPDFerrSet=57  (id 9057)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  167     -0.006    0.1082   EPPS21 R-factor (O16) nPDFerrSet=58  (id 9058)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  168     -0.188    0.0024   EPPS21 R-factor (O16) nPDFerrSet=59  (id 9059)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  169     -0.500    0.0073   EPPS21 R-factor (O16) nPDFerrSet=60  (id 9060)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  170     +2.495    0.0201   EPPS21 R-factor (O16) nPDFerrSet=61  (id 9061)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  171     -0.079    0.0276   EPPS21 R-factor (O16) nPDFerrSet=62  (id 9062)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  172     +0.500    0.0065   EPPS21 R-factor (O16) nPDFerrSet=63  (id 9063)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  173     -0.200    0.0054   EPPS21 R-factor (O16) nPDFerrSet=64  (id 9064)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  174     +0.254    0.0036   EPPS21 R-factor (O16) nPDFerrSet=65  (id 9065)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  175     +2.105    0.0120   EPPS21 R-factor (O16) nPDFerrSet=66  (id 9066)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  176     -0.255    0.0281   EPPS21 R-factor (O16) nPDFerrSet=67  (id 9067)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  177     -0.296    0.0172   EPPS21 R-factor (O16) nPDFerrSet=68  (id 9068)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  178     +0.294    0.0071   EPPS21 R-factor (O16) nPDFerrSet=69  (id 9069)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  179     -0.338    0.0103   EPPS21 R-factor (O16) nPDFerrSet=70  (id 9070)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  180     +0.504    0.0254   EPPS21 R-factor (O16) nPDFerrSet=71  (id 9071)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  181     -0.231    0.1036   EPPS21 R-factor (O16) nPDFerrSet=72  (id 9072)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  182     +0.765    0.0086   EPPS21 R-factor (O16) nPDFerrSet=73  (id 9073)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  183     -0.123    0.0039   EPPS21 R-factor (O16) nPDFerrSet=74  (id 9074)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  184     +0.061    0.0048   EPPS21 R-factor (O16) nPDFerrSet=75  (id 9075)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  185     -0.116    0.0152   EPPS21 R-factor (O16) nPDFerrSet=76  (id 9076)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  186     +0.074    0.0028   EPPS21 R-factor (O16) nPDFerrSet=77  (id 9077)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  187     +0.143    0.0055   EPPS21 R-factor (O16) nPDFerrSet=78  (id 9078)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  188     -0.052    0.0027   EPPS21 R-factor (O16) nPDFerrSet=79  (id 9079)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  189     +0.002    0.0027   EPPS21 R-factor (O16) nPDFerrSet=80  (id 9080)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  190     +0.020    0.0587   EPPS21 R-factor (O16) nPDFerrSet=81  (id 9081)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  191     +0.020    0.0057   EPPS21 R-factor (O16) nPDFerrSet=82  (id 9082)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  192     -0.181    0.0102   EPPS21 R-factor (O16) nPDFerrSet=83  (id 9083)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  193     +2.655    0.0310   EPPS21 R-factor (O16) nPDFerrSet=84  (id 9084)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  194     -0.376    0.0062   EPPS21 R-factor (O16) nPDFerrSet=85  (id 9085)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  195     -0.007    0.0129   EPPS21 R-factor (O16) nPDFerrSet=86  (id 9086)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  196     +0.484    0.0039   EPPS21 R-factor (O16) nPDFerrSet=87  (id 9087)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  197     -0.054    0.0097   EPPS21 R-factor (O16) nPDFerrSet=88  (id 9088)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  198     -0.003    0.0862   EPPS21 R-factor (O16) nPDFerrSet=89  (id 9089)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  199     -0.311    0.0036   EPPS21 R-factor (O16) nPDFerrSet=90  (id 9090)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  200     +0.566    0.0115   EPPS21 R-factor (O16) nPDFerrSet=91  (id 9091)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  201     +0.188    0.0136   EPPS21 R-factor (O16) nPDFerrSet=92  (id 9092)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  202     +0.071    0.6049   EPPS21 R-factor (O16) nPDFerrSet=93  (id 9093)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  203     +0.957    0.0055   EPPS21 R-factor (O16) nPDFerrSet=94  (id 9094)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  204     -0.341    0.0026   EPPS21 R-factor (O16) nPDFerrSet=95  (id 9095)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  205     +0.677    0.0276   EPPS21 R-factor (O16) nPDFerrSet=96  (id 9096)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  206     -0.089    0.0158   EPPS21 R-factor (O16) nPDFerrSet=97  (id 9097)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  207     -0.194    0.0111   EPPS21 R-factor (O16) nPDFerrSet=98  (id 9098)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  208     +0.520    0.0097   EPPS21 R-factor (O16) nPDFerrSet=99  (id 9099)                        bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  209     +0.030    0.0090   EPPS21 R-factor (O16) nPDFerrSet=100  (id 9100)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  210     +0.335    0.0071   EPPS21 R-factor (O16) nPDFerrSet=101  (id 9101)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  211     +0.241    0.0032   EPPS21 R-factor (O16) nPDFerrSet=102  (id 9102)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  212     +0.143    0.0356   EPPS21 R-factor (O16) nPDFerrSet=103  (id 9103)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  213     -0.248    0.0024   EPPS21 R-factor (O16) nPDFerrSet=104  (id 9104)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  214     +0.242    0.0127   EPPS21 R-factor (O16) nPDFerrSet=105  (id 9105)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  215     +0.490    0.0031   EPPS21 R-factor (O16) nPDFerrSet=106  (id 9106)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+  216     -0.217    0.0014   EPPS21 R-factor (O16) nPDFerrSet=107  (id 9107)                       bin/Powheg/runcmsgrid_powheg.sh:254-262 nPDFerrSet loop       R baseline dependence (not a PDF var.)
+
+# ---------------- BLOCK SUMMARY (per sample, inclusive cross section) ----------------
+  TT:  d_i = S_i/S_0 - 1
+    idx   0-  0  n=  1  nominal: id 1001 muR=muF=1 (== HiTree::weight)                  dev = +0.000 %
+    idx   1-  8  n=  8  QCD scale grid ids 1002-1009, (muR,muF) in {1,2,0.5}^2 minus (1,1)  envelope +13.26 / -12.92 %  mean +0.53 %  std 9.36 %
+    idx   9- 43  n= 35  35 proton-PDF centrals (NNPDF3.x/4.0 + alpha_s, CT18*, MSHT20, PDF4LHC21, HERAPDF, ABMP16)  envelope +7.30 / -14.83 %  mean -1.81 %  std 4.42 %
+    idx  44- 44  n=  1  CT18ANLO member 0 (== the nominal LHAPDF set, both beams)       dev = +0.000 %
+    idx  45-102  n= 58  CT18ANLO eigenvectors 1-58 on both beams, R central (29 pairs, 90% CL)  envelope +2.02 / -1.61 %  mean +0.02 %  std 0.75 %  | Hessian sym 3.93 %, asym +4.19 / -3.91 %  (68% CL: sym 2.39 %)
+    idx 103-106  n=  4  CT18ANLO alpha_s 0.116 / 0.117 / 0.119 / 0.120                  envelope +0.22 / -0.04 %  mean +0.06 %  std 0.11 %
+    idx 107-109  n=  3  replica-group centrals: NNPDF31 mc, NNPDF40 pdfas, NNPDF40 pch  envelope -1.39 / -3.62 %  mean -2.82 %  std 1.02 %
+    idx 110-110  n=  1  EPPS21 R-factor set 1 = central (== nominal), id 9001           dev = +0.000 %
+    idx 111-158  n= 48  EPPS21 R-factor sets 2-49: nuclear eigen-directions (24 pairs, 90% CL)  envelope +1.91 / -2.07 %  mean +0.02 %  std 0.79 %  | Hessian sym 3.84 %, asym +3.89 / -3.83 %  (68% CL: sym 2.34 %)
+    idx 159-216  n= 58  EPPS21 R-factor sets 50-107: CT18A-baseline directions, R only (29 pairs, 90% CL)  envelope +2.65 / -0.50 %  mean +0.18 %  std 0.61 %  | Hessian sym 2.80 %, asym +4.67 / -1.16 %  (68% CL: sym 1.70 %)

@@ -7,11 +7,12 @@
 # ID), pass = a forest electron on the probe's SC; eps_data from a pass/fail
 # mass fit, eps_MC from the DY->ee MC, SF compared with the pp EGM Reco SF.
 #
+# Outputs (since 2026-10-20) under correction/electron_sf_check/reco_sf/:
 # Usage:  ./run_reco_sf.sh [skim|fit|all]      (default: all)
-#   skim  the ntuple loops, Data and DY          -> rootfile/reco_sf_ele/skim_{Data,DY}.root
-#   fit   the pass/fail fits, SF, EGM comparison -> plots/reco_sf_ele/fit_<variant>_<bin>_{pass,fail}.{png,pdf},
+#   skim  the ntuple loops, Data and DY          -> rootfile/skim_{Data,DY}.root
+#   fit   the pass/fail fits, SF, EGM comparison -> plots/fit_<variant>_<bin>_{pass,fail}.{png,pdf},
 #                                                   reco_sf_vs_{eta,et}.{png,pdf} + reco_sf_ele.csv
-#                                                   + rootfile/reco_sf_ele/reco_sf_ele_result.root = the
+#                                                   + rootfile/reco_sf_ele_result.root = the
 #                                                   pO Reco SF, applied by the skim under
 #                                                   kEleRecoSource = kRecoTnP only (2026-09-30; since
 #                                                   2026-10-01 the pp EGM tables are applied and this is
@@ -31,13 +32,15 @@ case "$STAGE" in
   *) echo "usage: $0 [skim|fit|all]" >&2; exit 2 ;;
 esac
 
-mkdir -p logs rootfile/reco_sf_ele plots/reco_sf_ele
+OUT=electron_sf_check/reco_sf   # = reco_sf_ele.C's kOutDir / kPlotDir parent
+LOG=$OUT/logs
+mkdir -p "$LOG" "$OUT/rootfile" "$OUT/plots"
 
 # pre-build once so no two jobs race on the ACLiC artifacts
 echo "[BUILD] compiling reco_sf_ele.C ..."
-if ! root -l -b -q -e ".L reco_sf_ele.C+" > logs/reco_sf_ele_build.log 2>&1; then
-  echo "[FAIL] compilation of reco_sf_ele.C failed -- see logs/reco_sf_ele_build.log" >&2
-  tail -20 logs/reco_sf_ele_build.log >&2
+if ! root -l -b -q -e ".L reco_sf_ele.C+" > "$LOG/reco_sf_ele_build.log" 2>&1; then
+  echo "[FAIL] compilation of reco_sf_ele.C failed -- see $LOG/reco_sf_ele_build.log" >&2
+  tail -20 "$LOG/reco_sf_ele_build.log" >&2
   exit 1
 fi
 
@@ -55,7 +58,7 @@ run_root() {  # $1 = label, $2 = root command, $3 = log, $4 = headline regex
 fail=0
 if [ "$STAGE" = "skim" ] || [ "$STAGE" = "all" ]; then
   for s in Data DY; do
-    run_root "skim $s" "reco_sf_ele.C+(\"skim\",\"$s\")" "logs/reco_sf_ele_skim_${s}.log" \
+    run_root "skim $s" "reco_sf_ele.C+(\"skim\",\"$s\")" "$LOG/reco_sf_ele_skim_${s}.log" \
              '^\[INPUT\]|^\[RAW\]|^\[WARN\]|^\[FATAL\]' || fail=$((fail+1))
   done
 fi
@@ -63,14 +66,14 @@ if [ "$STAGE" = "fit" ] || [ "$STAGE" = "all" ]; then
   if [ "$fail" -gt 0 ]; then
     echo "[SKIP] fit: the skim had failures" >&2
   else
-    run_root "fit" "reco_sf_ele.C+(\"fit\")" "logs/reco_sf_ele_fit.log" \
+    run_root "fit" "reco_sf_ele.C+(\"fit\")" "$LOG/reco_sf_ele_fit.log" \
              '^\[RESULT\]|^ *\[CC\]|^ *\[WARN\]|^\[MC-TRUTH\]|^\[OUT\]|^\[FATAL\]' || fail=$((fail+1))
   fi
 fi
 
 echo "============================================================"
 if [ "$fail" -eq 0 ]; then
-  echo "[DONE] failures=0   logs in $(pwd)/logs/"
+  echo "[DONE] failures=0   logs in $(pwd)/$LOG/"
 else
   echo "[DONE] failures=${fail}  -- check the logs above" >&2
   exit 1

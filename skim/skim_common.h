@@ -17,11 +17,13 @@
 #include "TBranch.h"
 #include "TMath.h"
 #include "TObjArray.h"
+#include "TString.h"
 #include "TVector2.h"
 #include "TLorentzVector.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -42,7 +44,8 @@ enum SampleType
   kWm,
   kDYtau,
   kWptau,
-  kWmtau
+  kWmtau,
+  kTT     // inclusive ttbar background (2026-10-16); appended so the values above are unchanged
 };
 
 enum ChannelType
@@ -142,6 +145,180 @@ inline TVector2 ComputePFMET(std::vector<int> *pfId,
     sumPy += pt * std::sin(phi);
   }
   return TVector2(-sumPx, -sumPy);
+}
+
+// The CHARGED-only missing transverse momentum (2026-10-21, user question:
+// would the multijet ABCD behave better with a MET built from charged PF
+// candidates only?): minus the vector sum of the packed PF candidates of type
+// 1 (charged hadron), 2 (electron), 3 (muon) -- i.e. tracks, the lepton's own
+// candidate included; no eta cut (charged candidates end at |eta| ~ 3), no
+// vertex association (none stored; pO pileup is small). Diagnostic only: it
+// fills the h_iso_pt_mttrk_* cubes of the W skims, nothing else.
+inline TVector2 ComputeChargedPFMET(const std::vector<int> *pfId,
+                                    const std::vector<float> *pfPt,
+                                    const std::vector<float> *pfPhi)
+{
+  double sumPx = 0.0, sumPy = 0.0;
+  const int nPF = (pfPt && pfId) ? (int)std::min(pfPt->size(), pfId->size()) : 0;
+  for (int i = 0; i < nPF; ++i)
+  {
+    const int id = pfId->at(i);
+    if (id < 1 || id > 3) continue;
+    const double pt = pfPt->at(i), phi = pfPhi->at(i);
+    sumPx += pt * std::cos(phi);
+    sumPy += pt * std::sin(phi);
+  }
+  return TVector2(-sumPx, -sumPy);
+}
+
+// The e/gamma-CALIBRATED PF MET (2026-10-21, user decision) -- the MET every
+// skim channel and the MET-using correction macros fill since that date.
+// In DATA the forest corrects the electron and photon energies (elePt/eleRawPt
+// = 1.021 barrel / 1.094 endcap, phoEt/phoRawEt = 1.025 / 1.101; in MC both
+// ~1.00), but the PF candidates keep the RAW energies (the PF electron ==
+// eleRawPt, median ratio 1.000 in data and MC), so the plain PF MET of data is
+// biased along every electron and photon (for W -> e nu |MET| and m_T come out
+// low, most in the endcap). Correction: the PF candidate of type 2 (electron)
+// closest to a reco electron within DR < kMetCalibDR gets pT x elePt/eleRawPt,
+// and the type-4 (photon) candidate closest to a reco photon gets
+// pT x phoEt/phoRawEt; each candidate at most once (electrons first), ratios
+// outside [kMetCalibRatioLo, kMetCalibRatioHi] are not applied and counted.
+// Muons need nothing (the PF muon == muPt, correction/edge_study/pf_raw_check_mu).
+// NB the matched PF photon carries only 45-80% of phoRawEt (PF splits the
+// cluster), so the photon part corrects that candidate's share: the energy
+// SCALE, not the whole cluster. Applied to data AND MC. PO_MET_EGCALIB=off ->
+// the plain PF MET (regression checks; the job log says so).
+inline constexpr double kMetCalibDR       = 0.05;
+inline constexpr double kMetCalibRatioLo  = 0.5;
+inline constexpr double kMetCalibRatioHi  = 2.0;
+inline bool MetEGCalibEnabled()
+{
+  const char *e = std::getenv("PO_MET_EGCALIB");
+  return !(e && std::string(e) == "off");
+}
+
+// Counters of the correction over the events a job passes to it (printed as
+// the job's [MET-EG] block)
+struct MetCalibStats
+{
+  unsigned long long nEvt = 0, nEle = 0, nEleMatched = 0, nPho = 0, nPhoMatched = 0, nRejected = 0;
+  double sumRatioE = 0, sumRatioG = 0;  // over the applied corrections
+  double sumDMet = 0, sumDMetVec = 0;   // |MET_calib| - |MET_PF| and |MET_calib - MET_PF|
+  void Print(std::ostream &os, const char *who) const
+  {
+    os << "[MET-EG] " << who << ": e/gamma-calibrated PF MET "
+       << (MetEGCalibEnabled() ? "ON" : "OFF (PO_MET_EGCALIB=off -> plain PF MET)") << " over " << nEvt << " events\n";
+    if (!nEvt) return;
+    os << Form("[MET-EG]   electrons: %llu, with a matched PF electron (DR < %.2f) %.1f%%, <elePt/eleRawPt> %.4f\n", nEle,
+               kMetCalibDR, nEle ? 100.0 * nEleMatched / nEle : 0.0, nEleMatched ? sumRatioE / nEleMatched : 0.0);
+    os << Form("[MET-EG]   photons:   %llu, with a matched PF photon   (DR < %.2f) %.1f%%, <phoEt/phoRawEt> %.4f\n", nPho,
+               kMetCalibDR, nPho ? 100.0 * nPhoMatched / nPho : 0.0, nPhoMatched ? sumRatioG / nPhoMatched : 0.0);
+    os << Form("[MET-EG]   ratios outside [%.1f, %.1f] not applied: %llu;  <|MET_calib| - |MET_PF|> = %+.3f GeV, <|dMET vector|> = %.3f GeV\n",
+               kMetCalibRatioLo, kMetCalibRatioHi, nRejected, sumDMet / nEvt, sumDMetVec / nEvt);
+  }
+};
+
+// The vectors are the caller's own bound branches (a branch can hold ONE
+// address: never bind elePt etc. a second time for this -- see
+// BindEGammaMetBranches). The PF vectors must be entry-aligned with the
+// EventTree (same entry read).
+inline TVector2 ComputePFMETEGCalib(const std::vector<int> *pfId, const std::vector<float> *pfPt,
+                                    const std::vector<float> *pfEta, const std::vector<float> *pfPhi,
+                                    const std::vector<float> *elePt, const std::vector<float> *eleRawPt,
+                                    const std::vector<float> *eleEta, const std::vector<float> *elePhi,
+                                    const std::vector<float> *phoEt, const std::vector<float> *phoRawEt,
+                                    const std::vector<float> *phoEta, const std::vector<float> *phoPhi,
+                                    MetCalibStats *st = nullptr)
+{
+  const int nPF = (pfPt && pfPhi) ? (int)std::min(pfPt->size(), pfPhi->size()) : 0;
+  std::vector<double> scale(nPF, 1.0);
+  std::vector<char> claimed(nPF, 0);
+  const bool on = MetEGCalibEnabled() && pfId && pfEta && (int)pfId->size() >= nPF && (int)pfEta->size() >= nPF;
+  // the closest unclaimed PF candidate of type `id` within kMetCalibDR of (eta, phi), or -1
+  auto closest = [&](int id, double eta, double phi) {
+    int best = -1;
+    double bdr = kMetCalibDR;
+    for (int j = 0; j < nPF; ++j)
+    {
+      if (pfId->at(j) != id || claimed[j]) continue;
+      const double d = DeltaR(eta, phi, pfEta->at(j), pfPhi->at(j));
+      if (d < bdr) { bdr = d; best = j; }
+    }
+    return best;
+  };
+  auto correct = [&](int id, const std::vector<float> *pt, const std::vector<float> *raw, const std::vector<float> *eta,
+                     const std::vector<float> *phi, unsigned long long &nObj, unsigned long long &nMatched, double &sumRatio) {
+    if (!pt || !raw || !eta || !phi) return;
+    const size_t n = std::min(std::min(pt->size(), raw->size()), std::min(eta->size(), phi->size()));
+    for (size_t k = 0; k < n; ++k)
+    {
+      ++nObj;
+      const int j = closest(id, eta->at(k), phi->at(k));
+      if (j < 0) continue;
+      const double r = (raw->at(k) > 0) ? pt->at(k) / raw->at(k) : -1.0;
+      if (!(r >= kMetCalibRatioLo && r <= kMetCalibRatioHi)) { if (st) ++st->nRejected; continue; }
+      ++nMatched;
+      sumRatio += r;
+      scale[j] = r;
+      claimed[j] = 1;
+    }
+  };
+  MetCalibStats dummy;
+  MetCalibStats &s = st ? *st : dummy;
+  if (on)
+  {
+    correct(2, elePt, eleRawPt, eleEta, elePhi, s.nEle, s.nEleMatched, s.sumRatioE);
+    correct(4, phoEt, phoRawEt, phoEta, phoPhi, s.nPho, s.nPhoMatched, s.sumRatioG);
+  }
+  double px = 0.0, py = 0.0, px0 = 0.0, py0 = 0.0;
+  for (int i = 0; i < nPF; ++i)
+  {
+    const double c = std::cos(pfPhi->at(i)), sn = std::sin(pfPhi->at(i)), pt = pfPt->at(i);
+    px0 -= pt * c; py0 -= pt * sn;
+    px -= scale[i] * pt * c; py -= scale[i] * pt * sn;
+  }
+  ++s.nEvt;
+  s.sumDMet += std::hypot(px, py) - std::hypot(px0, py0);
+  s.sumDMetVec += std::hypot(px - px0, py - py0);
+  return TVector2(px, py);
+}
+
+// Status AND address together (the fast-skim pairing rule); false (nothing
+// bound) if the branch is absent.
+template <class T>
+inline bool BindBranch(TTree *t, const char *name, T *addr)
+{
+  if (!HasBranch(t, name)) return false;
+  t->SetBranchStatus(name, 1);
+  t->SetBranchAddress(name, addr);
+  return true;
+}
+
+// Binds what ComputePFMETEGCalib needs and the caller has not bound already:
+// pfId + pfEta on the PF tree, eleRawPt and the four photon branches on the
+// EventTree, and elePt/eleEta/elePhi ONLY when the caller passes their
+// pointers (the muon channels; the electron channels bind those themselves and
+// pass nullptr -- binding them again would steal the caller's binding).
+// Returns the name of the first missing branch ("" = all bound); the caller
+// treats a missing one as FATAL (a silent plain-MET fallback would change the
+// physics without a message).
+inline std::string BindEGammaMetBranches(TTree *tEv, TTree *tPF, std::vector<int> **pfId, std::vector<float> **pfEta,
+                                         std::vector<float> **eleRawPt, std::vector<float> **phoEt,
+                                         std::vector<float> **phoRawEt, std::vector<float> **phoEta,
+                                         std::vector<float> **phoPhi, std::vector<float> **elePt = nullptr,
+                                         std::vector<float> **eleEta = nullptr, std::vector<float> **elePhi = nullptr)
+{
+  if (!BindBranch(tPF, "pfId", pfId)) return "pfId";
+  if (!BindBranch(tPF, "pfEta", pfEta)) return "pfEta";
+  if (!BindBranch(tEv, "eleRawPt", eleRawPt)) return "eleRawPt";
+  if (!BindBranch(tEv, "phoEt", phoEt)) return "phoEt";
+  if (!BindBranch(tEv, "phoRawEt", phoRawEt)) return "phoRawEt";
+  if (!BindBranch(tEv, "phoEta", phoEta)) return "phoEta";
+  if (!BindBranch(tEv, "phoPhi", phoPhi)) return "phoPhi";
+  if (elePt && !BindBranch(tEv, "elePt", elePt)) return "elePt";
+  if (eleEta && !BindBranch(tEv, "eleEta", eleEta)) return "eleEta";
+  if (elePhi && !BindBranch(tEv, "elePhi", elePhi)) return "elePhi";
+  return "";
 }
 
 // Relative PF isolation with the Delta-beta pileup correction (MuonPOG
@@ -429,7 +606,25 @@ inline SampleFileInfo ResolveMCSample(SampleType sample, const char *flavour)
       info.fname     = inputBase + mcPrefix + "Wm_tau.root";
       info.outSuffix = "_Wmtau";
       return info;
+    case kTT:
+      // Inclusive ttbar (POWHEG + Angantyr, same Aug-20 production, added
+      // 2026-10-16): ONE file for every lepton channel, like the tau samples.
+      // Verified before wiring it in: the same 17 trees, entry-aligned
+      // (1172000), ttbar_w 217 long with element 0 == weight and the W/DY
+      // layout fingerprints exact (idx 0 == 44 == 110, 38 == 39, 9 == 107),
+      // <weight> = 338.98 = sigma(ttbar) in pb (|w| = 340.72 constant, 0.26%
+      // negative) -- see kSigma_TT in mc_norm.h.
+      info.fname     = inputBase + mcPrefix + "TT.root";
+      info.outSuffix = "_TT";
+      return info;
   }
+  // Every MC SampleType must have a case above. Falling through would return
+  // an empty fname, the caller would keep the DATA input path with an empty
+  // output suffix, and the W skims would overwrite the data skim file with
+  // data filled as MC -- so stop instead (2026-10-16, when kTT was added).
+  std::cerr << "[FATAL] ResolveMCSample: no input file for SampleType "
+            << static_cast<int>(sample) << " -- add its case in skim_common.h\n";
+  std::exit(2);
   return info;
 }
 
@@ -455,6 +650,13 @@ inline constexpr double kPtScanFloor = 20.0;
 // for both, so the fiducial volume is the gen twin of the reco cut. The `mt40`
 // in the histogram names states this value -- rename them if it changes.
 inline constexpr double kPtDiscMtCut = 40.0;
+
+// The no-m_T lepton-pT fit (2026-10-21, user decision: the nominal; scheme C of
+// correction/qcd_nomt_study.C): the signal region has NO m_T cut and is fitted
+// as two pT channels split at m_T = kNoMtSplit (h_leppt_mtlo_* = m_T < 30,
+// h_leppt_mthi_* = m_T >= 30, sharing r); the m_T < 30 channel is the ABCD
+// region B. = qcd_abcd.C yCut (30), a bin edge of every m_T axis.
+inline constexpr double kNoMtSplit = 30.0;
 
 // ============================================================
 // ECAL barrel-endcap transition ("crack") veto for electrons (2026-09-14)
@@ -646,8 +848,56 @@ inline void PrintCutflow(Stream &os, const unsigned long long N[9])
   os << "==================================================\n\n";
 }
 
-// Write the cutflow to ./output/<outPrefix>_<Data|MC>.txt (overwrite).
-inline void WriteCutflowTxt(const std::string &outPrefix, bool isMC, const unsigned long long N[9])
+// The W cutflow split by the CHARGE of the leading lepton (2026-10-20, user
+// request, while chasing the W- -> e nu deficit at the lab edges). The charge
+// exists only once the leading lepton is picked, so the split starts at step 5
+// (attributed to the leading tight lepton) and follows N[6..8] exactly; two
+// lines that are NOT skim cuts are added for information: step 8 + m_T > 40
+// (the leppt_mt40 selection) and step 8 + PF MET >= 30. Raw counts like N[],
+// for all |eta| and for the edges |eta| > 2.0 (lab bins y0 and y11).
+struct ChargeCutflow
+{
+  static const int kNStep = 6; // steps 5, 6, 7, 8, 8+m_T>40, 8+MET>=30
+  unsigned long long n[kNStep][2][2] = {}; // [step][q: 0 = -, 1 = +][region: 0 = all, 1 = |eta| > 2.0]
+  void Fill(int step, int charge, double eta)
+  {
+    const int q = (charge > 0) ? 1 : 0;
+    ++n[step][q][0];
+    if (std::fabs(eta) > 2.0) ++n[step][q][1];
+  }
+};
+
+template <typename Stream>
+inline void PrintChargeCutflow(Stream &os, const ChargeCutflow &c, const char *lep)
+{
+  const char *name[ChargeCutflow::kNStep] = {"5 tight lepton (leading)", "6 lead pT>25, |eta|<2.4", "7 + isolation",
+                                             "8 + trigger match",        "  8 + m_T > 40 [info]",   "  8 + MET >= 30 [info]"};
+  os << "========== Cutflow by the charge of the leading " << lep << " (raw counts) ==========\n";
+  os << "  step                      |          all |eta|                   |       edges |eta| > 2.0\n";
+  os << "                            |    N-      N+    N-/N+  eff-   eff+ |   N-     N+   N-/N+  eff-   eff+\n";
+  for (int s = 0; s < ChargeCutflow::kNStep; ++s)
+  {
+    os << Form("  %-25s |", name[s]);
+    for (int r = 0; r < 2; ++r)
+    {
+      const double m = (double)c.n[s][0][r], p = (double)c.n[s][1][r];
+      // step efficiency w.r.t. the previous line (the two [info] lines w.r.t. step 8)
+      const int prev = (s == 0) ? -1 : (s >= 4 ? 3 : s - 1);
+      const double em = (prev >= 0 && c.n[prev][0][r] > 0) ? m / c.n[prev][0][r] : 0.0;
+      const double ep = (prev >= 0 && c.n[prev][1][r] > 0) ? p / c.n[prev][1][r] : 0.0;
+      os << Form(r == 0 ? " %8.0f %8.0f %6.4f" : " %6.0f %6.0f %6.4f", m, p, p > 0 ? m / p : 0.0);
+      if (prev >= 0) os << Form(" %6.4f %6.4f |", em, ep);
+      else           os << "    --     -- |";
+    }
+    os << "\n";
+  }
+  os << "  (eff = this line / the line above; the [info] lines / step 8. Not skim cuts: m_T, MET.)\n\n";
+}
+
+// Write the cutflow to ./output/<outPrefix>_<Data|MC>.txt (overwrite), with the
+// per-charge table appended when given.
+inline void WriteCutflowTxt(const std::string &outPrefix, bool isMC, const unsigned long long N[9],
+                            const ChargeCutflow *byCharge = nullptr, const char *lep = "lepton")
 {
   const std::string outDir  = "./output/";
   const std::string mcTag   = isMC ? "MC" : "Data";
@@ -660,6 +910,7 @@ inline void WriteCutflowTxt(const std::string &outPrefix, bool isMC, const unsig
     return;
   }
   PrintCutflow(ftxtout, N);
+  if (byCharge) PrintChargeCutflow(ftxtout, *byCharge, lep);
   ftxtout.close();
 }
 

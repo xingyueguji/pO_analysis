@@ -24,10 +24,10 @@ mkdir -p logs
 files_for() {
   local s
   case "$1" in
-    Wmu) for s in DY Wp Wm DYtau Wptau Wmtau; do echo "rootfile/WToMuNu_pO_PFMet_${s}_hist.root";   done ;;
-    Wel) for s in DY Wp Wm DYtau Wptau Wmtau; do echo "rootfile/WToElecNu_pO_PFMet_${s}_hist.root"; done ;;
-    Zmm) for s in DY Wp Wm DYtau Wptau Wmtau; do echo "rootfile/ZToMuMu_pO2025_${s}_MC_hist.root";  done ;;
-    Zee) for s in DY Wp Wm DYtau Wptau Wmtau; do echo "rootfile/ZToEE_pO2025_${s}_MC_hist.root";    done ;;
+    Wmu) for s in DY Wp Wm DYtau Wptau Wmtau TT; do echo "rootfile/WToMuNu_pO_PFMet_${s}_hist.root";   done ;;
+    Wel) for s in DY Wp Wm DYtau Wptau Wmtau TT; do echo "rootfile/WToElecNu_pO_PFMet_${s}_hist.root"; done ;;
+    Zmm) for s in DY Wp Wm DYtau Wptau Wmtau TT; do echo "rootfile/ZToMuMu_pO2025_${s}_MC_hist.root";  done ;;
+    Zee) for s in DY Wp Wm DYtau Wptau Wmtau TT; do echo "rootfile/ZToEE_pO2025_${s}_MC_hist.root";    done ;;
     *)   return 1 ;;
   esac
 }

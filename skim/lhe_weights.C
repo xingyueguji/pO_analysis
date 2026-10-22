@@ -124,6 +124,8 @@
 //     root -l -b -q 'lhe_weights.C+'                      // Wp, Wm, DY (mu files)
 //     root -l -b -q 'lhe_weights.C+("Wp,Wm,DY", "ele")'   // electron files
 //     root -l -b -q 'lhe_weights.C+("Wp", "mu", 200000)'   // quick look
+//     root -l -b -q 'lhe_weights.C+("TT")'                // the ttbar background alone
+//                                                          // (2026-10-16) -> *_TT.txt/.png/.root
 //     root -l -b -q 'lhe_weights.C+("draw")'              // redraw the figure from
 //                                                          // rootfile/lhe_weights.root (no loop)
 // Input paths come from ResolveMCSample (skim_common.h) -- never hardcoded.
@@ -206,8 +208,9 @@ SampleType SampleFromToken(const std::string &tok)
   if (tok == "Wptau") return kWptau;
   if (tok == "Wmtau") return kWmtau;
   if (tok == "DYtau") return kDYtau;
+  if (tok == "TT")    return kTT;
   std::cerr << "[ERR] lhe_weights: unknown sample token '" << tok
-            << "' (use Wp, Wm, DY, Wptau, Wmtau, DYtau)\n";
+            << "' (use Wp, Wm, DY, Wptau, Wmtau, DYtau, TT)\n";
   return kData;
 }
 
@@ -218,7 +221,8 @@ WSample LoopOne(const std::string &tok, const char *flavour, Long64_t nmax)
   if (st == kData) return s;
   const SampleFileInfo info = ResolveMCSample(st, flavour);
   s.fname = info.fname;
-  const bool tauFile = (st == kWptau || st == kWmtau || st == kDYtau);
+  // tau and ttbar files serve every lepton channel -> no flavour in the label
+  const bool tauFile = (st == kWptau || st == kWmtau || st == kDYtau || st == kTT);
   s.label = tok + (tauFile ? "" : std::string("_") + flavour);
 
   std::cout << "[INPUT] " << s.fname << std::endl;
@@ -427,10 +431,14 @@ void WriteTable(const std::vector<WSample> &S, const std::string &outFile)
   std::cout << "[INFO] wrote " << outFile << "\n";
 }
 
-void WriteRoot(const std::vector<WSample> &S)
+// tag = the same suffix as the .txt/.png outputs ("" for the default W/DY muon
+// run). Before 2026-10-16 this name was fixed, so any non-default run (ele,
+// partial) overwrote the default rootfile that the "draw" mode reads.
+void WriteRoot(const std::vector<WSample> &S, const std::string &tag = "")
 {
   gSystem->mkdir("rootfile", kTRUE);
-  TFile *fout = new TFile("./rootfile/lhe_weights.root", "RECREATE");
+  const std::string outName = "./rootfile/lhe_weights" + tag + ".root";
+  TFile *fout = new TFile(outName.c_str(), "RECREATE");
   for (const WSample &s : S)
   {
     if (!s.ok) continue;
@@ -450,7 +458,7 @@ void WriteRoot(const std::vector<WSample> &S)
     hrel->Write(); hrms->Write(); hsumw->Write();
   }
   fout->Close(); delete fout;
-  std::cout << "[INFO] wrote rootfile/lhe_weights.root\n";
+  std::cout << "[INFO] wrote " << outName << "\n";
 }
 
 // ---- drawing -----------------------------------------------------------------
@@ -699,10 +707,13 @@ void lhe_weights(const char *samples = "Wp,Wm,DY", const char *flavour = "mu", L
   for (const WSample &s : S) any |= s.ok;
   if (!any) { std::cerr << "[ERR] lhe_weights: nothing processed\n"; return; }
 
-  const std::string tag = (S.size() == 3 && std::string(flavour) == "mu" && nmax <= 0)
+  // the ttbar background alone gets its own files (one file for all channels)
+  const std::string tag = (std::string(samples) == "TT")
+                              ? std::string("_TT") + (nmax > 0 ? "_partial" : "")
+                          : (S.size() == 3 && std::string(flavour) == "mu" && nmax <= 0)
                               ? "" : std::string("_") + flavour + (nmax > 0 ? "_partial" : "");
   WriteTable(S, "./output/lhe_weights" + tag + ".txt");
-  WriteRoot(S);
+  WriteRoot(S, tag);
   std::vector<DrawInput> D;
   for (const WSample &s : S)
     if (s.ok) D.push_back(ToDrawInput(s));

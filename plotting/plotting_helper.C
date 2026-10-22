@@ -989,7 +989,8 @@ static void SaveNicePlot1D_WithBkg(
         kMagenta - 3,
         kCyan + 1,
         kRed - 7,
-        kGray + 1}; // 6th/7th added so the 6 MC samples + ABCD QCD each get a distinct color
+        kGray + 1,  // 6th/7th added so the 6 MC samples + ABCD QCD each get a distinct color
+        kOrange + 3}; // 8th (2026-10-16): ttbar, appended LAST in the W stacks so the 7 above keep their colors
 
     for (int i = static_cast<int>(bkgs.size()) - 1; i >= 0; --i)
     {

@@ -14,8 +14,14 @@
 //
 // WHAT IS APPLIED (MC only; data is always weight 1):
 //   RECO  : the efficiency for a supercluster to be reconstructed as an
-//           electron, ID-independent. kEleRecoSource selects it; APPLIED since
-//           2026-10-01 (user decision: the EGamma official SF), as on
+//           electron, ID-independent. kEleRecoSource selects it.
+//           *** SINCE 2026-10-21 NOT APPLIED (kRecoUnit, user decision): factor
+//           1 for every electron, with a flat +-10% per electron as its OWN
+//           nuisance `eleReco` (one inclusive number, Z->ee legs coherent), so
+//           the fit measures the electron Reco efficiency -- the pO
+//           tag-and-probe gives ~1 (0.988 photon-p4 / 0.998 SC-p4 probe) where
+//           the pp tables give ~0.93. ***
+//           2026-10-01..2026-10-20 (user decision: the EGamma official SF), as on
 //           2026-09-29: the pp EGM 2025Prompt tables Reco20to75 (pT < 75) /
 //           RecoAbove75, per electron in (signed SC eta, pT) -- <RECO> = 0.929
 //           per W electron, 0.865 per Z->ee pair; the table is eta-symmetric,
@@ -27,7 +33,7 @@
 //           Z->ee tag-and-probe, correction/reco_sf_ele.C (probe = a photon
 //           supercluster with no ID, pass = any forest electron on it; nominal
 //           probe variant, inclusive fit), read from
-//           correction/rootfile/reco_sf_ele/reco_sf_ele_result.root:
+//           correction/electron_sf_check/reco_sf/rootfile/reco_sf_ele_result.root:
 //           SF = 0.9882 +0.0181 -0.0226 (stat, MINOS) +- 0.0016 (syst), data
 //           547 pass / 53 fail pairs, vs 0.929 for the pp tables on the same
 //           probes (~2.6 sigma apart); flat within its errors (barrel 0.993,
@@ -108,6 +114,10 @@
 // (asymmetric) error, coherent by definition: +1.8% / -2.3% per electron,
 // twice that per Z->ee pair -- statistics-dominated (53 failing probes).
 // Z legs move together likewise.
+// Under kRecoUnit (since 2026-10-21) the Reco source is +-10% per electron
+// (W: x1.10 / x0.90; Z->ee: x1.21 / x0.81) and is NOT added into eleSF: its
+// per-source twins <h>_eleRecoUp/Down are shipped as a SECOND nuisance,
+// `eleReco` (kEleSFSystNames), so its pull is the fitted Reco efficiency.
 //
 // Because the SF is part of the nominal weight, the LHE member weights are
 // rescaled by it (pOLhe::ScaleMemberWeights), as for the muon.
@@ -151,20 +161,30 @@ inline constexpr double kEleRecoSplitPt = 75.0; // Reco20to75 below, RecoAbove75
 //             only; the pO cross-check: 0.988 vs 0.929 for the pp tables)
 //   kRecoOff  factor 1 for every electron (the eleReco twins then equal the
 //             nominal) -- the old kApplyEleRecoSF = false
-enum EleRecoSource { kRecoOff = 0, kRecoEgm = 1, kRecoTnP = 2 };
-inline constexpr EleRecoSource kEleRecoSource = kRecoEgm;
+//   kRecoUnit factor 1 for every electron (NO Reco SF) with a flat
+//             +-kEleRecoUnitUnc per electron, shipped as its OWN nuisance
+//             `eleReco` and left out of the combined eleSF (APPLIED since
+//             2026-10-21, user decision: the pO data support a Reco SF ~ 1
+//             (tag-and-probe 0.988-0.998) vs ~0.93 for the pp tables, so the
+//             fit is to tell; one inclusive nuisance, no eta/pT dependence).
+//             Z->ee: both legs move together, +-21% per pair.
+enum EleRecoSource { kRecoOff = 0, kRecoEgm = 1, kRecoTnP = 2, kRecoUnit = 3 };
+inline constexpr EleRecoSource kEleRecoSource = kRecoUnit;
+inline constexpr double kEleRecoUnitUnc = 0.10; // kRecoUnit: +-1 sigma per electron (user: "~10%")
 // the tag-and-probe result (correction/reco_sf_ele.C "fit"; run
 // correction/run_reco_sf.sh) and which of its rows is applied: the nominal
 // probe variant (noid = any supercluster), inclusive scheme, bin 0
+// (paths since 2026-10-20: correction/electron_sf_check/<study>/rootfile/; until
+// then correction/rootfile/reco_sf_ele/ and correction/rootfile/)
 inline const char *kEleRecoTnPCandidates[] = {
-    "../correction/rootfile/reco_sf_ele/reco_sf_ele_result.root",
-    "correction/rootfile/reco_sf_ele/reco_sf_ele_result.root",
+    "../correction/electron_sf_check/reco_sf/rootfile/reco_sf_ele_result.root",
+    "correction/electron_sf_check/reco_sf/rootfile/reco_sf_ele_result.root",
     nullptr};
 inline const char *kEleRecoTnPHist = "recosf_noid_incl0";
 inline constexpr double kEleRecoTnPEtMin = 20.0; // the probes' E_T^SC threshold (legs below it are counted)
 inline const char *kEleTrigCandidates[] = {
-    "../correction/rootfile/trig_eff_mb_ele.root",
-    "correction/rootfile/trig_eff_mb_ele.root",
+    "../correction/electron_sf_check/trigger/rootfile/trig_eff_mb_ele.root",
+    "correction/electron_sf_check/trigger/rootfile/trig_eff_mb_ele.root",
     nullptr};
 inline const char *kEleTrigSel = "mt40"; // trig_eff_mb.C selection variant: nom | mt40
 
@@ -175,12 +195,19 @@ static_assert(kNSources == 3, "electron_sf.h assumes three SF sources per event"
 inline constexpr const char *kEleSFSourceNames[kNSources] = {"eleReco", "eleIDIso", "eleTrig"};
 inline constexpr const char *kEleSFPartLabels[kNSources]  = {"<RECO>", "<IDISO>", "<TRIG>"};
 inline constexpr const char *kEleSFCombinedName = "eleSF";
-inline constexpr const char *kEleSFCombinedNote = "Reco, ID+iso, trigger shifts added in quadrature per bin";
+// Under kRecoUnit the Reco source is its own nuisance and stays OUT of the
+// combined twins (muon_sf.h BookSFTwins combMask).
+inline constexpr bool kEleRecoApart = (kEleRecoSource == kRecoUnit);
+inline constexpr bool kEleSFCombMask[kNSources] = {!kEleRecoApart, true, true};
+inline constexpr const char *kEleSFCombinedNote = kEleRecoApart
+    ? "ID+iso, trigger shifts added in quadrature per bin (Reco = its own nuisance eleReco)"
+    : "Reco, ID+iso, trigger shifts added in quadrature per bin";
 // The nuisance(s) carried into the Combine inputs (plotting/mtandmet.C,
 // dileptonpeak.C: <process>_<name>Up/Down) and the fork's `shape` rows
-// (electron channels only): ONE combined electron-SF nuisance.
-inline constexpr const char *kEleSFSystNames[1] = {"eleSF"};
-inline constexpr int         kNEleSFSysts       = 1;
+// (electron channels only): the combined electron-SF nuisance, plus -- under
+// kRecoUnit -- the Reco one (= the per-source twins <h>_eleRecoUp/Down).
+inline constexpr const char *kEleSFSystNames[2] = {"eleSF", "eleReco"};
+inline constexpr int         kNEleSFSysts       = kEleRecoApart ? 2 : 1;
 
 inline bool ElectronSFEnabled()
 {
@@ -313,7 +340,7 @@ public:
     const char *tp = nullptr;
     for (int i = 0; kEleTrigCandidates[i]; ++i)
       if (!gSystem->AccessPathName(kEleTrigCandidates[i], kReadPermission)) { tp = kEleTrigCandidates[i]; break; }
-    if (!tp) { log << "[SF] ERR trig_eff_mb_ele.root not found (tried ../correction/rootfile, correction/rootfile); run correction/run_trig_eff_mb.sh ele\n"; return false; }
+    if (!tp) { log << "[SF] ERR trig_eff_mb_ele.root not found (tried ../correction/electron_sf_check/trigger/rootfile, correction/electron_sf_check/trigger/rootfile); run correction/run_trig_eff_mb.sh ele\n"; return false; }
     if (!LoadTrig(tp, log)) return false;
     // ---- the pO Reco tag-and-probe (the applied RECO factor under kRecoTnP) ----
     recoTnPLoaded = false;
@@ -322,7 +349,7 @@ public:
       const char *rp = nullptr;
       for (int i = 0; kEleRecoTnPCandidates[i]; ++i)
         if (!gSystem->AccessPathName(kEleRecoTnPCandidates[i], kReadPermission)) { rp = kEleRecoTnPCandidates[i]; break; }
-      if (!rp) { log << "[SF] ERR reco_sf_ele_result.root not found (tried ../correction/rootfile/reco_sf_ele, correction/rootfile/reco_sf_ele); run correction/run_reco_sf.sh\n"; return false; }
+      if (!rp) { log << "[SF] ERR reco_sf_ele_result.root not found (tried ../correction/electron_sf_check/reco_sf/rootfile, correction/electron_sf_check/reco_sf/rootfile); run correction/run_reco_sf.sh\n"; return false; }
       if (!LoadRecoTnP(rp, log)) return false;
     }
     loaded = true;
@@ -337,6 +364,11 @@ public:
   double Reco(double scEta, double pt, int var) const
   {
     if (kEleRecoSource == kRecoOff) return 1.0;
+    if (kEleRecoSource == kRecoUnit)
+    {
+      ++cntReco.calls;
+      return var > 0 ? 1.0 + kEleRecoUnitUnc : (var < 0 ? 1.0 - kEleRecoUnitUnc : 1.0);
+    }
     if (kEleRecoSource == kRecoEgm) return RecoEGM(scEta, pt, var);
     if (!recoTnPLoaded)
       throw std::runtime_error("pOSF::ElectronSF::Reco: kRecoTnP but the tag-and-probe result was not loaded "
@@ -414,6 +446,8 @@ public:
     if (kEleRecoSource == kRecoTnP && recoTnPLoaded)
       log << " (pO TnP, inclusive; " << cntReco.ptClamped << " below the probes' E_T^SC > " << kEleRecoTnPEtMin
           << " GeV -- extrapolated)";
+    else if (kEleRecoSource == kRecoUnit)
+      log << Form(" (no Reco SF: factor 1 +- %.0f%%, inclusive)", 100.0 * kEleRecoUnitUnc);
     else
       log << " (eta clamped " << cntReco.etaClamped << ", pt clamped " << cntReco.ptClamped
           << " -- pT < 20 legs on the 20-45 GeV Reco cell)";
@@ -535,6 +569,11 @@ private:
         << "[SF]   EGM   : " << provEgm << "\n";
     if (kEleRecoSource == kRecoOff)
       log << "[SF]   RECO  : *** NOT APPLIED (kEleRecoSource = kRecoOff): factor 1 for every electron ***\n";
+    else if (kEleRecoSource == kRecoUnit)
+      log << "[SF]   RECO  : *** NO Reco SF (kEleRecoSource = kRecoUnit): factor 1 for every electron, "
+          << Form("+-%.0f%% per electron (Z->ee: both legs coherently)", 100.0 * kEleRecoUnitUnc)
+          << " = its OWN nuisance '" << kEleSFSourceNames[kEReco] << "', NOT in the combined '"
+          << kEleSFCombinedName << "' ***\n";
     else if (kEleRecoSource == kRecoTnP && recoTnPLoaded)
       log << "[SF]   RECO  : APPLIED = the pO Z->ee TAG-AND-PROBE, ONE INCLUSIVE NUMBER for every electron (kEleRecoSource = kRecoTnP):\n"
           << "[SF]           " << recoTnPSource << "\n"
@@ -568,7 +607,13 @@ private:
     }
     log << "[SF]   per-source twins <hist>_" << kEleSFSourceNames[0] << "/" << kEleSFSourceNames[1] << "/"
         << kEleSFSourceNames[2] << "Up|Down (one source at +-1 sigma, others nominal) + the COMBINED <hist>_"
-        << kEleSFCombinedName << "Up|Down (per-bin quadrature of the three) = the one nuisance carried into the fit\n";
+        << kEleSFCombinedName << "Up|Down (per-bin quadrature of "
+        << (kEleRecoApart ? "ID+iso and trigger" : "the three") << ")";
+    if (kEleRecoApart)
+      log << "; the fit carries TWO electron nuisances: " << kEleSFCombinedName << " and "
+          << kEleSFSourceNames[kEReco] << " (= the per-source twins)\n";
+    else
+      log << " = the one nuisance carried into the fit\n";
   }
 };
 

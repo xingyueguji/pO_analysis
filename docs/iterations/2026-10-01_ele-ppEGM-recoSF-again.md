@@ -1,5 +1,10 @@
 # Iteration 2026-10-01 — electron Reco SF back to the pp EGM tables (the EGamma official SF)
 
+> **Paths (2026-10-20):** every backup below now lives in `backups/pre_<tag>/<area>/`
+> (`skim/rootfile_pre_<tag>/` → `backups/pre_<tag>/skim/rootfile/`, `<area>/pre_<tag>/` →
+> `backups/pre_<tag>/<area>/`, fork `test/pO_fit_out<sfx>_pre_<tag>/` →
+> `test/backups/pre_<tag>/pO_fit_out<sfx>/`). Full list: `backups/MOVES_2026-10-20.txt`.
+
 **Status:** inputs regenerated and validated locally on 2026-10-01; **fitted on
 lxplus on 2026-10-05** (grand + μ-only + e-only, lab + fb, Asimov, impacts; fits
 09:52–11:38, impacts 17:22–17:41), downloaded and the observables chain run the

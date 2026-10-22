@@ -20,6 +20,9 @@
 #   ./run_lhe_weights.sh ele             # the electron-channel files instead
 #   ./run_lhe_weights.sh mu 200000       # quick look on the first 200k events
 #   ./run_lhe_weights.sh draw            # redraw the figure from rootfile/lhe_weights.root (seconds)
+#   ./run_lhe_weights.sh TT              # the ttbar background (2026-10-16): one file for all
+#                                        # channels -> output/lhe_weights_TT.txt, _TT.png,
+#                                        # rootfile/lhe_weights_TT.root, logs/lhe_weights_TT.log
 #
 # Input paths come from ResolveMCSample (skim_common.h); ~5 min for the three
 # full files (the ttbar_w branch is ~0.6 GB compressed per file).
@@ -49,12 +52,16 @@ fi
 
 log="logs/lhe_weights_${flavour}.log"
 
+# The ttbar file is flavour-independent: "TT" selects it instead of the W/DY trio.
+samples="Wp,Wm,DY"; flav="$flavour"
+if [[ "$flavour" == "TT" ]]; then samples="TT"; flav="mu"; fi
+
 echo "============================================================"
-echo "Decoding HiTree::ttbar_w (LHE weights) -- flavour=${flavour} nmax=${nmax}"
+echo "Decoding HiTree::ttbar_w (LHE weights) -- samples=${samples} flavour=${flav} nmax=${nmax}"
 echo "============================================================"
 
-if root -l -q -b "lhe_weights.C+(\"Wp,Wm,DY\", \"${flavour}\", ${nmax})" >"$log" 2>&1; then
-  echo "[OK] see output/lhe_weights*.txt, output/lhe_weights_structure*.png, rootfile/lhe_weights.root   (log: $log)"
+if root -l -q -b "lhe_weights.C+(\"${samples}\", \"${flav}\", ${nmax})" >"$log" 2>&1; then
+  echo "[OK] see output/lhe_weights*.txt, output/lhe_weights_structure*.png, rootfile/lhe_weights*.root   (log: $log)"
   echo
   sed -n '/=== ttbar_w headline/,$p' "$log"
   exit 0

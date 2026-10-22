@@ -1,5 +1,11 @@
 # Iteration 2026-09-29 — electron WP90 ID+iso, pp EGM Reco SF, fake-factor electron QCD
 
+> **Paths (2026-10-20):** every backup below now lives in `backups/pre_<tag>/<area>/`
+> (`skim/rootfile_pre_<tag>/` → `backups/pre_<tag>/skim/rootfile/`, `<area>/pre_<tag>/` →
+> `backups/pre_<tag>/<area>/`, fork `test/pO_fit_out<sfx>_pre_<tag>/` →
+> `test/backups/pre_<tag>/pO_fit_out<sfx>/`); the SF-study outputs moved to
+> `correction/electron_sf_check/`. Full list: `backups/MOVES_2026-10-20.txt`.
+
 **Status:** fitted on lxplus on 2026-09-29 (grand + μ-only + e-only fits, lab + fb,
 Asimov closure, impacts). **Superseded on 2026-09-30** by the iteration that
 replaces the pp EGM electron Reco SF with our pO tag-and-probe value

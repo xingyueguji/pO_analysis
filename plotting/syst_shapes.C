@@ -69,6 +69,7 @@
 #include "../skim/lhe_index.h" // pOLhe::kLheSystNames, kNMembers, Block, Hessian()
 #include "../skim/muon_sf.h"   // pOSF::kMuonSFSystNames (muon channel only)
 #include "../skim/electron_sf.h" // pOSF::kEleSFSystNames (electron channel only, 2026-09-29)
+#include "../skim/met_res.h"     // pOMetRes::SystName (the met_mt40 input only, 2026-10-20)
 #include "../skim/mc_norm.h"   // pONorm::MCScale -> k_s per sample
 
 #include "TBox.h"
@@ -707,10 +708,11 @@ void syst_shapes(const char *disc = "leppt_mt40")
     gStyle->SetOptStat(0);
     TString dsuf, discLabel;
     if (!pODisc::Spec(disc, dsuf, discLabel)) return;
-    const bool isMET = (TString(disc) == "met");
+    const bool isMET = pODisc::IsMetDisc(disc);          // met, met_mt40 (2026-10-20)
+    const bool isMetMt40 = (pODisc::Base(disc) == "met_mt40");
     const char *xTitleW = isMET ? "PF MET (GeV)" : "Lepton p_{T} (GeV)";
     const double xlo = isMET ? 0.0 : 24.0, xhi = isMET ? -1.0 : 100.0; // pT floor convention
-    const char *stem = isMET ? "h_met" : "h_leppt_mt40";               // skim twin stems
+    const char *stem = isMetMt40 ? "h_met_mt40" : isMET ? "h_met" : "h_leppt_mt40"; // skim twin stems
 
     // all-events reference (mu-flavour files; the only rows lhe_weights.txt has)
     std::vector<double> refWp, refWm, refDY;
@@ -729,6 +731,7 @@ void syst_shapes(const char *disc = "leppt_mt40")
             gSystNames.insert(gSystNames.end(), pOSF::kMuonSFSystNames, pOSF::kMuonSFSystNames + pOSF::kNMuonSFSysts);
         else
             gSystNames.insert(gSystNames.end(), pOSF::kEleSFSystNames, pOSF::kEleSFSystNames + pOSF::kNEleSFSysts);
+        if (isMetMt40) gSystNames.push_back(pOMetRes::SystName(isElec)); // met_mt40 input only (mtandmet.C)
         const int nSyst = (int)gSystNames.size();
         const std::string plotsBase = isElec ? "./plots/Elec" : "./plots";
         const std::string outDir = plotsBase + "/syst_shapes/" + disc;
@@ -895,12 +898,13 @@ void syst_shapes(const char *disc = "leppt_mt40")
         // ---- (3)(a) member-level inclusive from the skim twins ------------------
         // per sample: sum the 24 lab templates' twins; per process: k_s-weighted
         struct Samp { const char *tok; const char *label; const char *proc; };
-        const Samp samps[6] = {{"Wp", isElec ? "Wp_ele" : "Wp_mu", "signal"},
+        const Samp samps[7] = {{"Wp", isElec ? "Wp_ele" : "Wp_mu", "signal"},
                                {"Wm", isElec ? "Wm_ele" : "Wm_mu", "signal"},
                                {"DY", isElec ? "DYee" : "DYmu", "z"},
                                {"DYtau", "DYtau", "ztau"},
                                {"Wptau", "Wp_tau", "wtau"},
-                               {"Wmtau", "Wm_tau", "wtau"}};
+                               {"Wmtau", "Wm_tau", "wtau"},
+                               {"TT", "TT", "ttbar"}}; // ttbar (2026-10-16)
         std::map<std::string, std::vector<double>> procE, procS, procA; // k_s-weighted, per process
         std::cout << "\n[INCL] " << flav << " " << disc << ": inclusive (24 lab templates) -- (a) member-level"
                   << " combination of the skim twins vs (c) the all-events reference of lhe_weights.txt (mu rows)\n";
@@ -923,12 +927,19 @@ void syst_shapes(const char *disc = "leppt_mt40")
                 }
             if (nfound != 24) std::cerr << "[WARN] " << fn << ": only " << nfound << "/24 twins found\n";
             const Incl a = Combine(E, S, A);
+            // lhe_weights.txt holds W+/W-/DY rows only: ttbar has no (c) reference
+            // there (its all-events table is output/lhe_weights_TT.txt)
+            const bool isTT = (std::string(sp.tok) == "TT");
             const std::vector<double> *ref = (TString(sp.tok).BeginsWith("Wp")) ? &refWp
                                              : (TString(sp.tok).BeginsWith("Wm")) ? &refWm : &refDY;
-            const Incl c = haveRef ? ReferenceIncl(*ref) : Incl();
+            const Incl c = (haveRef && !isTT) ? ReferenceIncl(*ref) : Incl();
             std::cout << "[INCL]   sample " << Form("%-6s", sp.tok) << " (a) selected " << Fmt(a) << "\n";
-            std::cout << "[INCL]   " << "       " << " (c) all-evts " << Fmt(c) << "   [ref row: "
-                      << (ref == &refWp ? "Wp_mu" : ref == &refWm ? "Wm_mu" : "DY_mu") << "; no baseline products in the txt]\n";
+            if (isTT)
+                std::cout << "[INCL]   " << "       " << " (c) all-evts: not in lhe_weights.txt -- see"
+                          << " skim/output/lhe_weights_TT.txt\n";
+            else
+                std::cout << "[INCL]   " << "       " << " (c) all-evts " << Fmt(c) << "   [ref row: "
+                          << (ref == &refWp ? "Wp_mu" : ref == &refWm ? "Wm_mu" : "DY_mu") << "; no baseline products in the txt]\n";
             // per process, k_s-weighted
             const double ks = pONorm::MCScale(sp.label);
             std::vector<double> &pe = procE[sp.proc], &ps = procS[sp.proc], &pa = procA[sp.proc];
@@ -957,7 +968,7 @@ void syst_shapes(const char *disc = "leppt_mt40")
             std::cout << "[INCL]   NB the stored Up/Down are AREA-NORMALIZED per region since 2026-09-14 (lhe_updown.py"
                       << " --norm reco): (b) is the shape-only residual that reaches the fit, (a) the inclusive theory"
                       << " normalization that was divided out -- (b)/(a) is NOT an inflation factor here\n";
-        for (const char *p : {"signal", "z", "ztau", "wtau"})
+        for (const char *p : {"signal", "z", "ztau", "wtau", "ttbar"})
         {
             if (!procE.count(p) || !sumNom.count(p) || sumNom[p] <= 0) continue;
             const Incl a = Combine(procE[p], procS[p], procA[p]);
@@ -970,10 +981,12 @@ void syst_shapes(const char *disc = "leppt_mt40")
                               100 * (sumUp[2][p] / n0 - 1), 100 * (sumDn[2][p] / n0 - 1)) << "\n";
             // lepton-SF families (muSF / eleSF): (b) IS their inclusive shift -- one
             // coherent variation of a normalization factor, nothing divided out
+            // (and, met_mt40, the MET resolution: also not area-normalized)
             for (int is = 3; is < nSyst; ++is)
                 std::cout << "[INCL]   " << "        (b) "
-                          << Form("%-8s %+.2f/%+.2f%%  (lepton SF, coherent +-1 sigma over the 24 lab templates)",
-                                  gSystNames[is].c_str(), 100 * (sumUp[is][p] / n0 - 1), 100 * (sumDn[is][p] / n0 - 1)) << "\n";
+                          << Form("%-8s %+.2f/%+.2f%%  (%s, coherent +-1 sigma over the 24 lab templates)",
+                                  gSystNames[is].c_str(), 100 * (sumUp[is][p] / n0 - 1), 100 * (sumDn[is][p] / n0 - 1),
+                                  gSystNames[is].compare(0, 6, "metRes") == 0 ? "MET resolution" : "lepton SF") << "\n";
             if (a.ok && a.tot_up > 0 && a.tot_dn > 0)
                 std::cout << "[INCL]   " << "        (b)/(a): nPDF up " << Form("%.2f", (sumUp[0][p] / n0 - 1) / a.tot_up)
                           << ", down " << Form("%.2f", (1 - sumDn[0][p] / n0) / a.tot_dn)

@@ -294,13 +294,15 @@ void WriteRoot(const std::vector<NgenResult> &res)
 
 int count_ngen()
 {
-  // The 9 distinct physical MC files, enumerated through the single source of
-  // truth (ResolveMCSample in skim_common.h). flavour only splits DY/W; tau is
-  // flavour-independent. Dedupe by resolved filename so nothing is counted twice.
+  // The 10 distinct physical MC files, enumerated through the single source of
+  // truth (ResolveMCSample in skim_common.h). flavour only splits DY/W; tau and
+  // ttbar are flavour-independent. Dedupe by resolved filename so nothing is
+  // counted twice.
   const std::vector<McJob> jobs = {
       {kDY,    "mu"},  {kWp,    "mu"},  {kWm,    "mu"},   // muon-channel MC
       {kDY,    "ele"}, {kWp,    "ele"}, {kWm,    "ele"},  // electron-channel MC
       {kDYtau, "mu"},  {kWptau, "mu"},  {kWmtau, "mu"},   // tau backgrounds (shared)
+      {kTT,    "mu"},                                     // ttbar background (shared, 2026-10-16) -> label "TT"
   };
 
   std::cout << "============================================================\n";

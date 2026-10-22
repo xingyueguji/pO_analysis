@@ -4,7 +4,7 @@
 //
 //   r_pre = (data - DY - QCD) / W     per region of the lepton-pT Combine inputs
 //     W   = signal + wtau              (what the fit's r scales)
-//     DY  = z + ztau
+//     DY  = z + ztau + ttbar           (every non-W MC; ttbar since 2026-10-16)
 //     QCD = the DISPLAY template `qcd` that the leppt_mt40 stacks draw, so every
 //           number here equals the r_pre line of that stack's info box
 //           (mtandmet.C::prefitLines). The in-fit-ABCD prefit `qcd_abcd` (what
@@ -87,7 +87,8 @@ bool ReadRegion(TFile *f, const std::string &dir, Counts &c)
     bool ok = true, okQA = true;
     c.D = integ("data_obs", true, ok);
     c.W = integ("signal", true, ok) + integ("wtau", true, ok);
-    c.Y = integ("z", true, ok) + integ("ztau", true, ok);
+    // every non-W MC process (ttbar since 2026-10-16) -- what r leaves alone
+    c.Y = integ("z", true, ok) + integ("ztau", true, ok) + integ("ttbar", true, ok);
     c.Q = integ("qcd", true, ok);
     c.QA = integ("qcd_abcd", false, okQA);
     c.haveQA = (f->Get((dir + "/qcd_abcd").c_str()) != nullptr);
@@ -97,12 +98,14 @@ bool ReadRegion(TFile *f, const std::string &dir, Counts &c)
 
 void prefit_r(const char *disc = "leppt_mt40")
 {
-    // Only the lepton-pT inputs carry the stacks these numbers annotate. (A MET
-    // version would need a decision: the per-y MET QCD is anchored at MET < 30
-    // with r = 1, so r_pre over the full MET range is pulled to 1 by design.)
-    if (TString(disc) != "leppt_mt40")
+    // Only the m_T > 40 inputs: the lepton-pT one and (2026-10-20) its PF-MET
+    // counterpart met_mt40 -- the same events, the same QCD totals, so its r_pre
+    // differs only through the template ranges. (The no-m_T-cut met input would
+    // need a decision: its per-y MET QCD is anchored at MET < 30 with r = 1, so
+    // r_pre over the full MET range is pulled to 1 by design.)
+    if (TString(disc) != "leppt_mt40" && TString(disc) != "met_mt40")
     {
-        std::cerr << "[ERROR] prefit_r: only disc 'leppt_mt40' is supported (got '" << disc << "')\n";
+        std::cerr << "[ERROR] prefit_r: only disc 'leppt_mt40' or 'met_mt40' is supported (got '" << disc << "')\n";
         return;
     }
     const int NY = pOSkim::kNY;

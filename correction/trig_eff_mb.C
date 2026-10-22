@@ -49,7 +49,9 @@
 //            is QCD-dominated: ~19% mu / ~50% e of the pT > 25 sample, more
 //            below -- so the data turn-on is that of the MIXTURE)
 //   mt40  -- + m_T > 40 GeV (PF MET from particleFlowAnalyser/pftree, read
-//            only for selected events) = the leppt_mt40 discriminant selection,
+//            only for selected events; since 2026-10-21 the e/gamma-calibrated
+//            PF MET of the skim, skim_common.h ComputePFMETEGCalib)
+//            = the leppt_mt40 discriminant selection,
 //            QCD ~5% mu / ~28% e -> the cleaner data/MC comparison.
 //
 // What this is NOT: a tag-and-probe measurement. T&P (Z->ll) measures the
@@ -59,10 +61,12 @@
 // data), with no tag bias, at the cost of the MB prescale and the data
 // background composition. See the discussion in the README / AN.
 //
-// Outputs (run from correction/):
-//   rootfile/trig_eff_mb_<mu|ele>.root  raw count histos per sample (+ MC
+// Outputs (run from correction/), per flavour under <base> = muon_sf_check/trigger
+// or electron_sf_check/trigger (since 2026-10-20; until then rootfile/,
+// plots/trig_eff_mb_<mu|ele>/ and logs/ directly -- TrigOutBase below):
+//   <base>/rootfile/trig_eff_mb_<mu|ele>.root  raw count histos per sample (+ MC
 //                                       combined), TEfficiency objects, SF graphs
-//   plots/trig_eff_mb_<mu|ele>/         turnon_pt_<sel>[_zoom25], eff_y_<sel>,
+//   <base>/plots/                       turnon_pt_<sel>[_zoom25], eff_y_<sel>,
 //                                       eff_y_<sel>_charge, eff_pt_<sel>_charge,
 //                                       eff_absy_<sel>[_charge], mbfrac_pt_<sel>,
 //                                       bit_vs_match_pt_<sel>,
@@ -72,7 +76,8 @@
 // eleMVAIdWP90 (kEleIDBranch), iso eleMVAIsoWP90 && relIso < 0.3 (was
 // eleMVAIdWP95 + relIso < 0.095), for the leading electron AND the DY-veto
 // legs. skim/electron_sf.h applies the inclusive mt40 electron SF from
-// rootfile/trig_eff_mb_ele.root (user: "a uniform electron trigger SF"), so
+// electron_sf_check/trigger/rootfile/trig_eff_mb_ele.root (user: "a uniform
+// electron trigger SF"), so
 // run ./run_trig_eff_mb.sh ele BEFORE the electron MC skim.
 //
 // WHAT IS APPLIED (2026-09-21, user decision): ONE INCLUSIVE SF -- skim/muon_sf.h
@@ -663,6 +668,25 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
   }
   tPF->SetBranchStatus("pfPt", 1);  tPF->SetBranchAddress("pfPt",  &pfPt);
   tPF->SetBranchStatus("pfPhi", 1); tPF->SetBranchAddress("pfPhi", &pfPhi);
+  // the skim's MET since 2026-10-21: the e/gamma-calibrated PF MET (skim_common.h
+  // ComputePFMETEGCalib). For electrons the lepton branches above ARE
+  // elePt/eleEta/elePhi (passed, not bound again); for muons they are bound here.
+  std::vector<int>   *pfId = nullptr;
+  std::vector<float> *pfEta = nullptr, *egEleRawPt = nullptr, *egPhoEt = nullptr, *egPhoRawEt = nullptr, *egPhoEta = nullptr,
+                     *egPhoPhi = nullptr, *egElePt = nullptr, *egEleEta = nullptr, *egElePhi = nullptr;
+  {
+    const std::string miss =
+        isMu ? BindEGammaMetBranches(tLep, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi, &egElePt,
+                                     &egEleEta, &egElePhi)
+             : BindEGammaMetBranches(tLep, tPF, &pfId, &pfEta, &egEleRawPt, &egPhoEt, &egPhoRawEt, &egPhoEta, &egPhoPhi);
+    if (!miss.empty())
+    {
+      std::cerr << "[FATAL] RunTrig: no " << miss << " branch -- the e/gamma-calibrated MET cannot be built\n";
+      f->Close();
+      return 2;
+    }
+  }
+  MetCalibStats metCalibStats;
 
   // -------- event loop --------
   const Long64_t nEntries = tLep->GetEntries();
@@ -782,7 +806,9 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
 
     // mt40 twin: PF MET only now (selected events are a tiny fraction)
     tPF->GetEntry(ie);
-    const TVector2 metv = ComputePFMET(nullptr, pfPt, pfPhi);
+    const TVector2 metv = ComputePFMETEGCalib(pfId, pfPt, pfEta, pfPhi, isMu ? egElePt : lepPt, egEleRawPt,
+                                              isMu ? egEleEta : lepEta, isMu ? egElePhi : lepPhi, egPhoEt, egPhoRawEt,
+                                              egPhoEta, egPhoPhi, &metCalibStats);
     const double   mt   = TransverseMass(pt, lepPhi->at(iLead), metv);
     if (mt > kMtCut) out.Fill(1, pt, y, q, mb, bit, match, w);
 
@@ -799,6 +825,7 @@ int RunTrig(bool isMu, SampleType sample, TrigOut &out)
 
   f->Close();
   delete f;
+  metCalibStats.Print(std::cout, out.tag.c_str());
   std::cout << Form("[INFO] %s: %lld events pass the trigger-free W selection (pT > %.0f); pT > %.0f: sel %.0f, MB %.0f, num %.0f  |  mt40: sel %.0f, MB %.0f, num %.0f\n",
                     out.tag.c_str(), nPass, kPtFloor, kPtNominal,
                     out.nSel[0], out.nMB[0], out.nNum[0], out.nSel[1], out.nMB[1], out.nNum[1]);
@@ -1033,6 +1060,10 @@ Incl InclusiveAbove(TH1 *num, TH1 *den, double ptMin)
   return r;
 }
 
+// the per-flavour output base (relative to correction/); skim/muon_sf.h and
+// skim/electron_sf.h read <base>/rootfile/trig_eff_mb_<mu|ele>.root
+inline std::string TrigOutBase(bool isMu) { return isMu ? "muon_sf_check/trigger" : "electron_sf_check/trigger"; }
+
 // ============================================================
 // Report: tables, TEfficiency objects, SF graphs, plots
 // ============================================================
@@ -1042,7 +1073,7 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
   const std::string lepSym  = isMu ? "#mu" : "e";
   const std::string procLbl = isMu ? "W #rightarrow #mu#nu" : "W #rightarrow e#nu";
   const std::string pathLbl = isMu ? "HLT_OxyL1SingleMuOpen" : "HLT_OxyL1SingleEG10";
-  const std::string outDir  = "plots/trig_eff_mb_" + ch;
+  const std::string outDir  = TrigOutBase(isMu) + "/plots";
   gSystem->mkdir(outDir.c_str(), kTRUE);
 
   const std::vector<const TrigOut *> mcs = {&oWp, &oWm};
@@ -1392,9 +1423,8 @@ void Report(bool isMu, const TrigOut &oData, const TrigOut &oWp, const TrigOut &
 // ============================================================
 void trig_eff_mb(const char *channel = "both", bool plotsOnly = false)
 {
-  gSystem->mkdir("rootfile", kTRUE);
-  gSystem->mkdir("plots", kTRUE);
-  gSystem->mkdir("logs", kTRUE);
+  for (bool mu : {true, false})
+    for (const char *sub : {"/rootfile", "/plots", "/logs"}) gSystem->mkdir((TrigOutBase(mu) + sub).c_str(), kTRUE);
 
   const std::string chArg = channel;
   std::vector<bool> flavours;
@@ -1406,7 +1436,8 @@ void trig_eff_mb(const char *channel = "both", bool plotsOnly = false)
   for (bool isMu : flavours)
   {
     const std::string ch = isMu ? "mu" : "ele";
-    const std::string rootName = "rootfile/trig_eff_mb_" + ch + ".root";
+    const std::string rootName = TrigOutBase(isMu) + "/rootfile/trig_eff_mb_" + ch + ".root";
+    gSystem->mkdir((TrigOutBase(isMu) + "/rootfile").c_str(), kTRUE);
 
     TrigOut oData, oWp, oWm;
     oData.Book("data_" + ch);
