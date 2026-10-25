@@ -1,0 +1,10 @@
+fit,charge,window,r_eff,err_stat,err_total
+simfit_ele,Wp,lab_all,1.27801,0.03784,0.05727
+simfit_ele,Wp,lab_y2_y11,1.28041,0.04173,0.06016
+simfit_ele,Wp,fb_all,1.29009,0.04173,0.06062
+simfit_ele,Wm,lab_all,1.17685,0.04155,0.05802
+simfit_ele,Wm,lab_y2_y11,1.24662,0.04591,0.06258
+simfit_ele,Wm,fb_all,1.23798,0.04625,0.06297
+simfit_ele,W,lab_all,1.23307,0.02798,0.04966
+simfit_ele,W,lab_y2_y11,1.26552,0.03089,0.05238
+simfit_ele,W,fb_all,1.26711,0.03099,0.05259

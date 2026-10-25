@@ -46,7 +46,9 @@
 #   see fiducial_yields.C), then the mu-vs-e OVERLAYS into plots/flavfit/:
 #     observables_flav(disc)          {charge_asym,FBratio}/<disc>/   (+ mu-vs-e chi2)
 #     xsec_fiducial_flav(disc)        xsec/<disc>/  (sigma W+/W-/W incl. the grand
-#                                     fit, d(sigma)/d(eta) per charge, e/mu ratios)
+#                                     fit, d(sigma)/d(eta) per charge, e/mu ratios;
+#                                     2026-10-22: also from the fb fits, *_fb, and
+#                                     each fit's lab-vs-fb overlay xsec_fiducial_labfb)
 #     xsec_summary(disc)              xsec/<disc>/xsec_summary_vertical  (2026-10-06:
 #                                     W+/W-/W/Z panels, fits as rows + the mu+e band,
 #                                     POWHEG x EPPS21 + theory_fid_predictions.txt rows)
@@ -198,6 +200,11 @@ run_one() {
     (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_comb(\"$disc\"); xsec_fiducial_diag(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_fiducial.png" "xsec_fiducial_comb produced no plot"
     require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_xsec_diag_mu.png" "xsec_fiducial_diag produced no plot"
+    # the same from the fb fit (2026-10-22: the fb-fit control) + the lab-vs-fb
+    # d(sigma)/d(eta) overlay with r_eff of each (lab over the fb window too)
+    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_comb(\"$disc\",\"fb\"); xsec_fiducial_labfb(\"$disc\",\"comb\");") || exit 1
+    require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_fiducial_fb.png" "xsec_fiducial_comb($disc,fb) produced no plot"
+    require_file "$HERE/../plotting/plots/comb/xsec/$disc/W_dsigma_deta_labfb_W.png" "xsec_fiducial_labfb($disc,comb) produced no plot"
     # (sigma_W, sigma_Z) confidence ellipse from the 25x25 POI covariance -- the
     # plane for comparing nPDF sets. Needs h_cov_poi (fork extractor, 2026-09-15)
     # and h_gen_sig_Z (skim/gen_xsec.C); the macro says so and bails if absent,
@@ -240,6 +247,13 @@ run_one() {
     require_file "$HERE/../plotting/plots/flavfit/charge_asym/$disc/chargeAsym.png" "observables_flav produced no plot"
     (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_flav(\"$disc\");") || exit 1
     require_file "$HERE/../plotting/plots/flavfit/xsec/$disc/W_fiducial.png" "xsec_fiducial_flav produced no plot"
+    # the fb fits (2026-10-22) + each flavour fit's lab-vs-fb overlay
+    (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_flav(\"$disc\",\"fb\");") || exit 1
+    require_file "$HERE/../plotting/plots/flavfit/xsec/$disc/W_fiducial_fb.png" "xsec_fiducial_flav($disc,fb) produced no plot"
+    for c in $FLAVS; do
+      (cd "$HERE/../plotting" && root -l -b -q -e "gROOT->LoadMacro(\"xsec_fiducial.C+\"); xsec_fiducial_labfb(\"$disc\",\"simfit_$c\");") || exit 1
+      require_file "$HERE/../plotting/plots/flavfit/xsec/$disc/W_dsigma_deta_labfb_${c}_W.png" "xsec_fiducial_labfb($disc,simfit_$c) produced no plot"
+    done
     # ---- the vertical summary (ttbar-in-PbPb Fig. 9 style): W+/W-/W/Z panels,
     # fits as rows + the mu+e band, theory rows (POWHEG x EPPS21 + any extra
     # predictions in plotting/theory_fid_predictions.txt); reads xsec_flavfit.csv

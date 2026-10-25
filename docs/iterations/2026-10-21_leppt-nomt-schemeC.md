@@ -1,7 +1,8 @@
 # Iteration 2026-10-21b/c — the no-m_T lepton-pT fit (scheme C) as THE nominal
 
-**Status:** built, inputs written, cards validated offline; **NOT fitted**
-(lxplus). Builds on `2026-10-21_noreco-nomt-study.md` (electron Reco SF →
+**Status:** FITTED on lxplus 2026-10-22 (`both all --asimov`, the c2
+inputs; impacts not finished), observables chain run and reviewed
+2026-10-25 — results in §11. Builds on `2026-10-21_noreco-nomt-study.md` (electron Reco SF →
 one ±10% nuisance; the multijet design study). The last fitted iteration is
 `2026-10-19_abcdy-mode.md`; its leppt_mt40 results stay valid for that model.
 
@@ -269,10 +270,8 @@ F(30–40)/F(<30) at r = 1), 24 group CRs, 122 channels, raw PF MET.
 
 ## 9. Not done
 
-- The fit (lxplus): `./sync_lxplus.sh upload` + `upload-scripts`, then
-  `./run_pO_fits.sh both all --asimov` (default `--disc leppt`, QCD mtsplit),
-  `./run_pO_impacts.sh --disc leppt --fit all`, `./sync_lxplus.sh download`,
-  `analysis/run_observables.sh leppt`.
+- ~~The fit~~ done 2026-10-22 (§11); the impacts
+  (`./run_pO_impacts.sh --disc leppt --fit all`) were not finished.
 - (The open κ choices of c were settled in c2, §4b.)
 - The other fits' inputs (leppt_mt40, met_mt40, met, Z) now also carry the
   calibrated MET; their last fits used the raw PF MET.
@@ -290,3 +289,63 @@ inputs): `skim/{rootfile,logs,output}`, `correction/{rootfile,logs}`,
 inputs + sidecars),logs}` — 390 MB. The b-version `runNoMt` was never
 committed (it lived in the uncommitted `qcd_abcd.C`; replaced by
 `qcd_abcd_nomt.h`). The step-1 backups of the day are `backups/pre_noreco/`.
+
+## 11. Fit results (lxplus 2026-10-22; reviewed 2026-10-25)
+
+Tree `HiggsAnalysis-CombinedLimit/test/pO_fit_out_leppt/`, cards built with
+the c2 κ's (`qcd_lnn_kappas.txt`: pooled κ_xfer lab 1.168 / 1.148 / 1.183 /
+1.104). Numbers read from `simfit*/summary/extract_*.log`, the
+`*_W_yields.csv`, `analysis/logs/run_observables_leppt.log` and
+`plotting/plots/flavfit/xsec/leppt/xsec_flavfit.csv`.
+
+**Fit quality.** All six fits (grand / μ / e × lab / fb) status 0, covQual 3,
+Asimov closure PASS, `--statonly` vs conditioned stat errors ≤ 2e-4.
+
+**σ (nb, stat ± syst; no-m_T gen fiducial, σ_gen W 89.45, Z 8.769):**
+
+| fit | W⁺ | W⁻ | W | Z | r_eff (W) |
+|---|---|---|---|---|---|
+| grand | 59.74 ± 1.06 ± 1.90 | 48.01 ± 0.95 ± 1.55 | 107.74 ± 1.43 ± 3.40 | 9.62 ± 0.38 ± 0.34 | 1.204 |
+| μ only | 59.76 ± 1.30 ± 1.87 | 48.52 ± 1.19 ± 1.53 | 108.28 ± 1.78 ± 3.35 | 9.38 ± 0.49 ± 0.28 | 1.210 |
+| e only | 76.32 ± 2.41 ± 7.65 | 60.75 ± 2.05 ± 6.09 | 137.07 ± 3.16 ± 13.62 | 16.12 ± 0.97 ± 2.98 | 1.532 |
+
+vs the leppt_mt40 abcdy fit (2026-10-19, m_T > 40 fiducial): r_eff grand
+1.212, μ 1.206, e 1.233 — the grand and μ-only fits are at the same level.
+fb: grand σ_W 94.20 ± 1.33 ± 2.97 nb, r_eff lab (y2–y11) 1.219 vs fb 1.228.
+μ-vs-e shapes: A_ch χ² 10.9/12, R_FB (sum) 2.9/6 (stat).
+
+**Pulls, grand lab:** eleReco +0.36 ± 0.27, qcdFF_ele_Wp −0.55 ± 0.31,
+qcdFF_ele_Wm −0.58 ± 0.36, qcd_rate_ele_Wm −0.65, qcd_xfer_ele_Wm cen/bwd/fwd
+−0.80 / −0.50 / −0.26, eleSF +0.47, metResMu +0.44 ± 0.81, every other
+|θ| ≤ 0.37; fb: metResEle +1.63 ± 0.71, nPDF +0.61, qcdScale +0.66. μ only:
+every |θ| ≤ 0.47. e only lab: **eleReco −1.97 ± 0.90**, qcdFF_ele −0.80 /
+−0.85, qcd_xfer_ele_Wp_bwd −0.74, qcd_rate_ele_Wm −0.62; fb eleReco −1.25,
+metResEle +1.56.
+
+**Postfit (raw Baker-Cousins χ² over the 50 pT bins of the y-summed stack,
+grand fit; abcdy in brackets):** μ⁺ 64.1 (63.4), μ⁻ 41.1 (42.3), e⁺ 43.0
+(54.0), e⁻ 50.5 (63.0). The printed χ²/ndf are not comparable between the
+models (`postfit_incl.C` counts 37 parameters per charge and 61 for the
+charge sum, which exceeds the 50 bins, so that ndf falls back to 50).
+Weak spots: the e⁻ m_T < 30 channel, data 592 vs postfit 555.7 (×1.065,
+data above the postfit in all 12 y bins, peaked at pT 28–32 GeV), and the
+Z→ee peak, postfit 237.0 vs data 225.
+
+**Why the e-only fit is off.** In an electron-only likelihood eleReco is
+degenerate with the r's and r_Z, except for one lever: it scales the DY
+background of the W channels by f (one selected electron) and the Z peak by
+f² (two), so with r_Z free a lower f puts more DY into the W channels than
+the peak allows. The fit uses it: f(θ = −1.97) = 0.81 per electron, 0.66 per
+pair, r_Z 1.84, so the DY in the W channels goes ×1.49 (z in e⁻ lo 64.4 →
+96.1, e⁺ lo 68.4 → 102.1) against ×1.22 at the peak (zsig 198.5 → 243.8 vs
+data 225). It fills the m_T < 30 electron channels, where the multijet,
+tied to the m_T ≥ 30 channel by the per-bin level sT, cannot: the e⁻ hi
+multijet wants ×0.73 of prefit, the lo one ×0.85 (grand fit hi/lo ratio
+×0.86 for e⁻, ×0.96 e⁺, ×0.95–0.98 μ). corr(eleReco, r_Z) = −0.93, with
+r_W −0.6…−0.7. So eleReco is set by this m_T < 30 tension, not by an
+efficiency, and r_e and σ_e inherit 1/f. The physical e W yield is not off:
+e-only signal postfit/prefit 1.26 (both charges) vs μ-only 1.22 / 1.20.
+Gaussian estimate from the e-only fit covariance with eleReco moved to 0
+(scratch `condreco.C`, reproduces the fitted 137.07 exactly): σ_W 109.07 ±
+5.60, W⁺ 60.74 ± 3.67, W⁻ 48.33 ± 3.00, r_Z 1.112 ± 0.131 → σ_Z 9.75 ± 1.14
+nb, i.e. e/μ ≈ 1.01 (W), 1.04 (Z), before adding the external ±10% / ±21%.

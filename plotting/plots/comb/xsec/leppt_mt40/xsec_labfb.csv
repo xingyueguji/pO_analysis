@@ -1,0 +1,10 @@
+fit,charge,window,r_eff,err_stat,err_total
+comb,Wp,lab_all,1.21439,0.02107,0.04272
+comb,Wp,lab_y2_y11,1.23306,0.02280,0.04412
+comb,Wp,fb_all,1.21723,0.02291,0.04391
+comb,Wm,lab_all,1.20261,0.02351,0.04395
+comb,Wm,lab_y2_y11,1.24489,0.02589,0.04640
+comb,Wm,fb_all,1.21511,0.02583,0.04578
+comb,W,lab_all,1.20916,0.01572,0.04019
+comb,W,lab_y2_y11,1.23827,0.01713,0.04163
+comb,W,fb_all,1.21629,0.01716,0.04115

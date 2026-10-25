@@ -1,0 +1,7 @@
+# (sigma_W, sigma_Z) of the per-flavour simfits (+ the grand one); disc=leppt binning=fb
+fit,sigma_W_nb,sigma_W_err_nb,sigma_W_stat_nb,sigma_W_syst_nb,sigma_Z_nb,sigma_Z_err_nb,sigma_Z_stat_nb,sigma_Z_syst_nb,rho,region
+simfit_mu,94.58934,3.36832,1.65251,2.93510,9.41535,0.56812,0.49086,0.28602,0.38314,profiled
+simfit_ele,111.82772,12.07013,2.78275,11.74497,13.41088,2.85499,0.84631,2.72667,0.90611,profiled
+comb,94.20394,3.25905,1.33088,2.97492,9.49085,0.51220,0.38357,0.33943,0.53247,profiled
+ratio_e_over_mu,1.18224,,0.03595,,1.42436,,0.11659,,,stat_errors
+theory,76.70418,,,,8.76923,,,,,r=1
