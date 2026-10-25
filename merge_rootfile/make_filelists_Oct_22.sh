@@ -16,9 +16,19 @@
 # claims, with a suggested table line -- the MiNNLO directory names were not
 # known when this script was written, so the FIRST run tells you what to add.
 #
+# Directory layout: a sample is a CRAB task directory named HiForest_<name>
+# or crab_HiForest_<name> (both are accepted, at any depth up to 4 below
+# DATA/ or MC/). The DATA of this pass sits one level deeper than before, in
+# a skim directory:
+#     DATA/PHOLEP/IonPhysics/crab_HiForest_IonPhysics_pORun2025_PromptReco_v1_PHOLEPSKIM_2026_10_22/
+# (earlier passes: DATA/IonPhysics<N>/HiForest_IonPhysics<N>_..._SKIM_<date>/).
+# Only the skim named by DATA_SKIM (default PHOLEP) goes into the data list:
+# two skims of the same runs would double count events, so any other DATA/<x>/
+# directory is reported as unclaimed instead.
+#
 # Output (one list per sample, read by run_all_hadd_Oct_22.sh; the names are
 # the Aug-20 ones with the date token swapped):
-#     Oct_22_DATA.txt                      every IonPhysics* PD, ONE list
+#     Oct_22_DATA.txt                      every task dir of DATA/$DATA_SKIM/, ONE list
 #     Oct_22_MC_DY_{mu,ele,tau}_Z.txt
 #     Oct_22_MC_W{p,m}_{mu,ele,tau}.txt
 #     Oct_22_MC_TT.txt
@@ -30,6 +40,7 @@
 #   ./make_filelists_Oct_22.sh                       # default production dir
 #   ./make_filelists_Oct_22.sh <production_root>     # override
 #   PREFIX=X_ ./make_filelists_Oct_22.sh             # MC naming (default Oct_22_MC_)
+#   DATA_SKIM=<dir> ./make_filelists_Oct_22.sh       # data skim (default PHOLEP)
 #
 # Exit status: 0 = every table entry found AND no unclaimed directory;
 #              1 = a table entry missing/ambiguous/empty, or unclaimed
@@ -41,6 +52,7 @@ set -u
 
 PROD_ROOT="${1:-/eos/cms/store/group/phys_heavyions/anstahll/CERN/pO2025/HiForest/2026_10_22}"
 PREFIX="${PREFIX:-Oct_22_MC_}"
+DATA_SKIM="${DATA_SKIM:-PHOLEP}"
 DATA_OUT="Oct_22_DATA.txt"
 
 cd "$(dirname "$0")"
@@ -51,8 +63,8 @@ if [[ ! -d "$PROD_ROOT" ]]; then
 fi
 
 # --- MC sample map: "<generator key>|<EOS dir token>|<output name after PREFIX>"
-# A directory matches when its basename is  HiForest_<token>_*<key>*  and it
-# sits under $PROD_ROOT/MC/. The key keeps a POWHEG token from also matching a
+# A directory matches when its basename is  [crab_]HiForest_<token>_*<key>*  and
+# it sits under $PROD_ROOT/MC/. The key keeps a POWHEG token from also matching a
 # MiNNLO directory of the same process (or vice versa). The DY tokens carry the
 # explicit _M_50 so they cannot match HiForest_DYTo*_M_10_50_*.
 SAMPLES="
@@ -77,6 +89,7 @@ SAMPLES_MINNLO="
 # Directory basenames that are ignored by design (glob patterns).
 IGNORE="
 HiForest_DYTo*_M_10_50_*
+crab_HiForest_DYTo*_M_10_50_*
 "
 
 # GNU find (-printf) gives file sizes for free; BSD find does not.
@@ -98,6 +111,16 @@ list_root_files() {  # <dir> -> sorted ROOT files, CRAB failed/ and log/ pruned
          -o -type f -name '*.root' -print 2>/dev/null | sort
 }
 
+# <dir> <maxdepth> [name glob] -> the CRAB task directories below <dir>,
+# i.e. directories named HiForest_* or crab_HiForest_* (matching the optional
+# glob after that prefix), without descending into them.
+task_dirs() {
+    local g="${3:-*}"
+    [[ -d "$1" ]] || return 0
+    find "$1" -mindepth 1 -maxdepth "$2" -type d \
+         \( -name "HiForest_$g" -o -name "crab_HiForest_$g" \) -print -prune 2>/dev/null | sort
+}
+
 echo "==================================================="
 echo "Production : $PROD_ROOT"
 echo "MC prefix  : $PREFIX"
@@ -109,17 +132,20 @@ NTOT=0
 NSAMP=0
 
 # ============================================================== DATA
-# Layout (as in every pass so far):
-#   DATA/IonPhysics<N>/HiForest_IonPhysics<N>_pORun2025_..._<date>/<crab>/<000X>/*.root
-# All PDs go into ONE list. File basenames repeat ACROSS PDs (every PD has a
-# HiForestMiniAOD_10.root), so the duplicate check is per PD: two CRAB task
-# directories of the same PD = a resubmission that would be merged twice.
-echo "--- DATA"
-shopt -s nullglob
-ddirs=("$PROD_ROOT"/DATA/*/HiForest_*)
-shopt -u nullglob
+# This pass:      DATA/PHOLEP/IonPhysics/crab_HiForest_IonPhysics_..._PHOLEPSKIM_<date>/<crab time>/<000X>/*.root
+# Earlier passes: DATA/IonPhysics<N>/HiForest_IonPhysics<N>_..._SKIM_<date>/<crab time>/<000X>/*.root
+# Every task directory below DATA/$DATA_SKIM/ goes into ONE list. File
+# basenames repeat across PDs (every PD has a HiForestMiniAOD_10.root), so the
+# duplicate check is per task directory: two CRAB submissions (time-stamp
+# subdirectories) of the same task = a resubmission that would be merged twice.
+echo "--- DATA (skim $DATA_SKIM)"
+ddirs=()
+while IFS= read -r d; do
+    [[ -n "$d" ]] && ddirs+=("$d")
+done < <(task_dirs "$PROD_ROOT/DATA/$DATA_SKIM" 4)
 if [[ ${#ddirs[@]} -eq 0 ]]; then
-    echo "!! DATA -> no directory DATA/*/HiForest_* under the production"
+    echo "!! DATA -> no task directory ([crab_]HiForest_*) under DATA/$DATA_SKIM/"
+    echo "   DATA/ holds: $(ls "$PROD_ROOT/DATA" 2>/dev/null | tr '\n' ' ')  (choose with DATA_SKIM=<dir>)"
     FAILED="$FAILED DATA"
 else
     : > "$DATA_OUT"
@@ -129,18 +155,18 @@ else
         CLAIMED="$CLAIMED
 $d"
         list_root_files "$d" >> "$DATA_OUT"
-        ntask=$(find "$d" -mindepth 1 -maxdepth 1 -type d ! -name failed ! -name log | wc -l | tr -d ' ')
+        nsub=$(find "$d" -mindepth 1 -maxdepth 1 -type d ! -name failed ! -name log | wc -l | tr -d ' ')
         nf=$(list_root_files "$d" | wc -l | tr -d ' ')
         ndup=$(list_root_files "$d" | awk -F/ '{print $NF}' | sort | uniq -d | wc -l | tr -d ' ')
-        printf '    %-62s %5d files  %d CRAB task(s)' "$(basename "$d")" "$nf" "$ntask"
-        [[ "$ntask" -gt 1 ]] && printf '  <- more than one task'
+        printf '    %s\n        %5d files  %d CRAB submission(s)' "${d#$PROD_ROOT/DATA/}" "$nf" "$nsub"
+        [[ "$nsub" -gt 1 ]] && printf '  <- more than one submission'
         [[ "$ndup" -ne 0 ]] && printf '  WARNING: %d duplicated basename(s) = double counting' "$ndup"
         printf '\n'
     done
     sort -o "$DATA_OUT" "$DATA_OUT"
     n=$(wc -l < "$DATA_OUT" | tr -d ' ')
-    printf '%-22s -> %-28s %5d files  %10s   [%d PDs]\n' "DATA" "$DATA_OUT" "$n" \
-           "$(size_of "$PROD_ROOT/DATA")" "$npd"
+    printf '%-22s -> %-28s %5d files  %10s   [%d task dir(s)]\n' "DATA" "$DATA_OUT" "$n" \
+           "$(size_of "$PROD_ROOT/DATA/$DATA_SKIM")" "$npd"
     if [[ "$n" -eq 0 ]]; then
         echo "!! DATA -> 0 ROOT files"
         FAILED="$FAILED DATA"
@@ -158,12 +184,13 @@ for pair in $SAMPLES $SAMPLES_MINNLO; do
     NSAMP=$((NSAMP + 1))
 
     # --- locate the sample directory (must be unique) ---
-    shopt -s nullglob
-    dirs=("$PROD_ROOT"/MC/*/HiForest_"$tok"_*"$gen"*)
-    shopt -u nullglob
+    dirs=()
+    while IFS= read -r d; do
+        [[ -n "$d" ]] && dirs+=("$d")
+    done < <(task_dirs "$PROD_ROOT/MC" 4 "${tok}_*${gen}*")
 
     if [[ ${#dirs[@]} -eq 0 ]]; then
-        echo "!! $gen $tok -> no directory MC/*/HiForest_${tok}_*${gen}*"
+        echo "!! $gen $tok -> no directory MC/.../[crab_]HiForest_${tok}_*${gen}*"
         FAILED="$FAILED $tok"
         continue
     fi
@@ -200,9 +227,9 @@ $sdir"
 done
 
 # ============================================================== unclaimed
-# Every HiForest_* directory of the production that no entry above used and
-# that is not ignored by design -- typically the MiNNLO samples on the first
-# run. Printed with a suggested table line.
+# Every task directory of the production that no entry above used and that is
+# not ignored by design -- typically the MiNNLO samples on the first run, or a
+# data skim other than DATA_SKIM. Printed with a suggested table line.
 echo "--- directories not claimed by any table entry"
 NUNCL=0
 while IFS= read -r d; do
@@ -219,10 +246,12 @@ while IFS= read -r d; do
         continue
     fi
     NUNCL=$((NUNCL + 1))
-    tok=$(echo "$b" | sed -e 's/^HiForest_//' -e 's/_.*//')
     echo "    UNCLAIMED: ${d#$PROD_ROOT/}   ($(size_of "$d"))"
-    echo "               suggested line: <generator key>|$tok|<output name>"
-done < <(find "$PROD_ROOT" -mindepth 2 -maxdepth 4 -type d -name 'HiForest_*' 2>/dev/null | sort)
+    if [[ "${d#$PROD_ROOT/}" == MC/* ]]; then
+        tok=$(echo "$b" | sed -e 's/^crab_//' -e 's/^HiForest_//' -e 's/_.*//')
+        echo "               suggested line: <generator key>|$tok|<output name>"
+    fi
+done < <(task_dirs "$PROD_ROOT" 5)
 [[ "$NUNCL" -eq 0 ]] && echo "    none"
 
 echo "==================================================="
