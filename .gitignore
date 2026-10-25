@@ -13,6 +13,15 @@
 AutoDict_*.cxx
 AutoDict_*.h
 
+# Generated sidecars that ../HiggsAnalysis-CombinedLimit/test/sync_lxplus.sh
+# also copies into the lxplus checkout. Tracking them gave the same file two
+# routes to lxplus (git and rsync), which broke every git pull there
+# (2026-10-25); rsync is now their only route.
+plotting/plots/**/combine_input_*.txt
+skim/output/gen_xsec_fid.txt
+skim/output/gen_xsec_fid_mt40.txt
+correction/electron_sf_check/idiso_sf/rootfile/combine_input_idiso_*_meta.txt
+
 # Logs
 logs/
 *.log

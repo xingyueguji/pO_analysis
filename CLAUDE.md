@@ -2994,6 +2994,17 @@ placeholder ("xx") so `git log` is not a reliable narrative — read the diffs.
   tag (`./compare_reskim.sh pre_<tag>` → `../backups/pre_<tag>/skim/rootfile`) or
   any directory; older mentions like `compare_reskim.sh rootfile_pre_<tag>`
   now read `compare_reskim.sh pre_<tag>`.
+- **Files that `sync_lxplus.sh` copies into the lxplus checkout must NOT be
+  tracked in git (since 2026-10-25).** The Combine-input sidecars
+  (`plotting/plots/**/combine_input_*.txt`: `_systs`, `_abcdy`, `_mtsplit`),
+  `skim/output/gen_xsec_fid{,_mt40}.txt` and the ID+iso
+  `combine_input_idiso_*_meta.txt` were committed (`.gitignore` only filters
+  by extension) AND rsynced, so every `git pull` on lxplus failed on "local
+  changes" / "untracked files would be overwritten" with the same content on
+  both sides. They are now in `.gitignore` and untracked; rsync is their only
+  route. If a new file joins an upload list, add it to `.gitignore` too. The
+  first lxplus pull after the untracking commit deletes the previously tracked
+  copies there: re-run `sync_lxplus.sh upload-inputs` (and `upload-idiso`).
 - **Never run two `run_all.sh` invocations in parallel from `skim/`.** They share
   the ACLiC build artifacts (`skim_C.so`, `skim_C_ACLiC_dict.*`) in that one
   directory, so two simultaneous first-jobs race to rebuild them and one dies
